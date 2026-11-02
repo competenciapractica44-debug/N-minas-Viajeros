@@ -1,0 +1,6 @@
+{
+  "name": "RutaNómina - Transporte de Viajeros",
+  "description": "Cálculo automatizado de nóminas, turnos y partes de trabajo conforme al Convenio Colectivo de Transporte de Viajeros por Carretera, con deducción de impuestos, conceptos fuera de convenio y exportación a PDF y Excel.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
