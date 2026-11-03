@@ -106,8 +106,17 @@ export default function App() {
   // Persistent Shifts (Internal Database)
   const [shifts, setShifts] = useState<ShiftDefinition[]>(() => {
     try {
-      const saved = localStorage.getItem('rutanomina_shifts_v2');
+      const saved = localStorage.getItem('rutanomina_shifts_v4');
       if (saved) return JSON.parse(saved);
+      // Migrate from older version if present to incorporate new afternoon shifts
+      const oldSaved = localStorage.getItem('rutanomina_shifts_v3');
+      if (oldSaved) {
+        const parsed: ShiftDefinition[] = JSON.parse(oldSaved);
+        const existingCodes = new Set(parsed.map((s) => s.code));
+        const missing = ALL_INITIAL_SHIFTS.filter((s) => !existingCodes.has(s.code));
+        const merged = [...parsed, ...missing];
+        return merged;
+      }
     } catch (e) {
       console.error(e);
     }
@@ -116,7 +125,7 @@ export default function App() {
 
   useEffect(() => {
     try {
-      localStorage.setItem('rutanomina_shifts_v2', JSON.stringify(shifts));
+      localStorage.setItem('rutanomina_shifts_v4', JSON.stringify(shifts));
     } catch (e) {
       console.error(e);
     }
@@ -195,9 +204,11 @@ export default function App() {
       cif: 'A-50123456',
       irpfPercentage: 14.5,
       contractType: 'indefinido',
+      partTimePercentage: 50,
+      prorrateoPagasExtra: 'tres_pagas',
+      prorratearPagasExtra: true,
       hasMonetaryQuebranto: true,
       hasConductorPerceptorPlus: true,
-      prorratearPagasExtra: true,
       unionFeeDeduction: 0,
       advancePayment: 0,
     };

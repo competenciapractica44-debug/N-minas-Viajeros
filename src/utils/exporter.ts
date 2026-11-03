@@ -89,14 +89,10 @@ export function exportToPDF(
     startY + 7.5
   );
 
-  // Table 1: Devengos (Gross Salary items)
   const devengosRows = [
     ['Salario Base Jornadas (Convenio)', `${payroll.workedDays} días`, formatCurrency(payroll.salarioBase)],
   ];
 
-  if (payroll.plusTomaDeje > 0) {
-    devengosRows.push(['Plus Toma y Deje reglamentario / Tarifa BD', 'Turnos realizados', formatCurrency(payroll.plusTomaDeje)]);
-  }
   if (payroll.plusConductorPerceptor > 0) {
     devengosRows.push(['Plus Conductor-Perceptor (Art. 19)', `${payroll.workedDays} días`, formatCurrency(payroll.plusConductorPerceptor)]);
   }
@@ -110,7 +106,13 @@ export function exportToPDF(
     devengosRows.push(['Plus Festivos y Domingos (Art. 17)', `${payroll.holidayDays} festivos/dom`, formatCurrency(payroll.plusFestivos)]);
   }
   if (payroll.prorrataPagasExtra > 0) {
-    devengosRows.push(['Prorrata Pagas Extraordinarias (Art. 11, 3 pagas)', '1/12 anual', formatCurrency(payroll.prorrataPagasExtra)]);
+    const extraLabel = profile.prorrateoPagasExtra === 'una_paga'
+      ? 'Prorrata Paga Extraordinaria Marzo (Art. 11)'
+      : 'Prorrata Pagas Extraordinarias (Art. 11, 3 pagas)';
+    devengosRows.push([extraLabel, profile.prorrateoPagasExtra === 'una_paga' ? '1/12 (2,5 d/mes)' : '1/12 (7,5 d/mes)', formatCurrency(payroll.prorrataPagasExtra)]);
+  }
+  if (payroll.pagaExtraIntegraMes > 0) {
+    devengosRows.push([payroll.pagaExtraIntegraNombre || 'Paga Extraordinaria Íntegra', '30 días salario base', formatCurrency(payroll.pagaExtraIntegraMes)]);
   }
   if (payroll.totalExtrasFueraConvenio > 0) {
     devengosRows.push(['Complementos Fuera de Convenio Pactados', 'Asignados en cuadrante', formatCurrency(payroll.totalExtrasFueraConvenio)]);
@@ -271,6 +273,7 @@ export function exportToExcel(
     ['Empresa:', profile.companyName || 'DIREXIS ZARAGOZA S.A.', 'CIF:', profile.cif || 'A-50123456'],
     ['Trabajador:', profile.name || 'Conductor Profesional', 'NIF:', profile.nif || '12345678-Z'],
     ['Categoría:', profile.category || 'Conductor-Perceptor', 'Convenio:', 'BOPZ 182 Zaragoza'],
+    ['Tipo Contrato:', profile.contractType === 'tiempo_parcial' ? `A tiempo parcial (${profile.partTimePercentage || 50}%)` : profile.contractType === 'temporal' ? 'Temporal (100%)' : 'Indefinido (100%)', 'Pagas Extras:', profile.prorrateoPagasExtra === 'una_paga' ? '1 paga prorrateada + Julio y Diciembre íntegras' : profile.prorrateoPagasExtra === 'ninguna' ? 'Sin prorrateo (Cobro íntegro)' : '3 pagas prorrateadas mensualmente'],
     ['Mes/Año:', `${monthName} ${payroll.year}`, 'Fecha Emisión:', new Date().toLocaleDateString('es-ES')],
     [],
     ['I. DATOS DE JORNADA', 'VALOR', 'UNIDAD'],
@@ -282,12 +285,12 @@ export function exportToExcel(
     [],
     ['II. DEVENGOS (BRUTO)', 'CANTIDAD / BASE', 'IMPORTE (€)'],
     ['Salario Base Convenio', `${payroll.workedDays} días`, payroll.salarioBase],
-    ['Plus Toma y Deje reglamentario / Tarifa BD', 'Turnos', payroll.plusTomaDeje],
     ['Plus Conductor-Perceptor (Art. 19)', `${payroll.workedDays} días`, payroll.plusConductorPerceptor],
     ['Quebranto de Moneda (Art. 20)', `${payroll.workedDays} días`, payroll.plusQuebrantoMoneda],
     ['Plus Nocturnidad (Art. 18)', `${payroll.nightHours} horas`, payroll.plusNocturnidad],
     ['Plus Festivos y Domingos (Art. 17)', `${payroll.holidayDays} días`, payroll.plusFestivos],
-    ['Prorrata Pagas Extras (Art. 11)', 'Mensual', payroll.prorrataPagasExtra],
+    ['Prorrata Pagas Extras (Art. 11)', profile.prorrateoPagasExtra === 'una_paga' ? '1 paga (Marzo)' : '3 pagas', payroll.prorrataPagasExtra],
+    ...(payroll.pagaExtraIntegraMes > 0 ? [[payroll.pagaExtraIntegraNombre || 'Paga Extraordinaria Íntegra', '30 días salario base', payroll.pagaExtraIntegraMes]] : []),
     ['Complementos Fuera de Convenio Pactados', 'Cuadrante', payroll.totalExtrasFueraConvenio],
     ['TOTAL DEVENGADO (BRUTO TOTAL)', '', payroll.totalDevengado],
     [],

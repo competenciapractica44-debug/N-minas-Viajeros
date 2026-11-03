@@ -17,13 +17,10 @@ export interface ShiftDefinition {
   secondStartTime?: string; // For split shifts (partido)
   secondEndTime?: string;
   drivingDuration: string; // e.g. "07:45"
-  tomaMinutes: number; // default 20 min
-  dejeMinutes: number; // default 20 or 25 min
-  includeTomaDeje: boolean;
   computedDuration: string; // e.g. "08:15"
   fixedRate?: number; // e.g. 82.00
-  color: string; // e.g. "#2563eb"
-  badges: string[]; // e.g. ["Toma y Deje integrado"]
+  color: string; // e.g. "#eab308"
+  badges: string[]; // e.g. ["Servicio Ordinario"]
   notes?: string;
   isCustom?: boolean;
 }
@@ -100,6 +97,8 @@ export interface ConvenioInfo {
   ratesByYear: Record<number, ConvenioYearRate>;
 }
 
+export type ExtraPayProrrateo = 'tres_pagas' | 'una_paga' | 'ninguna';
+
 export interface WorkerProfile {
   name: string;
   nif: string;
@@ -108,9 +107,11 @@ export interface WorkerProfile {
   cif: string;
   irpfPercentage: number; // e.g. 14.5
   contractType: 'indefinido' | 'temporal' | 'tiempo_parcial';
+  partTimePercentage?: number; // e.g. 50 (50%), 75 (75%)
+  prorrateoPagasExtra: ExtraPayProrrateo; // 'tres_pagas' | 'una_paga' | 'ninguna'
+  prorratearPagasExtra?: boolean; // legacy compatibility
   hasMonetaryQuebranto: boolean; // cobra billetes en efectivo
   hasConductorPerceptorPlus: boolean;
-  prorratearPagasExtra: boolean; // true = prorrateada cada mes (3 pagas), false = en marzo, julio, dic
   unionFeeDeduction: number; // e.g. 0.00
   advancePayment: number; // anticipos
 }
@@ -128,6 +129,7 @@ export interface PayrollBreakdown {
 
   totalWorkedHours: number;
   nightHours: number;
+  partTimeFactor: number; // 1 for full time, e.g. 0.5 for 50%
 
   // Devengos
   salarioBase: number;
@@ -135,8 +137,9 @@ export interface PayrollBreakdown {
   plusQuebrantoMoneda: number;
   plusNocturnidad: number;
   plusFestivos: number;
-  plusTomaDeje: number;
   prorrataPagasExtra: number;
+  pagaExtraIntegraMes: number; // Paga completa de Julio o Diciembre si aplica
+  pagaExtraIntegraNombre?: string; // 'Paga Extra de Julio' | 'Paga Extra de Navidad (Diciembre)'
   totalExtrasFueraConvenio: number;
   dietasExentas: number;
   dietasTributables: number;

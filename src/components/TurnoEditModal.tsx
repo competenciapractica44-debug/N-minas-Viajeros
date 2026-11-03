@@ -3,6 +3,7 @@ import { X, Clock, Plus, Minus, Check, Sparkles, ArrowLeft, Trash2 } from 'lucid
 import { ShiftDefinition, ShiftModality } from '../types';
 import { calculateNightHours, calculateTotalHours } from '../utils/calculator';
 import { formatCurrency } from '../utils/exporter';
+import { ConfirmModal } from './ConfirmModal';
 
 interface TurnoEditModalProps {
   isOpen: boolean;
@@ -13,12 +14,12 @@ interface TurnoEditModalProps {
 }
 
 const PRESET_COLORS = [
-  { label: 'Azul', value: '#2563eb' },
-  { label: 'Ámbar', value: '#d97706' },
-  { label: 'Gris', value: '#475569' },
-  { label: 'Verde', value: '#059669' },
-  { label: 'Púrpura', value: '#7c3aed' },
-  { label: 'Rojo', value: '#dc2626' },
+  { label: 'Amarillo (Mañana)', value: '#eab308' },
+  { label: 'Azul Celeste (Tarde)', value: '#0284c7' },
+  { label: 'Morado (Noche)', value: '#7c3aed' },
+  { label: 'Naranja (Partido)', value: '#f97316' },
+  { label: 'Verde (Descanso)', value: '#10b981' },
+  { label: 'Gris (Reserva)', value: '#64748b' },
 ];
 
 export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
@@ -29,7 +30,7 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
   shiftToEdit,
 }) => {
   const [code, setCode] = useState('M3');
-  const [color, setColor] = useState('#2563eb');
+  const [color, setColor] = useState('#eab308'); // Amarillo predeterminado para mañana
   const [title, setTitle] = useState('');
   const [modality, setModality] = useState<ShiftModality>('continuado');
   const [terminal, setTerminal] = useState('Cochera Central (Sector Este)');
@@ -41,15 +42,8 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
   const [secondStartTime, setSecondStartTime] = useState('15:00');
   const [secondEndTime, setSecondEndTime] = useState('19:00');
 
-  // Toma y Deje
-  const [tomaMinutes, setTomaMinutes] = useState(20);
-  const [dejeMinutes, setDejeMinutes] = useState(25);
-  const [includeTomaDeje, setIncludeTomaDeje] = useState(true);
-
   // Retribución
-  const [baseJornada, setBaseJornada] = useState(68.50);
-  const [includePlusTomaDeje, setIncludePlusTomaDeje] = useState(true);
-  const [plusTomaDejeVal, setPlusTomaDejeVal] = useState(14.30);
+  const [baseJornada, setBaseJornada] = useState(72.50);
   const [includePlusPuntualidad, setIncludePlusPuntualidad] = useState(true);
   const [plusPuntualidadVal, setPlusPuntualidadVal] = useState(12.00);
   const [includePlusNocturnidad, setIncludePlusNocturnidad] = useState(false);
@@ -57,11 +51,12 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
 
   // Override / manual amount
   const [customGrossRate, setCustomGrossRate] = useState<number | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   useEffect(() => {
     if (shiftToEdit) {
       setCode(shiftToEdit.code);
-      setColor(shiftToEdit.color || '#2563eb');
+      setColor(shiftToEdit.color || '#eab308');
       setTitle(shiftToEdit.title);
       setModality(shiftToEdit.modality);
       setTerminal(shiftToEdit.terminal);
@@ -70,33 +65,26 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
       setEndTime(shiftToEdit.endTime);
       setSecondStartTime(shiftToEdit.secondStartTime || '15:00');
       setSecondEndTime(shiftToEdit.secondEndTime || '19:00');
-      setTomaMinutes(shiftToEdit.tomaMinutes || 20);
-      setDejeMinutes(shiftToEdit.dejeMinutes || 20);
-      setIncludeTomaDeje(shiftToEdit.includeTomaDeje !== false);
       if (shiftToEdit.fixedRate) {
         setCustomGrossRate(shiftToEdit.fixedRate);
       }
     } else {
       // Default clean state
       setCode('M3');
-      setColor('#2563eb');
+      setColor('#eab308'); // Amarillo predeterminado
       setTitle('Mañana Refuerzo Hospital - Línea 105');
       setModality('continuado');
       setTerminal('Cochera Central (Sector Este)');
       setIsPartida(false);
       setStartTime('06:30');
       setEndTime('14:15');
-      setTomaMinutes(20);
-      setDejeMinutes(25);
-      setIncludeTomaDeje(true);
-      setBaseJornada(68.50);
-      setPlusTomaDejeVal(14.30);
+      setBaseJornada(82.00);
       setPlusPuntualidadVal(12.00);
       setCustomGrossRate(null);
     }
   }, [shiftToEdit, isOpen]);
 
-  // Real-time calculation of driving hours
+  // Real-time calculation of shift duration
   const drivingMinutes = useMemo(() => {
     let mins = 0;
     if (isPartida) {
@@ -110,17 +98,11 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
     return mins;
   }, [isPartida, startTime, endTime, secondStartTime, secondEndTime]);
 
-  const totalJornadaMinutes = useMemo(() => {
-    return drivingMinutes + (includeTomaDeje ? tomaMinutes + dejeMinutes : 0);
-  }, [drivingMinutes, includeTomaDeje, tomaMinutes, dejeMinutes]);
-
   const drivingHoursStr = `${Math.floor(drivingMinutes / 60)}h ${String(drivingMinutes % 60).padStart(2, '0')}m`;
-  const totalJornadaHoursStr = `${Math.floor(totalJornadaMinutes / 60)}h ${String(totalJornadaMinutes % 60).padStart(2, '0')}m`;
 
   // Automatic gross calculation
   const calculatedGross = useMemo(() => {
     let total = baseJornada;
-    if (includePlusTomaDeje) total += plusTomaDejeVal;
     if (includePlusPuntualidad) total += plusPuntualidadVal;
     if (includePlusNocturnidad) {
       const nightH = calculateNightHours(startTime, endTime);
@@ -132,8 +114,6 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
     return Math.round(total * 100) / 100;
   }, [
     baseJornada,
-    includePlusTomaDeje,
-    plusTomaDejeVal,
     includePlusPuntualidad,
     plusPuntualidadVal,
     includePlusNocturnidad,
@@ -154,6 +134,14 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
     else if (modality === 'discrecional') cat = 'discrecional';
     else if (sH >= 13) cat = 'tarde';
 
+    // If color was default or unmodified, ensure requested category color
+    let finalColor = color;
+    if (!finalColor || finalColor === '#2563eb') {
+      if (cat === 'mañana') finalColor = '#eab308';
+      else if (cat === 'tarde') finalColor = '#0284c7';
+      else if (cat === 'noche') finalColor = '#7c3aed';
+    }
+
     const savedShift: ShiftDefinition = {
       id: shiftToEdit ? shiftToEdit.id : `custom-${Date.now()}`,
       code: code.trim().toUpperCase() || 'M1',
@@ -167,14 +155,11 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
       secondStartTime: isPartida ? secondStartTime : undefined,
       secondEndTime: isPartida ? secondEndTime : undefined,
       drivingDuration: drivingHoursStr,
-      tomaMinutes,
-      dejeMinutes,
-      includeTomaDeje,
-      computedDuration: `${totalJornadaHoursStr} (Conducción ${drivingHoursStr} + toma/deje)`,
+      computedDuration: `${drivingHoursStr} (Jornada completa)`,
       fixedRate: effectiveGrossRate,
-      color,
+      color: finalColor,
       badges: [
-        isPartida ? 'Plus partido' : modality === 'nocturno' ? 'Nocturnidad fija' : 'Toma y Deje integrado',
+        isPartida ? 'Servicio Partido' : modality === 'nocturno' ? 'Nocturnidad fija' : 'Servicio Ordinario',
       ],
       isCustom: true,
     };
@@ -183,15 +168,16 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
     onClose();
   };
 
-  const handleDeleteTurno = () => {
+  const handleDeleteClick = () => {
     if (!shiftToEdit) return;
-    const confirmed = window.confirm(
-      `¿Deseas eliminar definitivamente el turno ${shiftToEdit.code} (${shiftToEdit.title}) de la base de datos?`
-    );
-    if (confirmed) {
-      if (onDelete) onDelete(shiftToEdit.id);
-      onClose();
-    }
+    setShowDeleteConfirm(true);
+  };
+
+  const executeDelete = () => {
+    if (!shiftToEdit) return;
+    if (onDelete) onDelete(shiftToEdit.id);
+    setShowDeleteConfirm(false);
+    onClose();
   };
 
   return (
@@ -217,7 +203,7 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
             {shiftToEdit && (
               <button
                 type="button"
-                onClick={handleDeleteTurno}
+                onClick={handleDeleteClick}
                 className="px-2.5 py-1 text-xs font-bold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200/80 rounded-xl transition-colors flex items-center gap-1.5"
                 title="Eliminar este turno de la base de datos"
               >
@@ -462,92 +448,24 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
             </div>
           </div>
 
-          {/* SECTION 3: TOMA Y DEJE REGLAMENTARIOS */}
-          <div className="bg-blue-50/60 p-4 rounded-2xl border border-blue-100 space-y-3">
-            <div>
-              <h4 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                <Clock className="w-4 h-4 text-blue-600" /> Toma y Deje Reglamentarios
-              </h4>
-              <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
-                Tiempos consolidados de tacógrafo, inspección técnica previa y liquidación en taquilla conforme al convenio colectivo vigente.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3 pt-1">
-              <div className="bg-white p-2.5 rounded-xl border border-slate-200 flex items-center justify-between">
-                <div>
-                  <span className="text-[10px] text-slate-500 block">Tiempo de Toma</span>
-                  <span className="text-xs font-bold text-slate-800">{tomaMinutes} min</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setTomaMinutes(Math.max(0, tomaMinutes - 5))}
-                    className="p-1 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700"
-                  >
-                    <Minus className="w-3 h-3" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setTomaMinutes(tomaMinutes + 5)}
-                    className="p-1 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700"
-                  >
-                    <Plus className="w-3 h-3" />
-                  </button>
-                </div>
+          {/* RESUMEN DE JORNADA PROGRAMADA */}
+          <div className="bg-emerald-50/70 border border-emerald-200/80 rounded-2xl p-4 flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center">
+                <Check className="w-4 h-4 stroke-[2.5]" />
               </div>
-
-              <div className="bg-white p-2.5 rounded-xl border border-slate-200 flex items-center justify-between">
-                <div>
-                  <span className="text-[10px] text-slate-500 block">Tiempo de Deje</span>
-                  <span className="text-xs font-bold text-slate-800">{dejeMinutes} min</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setDejeMinutes(Math.max(0, dejeMinutes - 5))}
-                    className="p-1 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700"
-                  >
-                    <Minus className="w-3 h-3" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDejeMinutes(dejeMinutes + 5)}
-                    className="p-1 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700"
-                  >
-                    <Plus className="w-3 h-3" />
-                  </button>
-                </div>
+              <div>
+                <span className="text-[10px] font-bold text-emerald-800 uppercase block tracking-wider">
+                  Jornada Completa Programada
+                </span>
+                <span className="text-xs text-slate-600">
+                  Horario íntegro de servicio registrado
+                </span>
               </div>
             </div>
-
-            <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-700 pt-1">
-              <input
-                type="checkbox"
-                checked={includeTomaDeje}
-                onChange={(e) => setIncludeTomaDeje(e.target.checked)}
-                className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-              />
-              <span>Incluir toma ({tomaMinutes}m) y deje ({dejeMinutes}m) automáticamente en el cómputo</span>
-            </label>
-
-            {/* Green Jornada Resultante strip */}
-            <div className="bg-emerald-100/80 border border-emerald-300/80 rounded-xl px-3.5 py-2.5 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Check className="w-4 h-4 text-emerald-700" />
-                <div>
-                  <span className="text-[10px] font-bold text-emerald-800 uppercase block tracking-wider">
-                    Jornada Resultante
-                  </span>
-                  <span className="text-[11px] text-emerald-700">
-                    Conducción + Toma + Deje
-                  </span>
-                </div>
-              </div>
-              <span className="text-base font-extrabold text-emerald-900 font-mono">
-                {totalJornadaHoursStr}
-              </span>
-            </div>
+            <span className="text-base sm:text-lg font-black text-emerald-900 font-mono">
+              {drivingHoursStr}
+            </span>
           </div>
 
           {/* SECTION 4: RETRIBUCIÓN POR ASIGNACIÓN */}
@@ -592,19 +510,6 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
                 <span>Salario base jornada estándar</span>
                 <span className="font-semibold font-mono">{formatCurrency(baseJornada)}</span>
               </div>
-
-              <label className="flex items-center justify-between text-slate-700 py-1 cursor-pointer">
-                <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={includePlusTomaDeje}
-                    onChange={(e) => setIncludePlusTomaDeje(e.target.checked)}
-                    className="rounded text-blue-600"
-                  />
-                  <span>Plus compensación toma y deje</span>
-                </div>
-                <span className="font-semibold text-emerald-600 font-mono">+{formatCurrency(plusTomaDejeVal)}</span>
-              </label>
 
               <label className="flex items-center justify-between text-slate-700 py-1 cursor-pointer">
                 <div className="flex items-center gap-2">
@@ -676,7 +581,7 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
           {shiftToEdit && (
             <button
               type="button"
-              onClick={handleDeleteTurno}
+              onClick={handleDeleteClick}
               className="w-full py-2.5 px-4 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold rounded-2xl border border-rose-200/80 transition-colors text-xs flex items-center justify-center gap-1.5"
             >
               <Trash2 className="w-4 h-4 text-rose-600" />
@@ -692,6 +597,22 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Confirmation modal for shift deletion */}
+      <ConfirmModal
+        isOpen={showDeleteConfirm}
+        title={shiftToEdit ? `¿Eliminar turno ${shiftToEdit.code}?` : '¿Eliminar turno?'}
+        message={
+          shiftToEdit
+            ? `¿Estás seguro de que deseas eliminar permanentemente el turno "${shiftToEdit.code} - ${shiftToEdit.title}" de la base de datos?\n\nDejará de estar disponible en el cuadrante mensual.`
+            : ''
+        }
+        confirmText="Sí, eliminar turno"
+        cancelText="Volver"
+        isDestructive={true}
+        onConfirm={executeDelete}
+        onCancel={() => setShowDeleteConfirm(false)}
+      />
     </div>
   );
 };

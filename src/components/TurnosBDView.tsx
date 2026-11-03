@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { Search, Plus, Edit2, Clock, CheckCircle2, Award, ShieldCheck, Bus, RefreshCw, Trash2 } from 'lucide-react';
 import { ShiftDefinition, ShiftCategory, DayType } from '../types';
 import { formatCurrency } from '../utils/exporter';
+import { ConfirmModal } from './ConfirmModal';
 
 interface TurnosBDViewProps {
   shifts: ShiftDefinition[];
@@ -23,6 +24,8 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<ShiftCategory>('todos');
   const [selectedDayType, setSelectedDayType] = useState<DayType>('todos');
+  const [shiftToDelete, setShiftToDelete] = useState<ShiftDefinition | null>(null);
+  const [confirmRestore, setConfirmRestore] = useState(false);
 
   // Filter shifts
   const filteredShifts = useMemo(() => {
@@ -46,7 +49,14 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
   }, [shifts, searchTerm, selectedCategory, selectedDayType]);
 
   const categoryCounts = useMemo(() => {
-    const counts: Record<string, number> = { todos: 0, mañana: 0, partido: 0, noche: 0, discrecional: 0 };
+    const counts: Record<string, number> = {
+      todos: 0,
+      mañana: 0,
+      tarde: 0,
+      partido: 0,
+      noche: 0,
+      discrecional: 0,
+    };
     shifts.forEach((s) => {
       if (s.code !== 'D') {
         counts.todos++;
@@ -69,8 +79,8 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
               Base de Datos & Tarifas de Turno
             </h2>
             <p className="text-xs text-slate-600 leading-relaxed">
-              Tarifario de Turnos preconfigurados de <strong>DIREXIS ZARAGOZA</strong> y servicios personalizados.
-              Cada turno incluye el cómputo de <strong>toma</strong> (inspección y tacógrafo) y <strong>deje</strong> (repostaje y liquidación) según acuerdo.
+              Tarifario de Turnos de <strong>DIREXIS ZARAGOZA</strong> y servicios personalizados.
+              Cada turno refleja el cómputo íntegro de la jornada y retribución fijada según convenio.
             </p>
             <div className="flex flex-wrap items-center gap-3 pt-2 text-[11px] font-medium text-slate-500">
               <span className="flex items-center gap-1 text-blue-700">
@@ -109,6 +119,7 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
         {[
           { id: 'todos', label: 'Todos', count: categoryCounts.todos },
           { id: 'mañana', label: 'Mañanas', count: categoryCounts.mañana },
+          { id: 'tarde', label: 'Tardes', count: categoryCounts.tarde },
           { id: 'partido', label: 'Partidos', count: categoryCounts.partido },
           { id: 'noche', label: 'Noches', count: categoryCounts.noche },
           { id: 'discrecional', label: 'Discrecionales', count: categoryCounts.discrecional },
@@ -212,13 +223,13 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
                     <Edit2 className="w-4 h-4" />
                   </button>
                   <button
-                    onClick={() => {
-                      if (window.confirm(`¿Deseas eliminar el turno ${shift.code} (${shift.title}) de la base de datos?`)) {
-                        onDeleteTurno(shift.id);
-                      }
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShiftToDelete(shift);
                     }}
-                    title="Eliminar turno de la base de datos"
-                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                    title={`Eliminar turno ${shift.code} de la base de datos`}
+                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 active:scale-90 rounded-lg transition-all"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -251,7 +262,7 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
                 <div className="flex items-center gap-1.5">
                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/60">
                     <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                    {shift.badges[0] || 'Toma y Deje integrado'}
+                    {shift.badges[0] || (shift.category === 'mañana' ? 'Turno Mañana' : shift.category === 'tarde' ? 'Turno Tarde' : shift.category === 'noche' ? 'Turno Noche' : 'Servicio Oficial')}
                   </span>
                   {shift.dayType !== 'laborable' && shift.dayType !== 'todos' && (
                     <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-medium">
@@ -297,7 +308,7 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
 
         <div className="flex justify-center">
           <button
-            onClick={onRestoreDefaults}
+            onClick={() => setConfirmRestore(true)}
             className="text-xs text-slate-500 hover:text-slate-700 flex items-center gap-1.5 py-1 px-3 rounded-lg hover:bg-slate-100 transition-colors"
           >
             <RefreshCw className="w-3.5 h-3.5" />
@@ -305,6 +316,42 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Modal confirmación para eliminar turno */}
+      <ConfirmModal
+        isOpen={Boolean(shiftToDelete)}
+        title={shiftToDelete ? `¿Eliminar turno ${shiftToDelete.code}?` : '¿Eliminar turno?'}
+        message={
+          shiftToDelete
+            ? `¿Estás seguro de que deseas eliminar el turno "${shiftToDelete.code} - ${shiftToDelete.title}" de la base de datos?\n\nEsta acción eliminará el turno del tarifario y no se podrá deshacer.`
+            : ''
+        }
+        confirmText="Sí, eliminar turno"
+        cancelText="Cancelar"
+        isDestructive={true}
+        onConfirm={() => {
+          if (shiftToDelete) {
+            onDeleteTurno(shiftToDelete.id);
+            setShiftToDelete(null);
+          }
+        }}
+        onCancel={() => setShiftToDelete(null)}
+      />
+
+      {/* Modal confirmación para restablecer turnos de fábrica */}
+      <ConfirmModal
+        isOpen={confirmRestore}
+        title="¿Restablecer partes oficiales?"
+        message="¿Deseas restablecer todos los turnos predeterminados de DIREXIS Zaragoza según convenio?\n\nLos turnos personalizados que hayas añadido se sustituirán por la lista oficial homologada."
+        confirmText="Restablecer base de datos"
+        cancelText="Volver"
+        isDestructive={false}
+        onConfirm={() => {
+          onRestoreDefaults();
+          setConfirmRestore(false);
+        }}
+        onCancel={() => setConfirmRestore(false)}
+      />
     </div>
   );
 };

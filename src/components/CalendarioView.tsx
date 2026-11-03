@@ -18,6 +18,7 @@ import {
   ConvenioInfo,
 } from '../types';
 import { formatCurrency } from '../utils/exporter';
+import { ConfirmModal } from './ConfirmModal';
 
 interface CalendarioViewProps {
   selectedYear: number;
@@ -52,6 +53,8 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
   const [selectedExtraConceptId, setSelectedExtraConceptId] = useState('');
   const [customExtraName, setCustomExtraName] = useState('');
   const [customExtraAmount, setCustomExtraAmount] = useState(25.00);
+  const [showRemoveShiftConfirm, setShowRemoveShiftConfirm] = useState(false);
+  const [extraToRemove, setExtraToRemove] = useState<{ id: string; name: string } | null>(null);
 
   // Month navigation
   const handlePrevMonth = () => {
@@ -370,13 +373,9 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
 
                 <button
                   type="button"
-                  onClick={() => {
-                    if (window.confirm(`¿Quitar el turno ${currentAssignment.shiftCode} asignado al día ${selectedDayNumber}?`)) {
-                      onUpdateAssignment(selectedDateStr, { shiftCode: undefined, isRest: false });
-                    }
-                  }}
+                  onClick={() => setShowRemoveShiftConfirm(true)}
                   title="Eliminar este turno del día (dejar libre)"
-                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 active:scale-90 rounded-lg transition-all"
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>
@@ -416,7 +415,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
             <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1 border-t border-slate-200/50">
               <span className="flex items-center gap-1 text-emerald-700 font-medium">
                 <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                Tarifa BD: Toma {currentShift.tomaMinutes}m + Deje {currentShift.dejeMinutes}m incluidos
+                Tarifa BD: {currentShift.computedDuration || 'Jornada completa'}
               </span>
               <span className="text-[10px] font-bold text-slate-400 uppercase">Fijado BD</span>
             </div>
@@ -461,7 +460,8 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                       +{formatCurrency(extra.amount)}
                     </span>
                     <button
-                      onClick={() => handleRemoveExtra(extra.id)}
+                      type="button"
+                      onClick={() => setExtraToRemove({ id: extra.id, name: extra.name })}
                       className="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors"
                       title="Eliminar extra"
                     >
@@ -504,12 +504,12 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
         {/* Quick buttons strip */}
         <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
           {[
-            { code: 'M1', label: 'Mañana', rate: 82.00, color: '#2563eb' },
+            { code: 'M1', label: 'Mañana', rate: 82.00, color: '#eab308' },
             { code: 'T1', label: 'Tarde', rate: 82.00, color: '#0284c7' },
-            { code: 'SP1', label: 'Partido', rate: 91.50, color: '#d97706' },
-            { code: 'N1', label: 'Nocturno', rate: 104.50, color: '#1e293b' },
+            { code: 'SP1', label: 'Partido', rate: 91.50, color: '#f97316' },
+            { code: 'N1', label: 'Nocturno', rate: 104.50, color: '#7c3aed' },
             { code: 'D', label: 'Descanso', rate: 0, color: '#10b981' },
-            { code: 'R', label: 'Reserva', rate: 78.50, color: '#64748b' },
+            { code: 'R', label: 'Reserva', rate: 78.50, color: '#eab308' },
           ].map((item) => (
             <button
               key={item.code}
@@ -640,6 +640,42 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Confirmación para quitar turno asignado del día */}
+      <ConfirmModal
+        isOpen={showRemoveShiftConfirm}
+        title="¿Quitar turno del día?"
+        message={`¿Deseas desasignar el turno (${currentShift?.code || currentAssignment.shiftCode}) para el día ${selectedDayNumber} de ${MONTH_NAMES[selectedMonth - 1]}?\n\nEl día quedará como libre sin cómputo de servicio.`}
+        confirmText="Sí, quitar turno"
+        cancelText="Volver"
+        isDestructive={true}
+        onConfirm={() => {
+          onUpdateAssignment(selectedDateStr, { shiftCode: undefined, isRest: false });
+          setShowRemoveShiftConfirm(false);
+        }}
+        onCancel={() => setShowRemoveShiftConfirm(false)}
+      />
+
+      {/* Confirmación para eliminar concepto extra del día */}
+      <ConfirmModal
+        isOpen={Boolean(extraToRemove)}
+        title="¿Eliminar extra del día?"
+        message={
+          extraToRemove
+            ? `¿Deseas eliminar el extra "${extraToRemove.name}" asignado a este día ${selectedDayNumber}?\n\nDejará de sumarse al subtotal devengado del día.`
+            : ''
+        }
+        confirmText="Sí, eliminar extra"
+        cancelText="Cancelar"
+        isDestructive={true}
+        onConfirm={() => {
+          if (extraToRemove) {
+            handleRemoveExtra(extraToRemove.id);
+            setExtraToRemove(null);
+          }
+        }}
+        onCancel={() => setExtraToRemove(null)}
+      />
     </div>
   );
 };

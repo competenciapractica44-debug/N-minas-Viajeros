@@ -37,6 +37,27 @@ export const NominaView: React.FC<NominaViewProps> = ({
   onExportPDF,
   onExportExcel,
 }) => {
+  const isPartTime = profile.contractType === 'tiempo_parcial';
+  const currentJornadaPercentage = isPartTime
+    ? (profile.partTimePercentage !== undefined && profile.partTimePercentage > 0
+        ? profile.partTimePercentage
+        : 50)
+    : 100;
+
+  const handleJornadaChange = (newPercentage: number) => {
+    if (newPercentage >= 100) {
+      onUpdateProfile({
+        contractType: profile.contractType === 'temporal' ? 'temporal' : 'indefinido',
+        partTimePercentage: 100,
+      });
+    } else {
+      onUpdateProfile({
+        contractType: 'tiempo_parcial',
+        partTimePercentage: newPercentage,
+      });
+    }
+  };
+
   return (
     <div className="max-w-3xl mx-auto px-4 py-4 pb-28 space-y-4">
       {/* Hero Card: Líquido Total a Percibir (Net Pay) */}
@@ -50,9 +71,21 @@ export const NominaView: React.FC<NominaViewProps> = ({
             <div className="text-3xl sm:text-4xl font-black font-mono tracking-tight text-white">
               {formatCurrency(payroll.liquidoPercibir)}
             </div>
-            <p className="text-xs text-slate-300">
-              Período: <strong>{monthName} {payroll.year}</strong> · {payroll.workedDays} jornadas computadas
-            </p>
+            <div className="flex flex-wrap items-center gap-2 pt-0.5">
+              <p className="text-xs text-slate-300">
+                Período: <strong>{monthName} {payroll.year}</strong> · {payroll.workedDays} jornadas
+              </p>
+              {profile.contractType === 'tiempo_parcial' && (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/30">
+                  Jornada Parcial {profile.partTimePercentage || 50}%
+                </span>
+              )}
+              {profile.prorrateoPagasExtra === 'una_paga' && (
+                <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-emerald-400/20 text-emerald-300 border border-emerald-400/30">
+                  Prorrata 1 paga + Jul/Dic íntegras
+                </span>
+              )}
+            </div>
           </div>
 
           {/* Quick Export Action Buttons */}
@@ -95,35 +128,99 @@ export const NominaView: React.FC<NominaViewProps> = ({
         </div>
       </div>
 
-      {/* Interactive IRPF Withholding Control */}
-      <div className="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-xs space-y-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Percent className="w-4 h-4 text-blue-600" />
-            <span className="text-xs font-bold text-slate-900">
-              Retención de I.R.P.F. Trabajador
-            </span>
+      {/* Interactive Controls Row: IRPF & Tanto por Ciento de Jornada */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {/* Interactive IRPF Withholding Control */}
+        <div className="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-xs space-y-2 flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Percent className="w-4 h-4 text-blue-600" />
+                <span className="text-xs font-bold text-slate-900">
+                  Retención de I.R.P.F. Trabajador
+                </span>
+              </div>
+              <span className="font-bold font-mono text-xs sm:text-sm text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded-lg border border-blue-200/60">
+                {profile.irpfPercentage.toFixed(1)}% ({formatCurrency(payroll.retencionIrpfImporte)})
+              </span>
+            </div>
+            <div className="flex items-center gap-3 pt-2">
+              <span className="text-[10px] text-slate-400 font-mono">2%</span>
+              <input
+                type="range"
+                min={2}
+                max={28}
+                step={0.5}
+                value={profile.irpfPercentage}
+                onChange={(e) => onUpdateProfile({ irpfPercentage: parseFloat(e.target.value) || 2 })}
+                className="w-full accent-blue-600 cursor-pointer"
+              />
+              <span className="text-[10px] text-slate-400 font-mono">28%</span>
+            </div>
           </div>
-          <span className="font-bold font-mono text-sm text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded-lg border border-blue-200/60">
-            {profile.irpfPercentage.toFixed(1)}% ({formatCurrency(payroll.retencionIrpfImporte)})
-          </span>
+          <p className="text-[11px] text-slate-500 pt-1">
+            Ajusta tu porcentaje de retención para calcular el impacto inmediato en el líquido mensual a percibir.
+          </p>
         </div>
-        <div className="flex items-center gap-3 pt-1">
-          <span className="text-[10px] text-slate-400 font-mono">2%</span>
-          <input
-            type="range"
-            min={2}
-            max={28}
-            step={0.5}
-            value={profile.irpfPercentage}
-            onChange={(e) => onUpdateProfile({ irpfPercentage: parseFloat(e.target.value) })}
-            className="w-full accent-blue-600 cursor-pointer"
-          />
-          <span className="text-[10px] text-slate-400 font-mono">28%</span>
+
+        {/* Interactive Tanto por Ciento de Jornada Control */}
+        <div className="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-xs space-y-2 flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Clock className="w-4 h-4 text-amber-600" />
+                <span className="text-xs font-bold text-slate-900">
+                  Tanto por Ciento de Jornada
+                </span>
+              </div>
+              <span
+                className={`font-bold font-mono text-xs sm:text-sm px-2.5 py-0.5 rounded-lg border ${
+                  currentJornadaPercentage === 100
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200/60'
+                    : 'bg-amber-50 text-amber-800 border-amber-200/60'
+                }`}
+              >
+                {currentJornadaPercentage}% {currentJornadaPercentage === 100 ? '(Completa)' : '(Parcial)'}
+              </span>
+            </div>
+            <div className="flex items-center gap-3 pt-2">
+              <span className="text-[10px] text-slate-400 font-mono">10%</span>
+              <input
+                type="range"
+                min={10}
+                max={100}
+                step={5}
+                value={currentJornadaPercentage}
+                onChange={(e) => handleJornadaChange(parseInt(e.target.value, 10))}
+                className="w-full accent-amber-600 cursor-pointer"
+              />
+              <span className="text-[10px] text-slate-400 font-mono">100%</span>
+            </div>
+          </div>
+          <div className="flex items-center justify-between gap-1 pt-1 border-t border-slate-100">
+            <p className="text-[11px] text-slate-500 truncate">
+              {currentJornadaPercentage === 100
+                ? 'Jornada completa al 100% de convenio.'
+                : `Jornada parcial al ${currentJornadaPercentage}% proporcional.`}
+            </p>
+            <div className="flex items-center gap-1 shrink-0">
+              {[50, 75, 100].map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => handleJornadaChange(preset)}
+                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition-colors ${
+                    currentJornadaPercentage === preset
+                      ? 'bg-amber-600 text-white shadow-2xs'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {preset}%
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
-        <p className="text-[11px] text-slate-500">
-          Ajusta tu porcentaje de retención para calcular el impacto inmediato en el líquido mensual a percibir.
-        </p>
       </div>
 
       {/* Detailed Section: Devengos vs Deducciones */}
@@ -143,26 +240,21 @@ export const NominaView: React.FC<NominaViewProps> = ({
             <div className="flex items-center justify-between pt-1">
               <div>
                 <p className="font-semibold text-slate-800">Salario Base Convenio</p>
-                <p className="text-[10px] text-slate-400">{payroll.workedDays} días x {formatCurrency(convenio.ratesByYear[payroll.year]?.salarioBaseDia || 50.37)}</p>
+                <p className="text-[10px] text-slate-400">
+                  {payroll.workedDays} días x {formatCurrency(convenio.ratesByYear[payroll.year]?.salarioBaseDia || 50.37)}
+                  {payroll.partTimeFactor < 1 && ` (Jornada al ${Math.round(payroll.partTimeFactor * 100)}%)`}
+                </p>
               </div>
               <span className="font-bold font-mono text-slate-900">{formatCurrency(payroll.salarioBase)}</span>
             </div>
-
-            {payroll.plusTomaDeje > 0 && (
-              <div className="flex items-center justify-between pt-2">
-                <div>
-                  <p className="font-semibold text-slate-800">Plus Toma y Deje / Tarifa BD</p>
-                  <p className="text-[10px] text-slate-400">Inspección, tacógrafo y repostaje</p>
-                </div>
-                <span className="font-bold font-mono text-emerald-700">+{formatCurrency(payroll.plusTomaDeje)}</span>
-              </div>
-            )}
 
             {payroll.plusConductorPerceptor > 0 && (
               <div className="flex items-center justify-between pt-2">
                 <div>
                   <p className="font-semibold text-slate-800">Plus Conductor-Perceptor (Art. 19)</p>
-                  <p className="text-[10px] text-slate-400">6,27 € por jornada completa</p>
+                  <p className="text-[10px] text-slate-400">
+                    6,27 € por jornada {payroll.partTimeFactor < 1 ? `(proporcional ${Math.round(payroll.partTimeFactor * 100)}%)` : 'completa'}
+                  </p>
                 </div>
                 <span className="font-bold font-mono text-emerald-700">+{formatCurrency(payroll.plusConductorPerceptor)}</span>
               </div>
@@ -202,9 +294,26 @@ export const NominaView: React.FC<NominaViewProps> = ({
               <div className="flex items-center justify-between pt-2">
                 <div>
                   <p className="font-semibold text-slate-800">Prorrata Pagas Extras (Art. 11)</p>
-                  <p className="text-[10px] text-slate-400">3 pagas anuales (Marzo, Julio, Navidad)</p>
+                  <p className="text-[10px] text-slate-400">
+                    {profile.prorrateoPagasExtra === 'una_paga'
+                      ? 'Prorrata 1 paga (Marzo, 2,5 días/mes · Julio y Dic íntegras)'
+                      : '3 pagas anuales prorrateadas (7,5 días/mes)'}
+                  </p>
                 </div>
                 <span className="font-bold font-mono text-emerald-700">+{formatCurrency(payroll.prorrataPagasExtra)}</span>
+              </div>
+            )}
+
+            {payroll.pagaExtraIntegraMes > 0 && (
+              <div className="flex items-center justify-between pt-2 bg-emerald-50/70 p-2.5 rounded-xl border border-emerald-200">
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
+                    <p className="font-bold text-emerald-900">{payroll.pagaExtraIntegraNombre || 'Paga Extraordinaria Íntegra'}</p>
+                  </div>
+                  <p className="text-[10px] text-emerald-700">Abono completo de 30 días de salario base en fecha de devengo</p>
+                </div>
+                <span className="font-extrabold font-mono text-emerald-800 text-sm">+{formatCurrency(payroll.pagaExtraIntegraMes)}</span>
               </div>
             )}
 

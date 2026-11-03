@@ -11,14 +11,11 @@ export const FEATURED_SHIFTS: ShiftDefinition[] = [
     terminal: 'Cochera Central · Línea 101',
     startTime: '06:00',
     endTime: '14:15',
-    drivingDuration: '07:35',
-    tomaMinutes: 20,
-    dejeMinutes: 20,
-    includeTomaDeje: true,
-    computedDuration: '8h 15m (Incluye 20m toma + 20m deje)',
+    drivingDuration: '08:15',
+    computedDuration: '8h 15m (Jornada completa)',
     fixedRate: 82.00,
-    color: '#2563eb', // Blue
-    badges: ['Toma y Deje integrado'],
+    color: '#eab308', // Amarillo para mañana
+    badges: ['Servicio Ordinario'],
     notes: 'Servicio continuado de mañana con alta demanda en hora punta.',
   },
   {
@@ -34,14 +31,28 @@ export const FEATURED_SHIFTS: ShiftDefinition[] = [
     secondStartTime: '13:45',
     secondEndTime: '18:15',
     drivingDuration: '08:00',
-    tomaMinutes: 20,
-    dejeMinutes: 20,
-    includeTomaDeje: true,
-    computedDuration: '8h 00m efectivas + tiempo compensado',
+    computedDuration: '8h 00m efectivas + compensado',
     fixedRate: 91.50,
-    color: '#d97706', // Amber
-    badges: ['Plus partido (2 tomas y dejes)'],
-    notes: '2 tramos horarios con compensación por servicio partido.',
+    color: '#f97316', // Naranja para partido
+    badges: ['Servicio Partido'],
+    notes: '2 tramos horarios de servicio según programación escolar y urbana.',
+  },
+  {
+    id: 'turno-t1',
+    code: 'T1',
+    title: 'Tarde Regular Línea 101',
+    category: 'tarde',
+    dayType: 'laborable',
+    modality: 'continuado',
+    terminal: 'Cochera Central · Línea 101',
+    startTime: '14:15',
+    endTime: '22:30',
+    drivingDuration: '08:15',
+    computedDuration: '8h 15m (Jornada completa)',
+    fixedRate: 82.00,
+    color: '#0284c7', // Azul celeste para tarde
+    badges: ['Servicio Ordinario', 'Turno Tarde'],
+    notes: 'Servicio continuado de tarde en corredor principal.',
   },
   {
     id: 'turno-t2',
@@ -53,15 +64,63 @@ export const FEATURED_SHIFTS: ShiftDefinition[] = [
     terminal: 'Línea 402 Corredor Norte',
     startTime: '14:00',
     endTime: '22:30',
-    drivingDuration: '07:45',
-    tomaMinutes: 20,
-    dejeMinutes: 25,
-    includeTomaDeje: true,
-    computedDuration: '8h 30m (Cierre de caja y repostaje inc.)',
+    drivingDuration: '08:30',
+    computedDuration: '8h 30m (Jornada completa)',
     fixedRate: 84.00,
-    color: '#0284c7', // Sky
-    badges: ['Interurbano estándar'],
-    notes: 'Línea interurbana con venta y cobro a bordo.',
+    color: '#0284c7', // Azul celeste para tarde
+    badges: ['Interurbano estándar', 'Turno Tarde'],
+    notes: 'Línea interurbana con venta y cobro a bordo en franja de tarde.',
+  },
+  {
+    id: 'turno-t3',
+    code: 'T3',
+    title: 'Tarde Urbana Línea 102 Plaza España - Actur',
+    category: 'tarde',
+    dayType: 'laborable',
+    modality: 'continuado',
+    terminal: 'Terminal Actur · Rey Fernando',
+    startTime: '14:45',
+    endTime: '23:00',
+    drivingDuration: '08:15',
+    computedDuration: '8h 15m (Jornada completa)',
+    fixedRate: 82.50,
+    color: '#0284c7', // Azul celeste para tarde
+    badges: ['Urbano Tarde', 'Turno Tarde'],
+    notes: 'Servicio urbano continuo de tarde con relevo en terminal.',
+  },
+  {
+    id: 'turno-t4',
+    code: 'T4',
+    title: 'Tarde Interurbana Zaragoza - Utebo - Casetas',
+    category: 'tarde',
+    dayType: 'laborable',
+    modality: 'continuado',
+    terminal: 'Estación Central Delicias / Casetas',
+    startTime: '15:15',
+    endTime: '23:30',
+    drivingDuration: '08:15',
+    computedDuration: '8h 15m (Jornada completa)',
+    fixedRate: 83.50,
+    color: '#0284c7', // Azul celeste para tarde
+    badges: ['Interurbano Tarde', 'Turno Tarde'],
+    notes: 'Ruta interurbana de alta frecuencia en franja de tarde.',
+  },
+  {
+    id: 'turno-t5',
+    code: 'T5',
+    title: 'Tarde Refuerzo Enlaces Hospitales y Polígonos',
+    category: 'tarde',
+    dayType: 'laborable',
+    modality: 'continuado',
+    terminal: 'Sector Polígono Malpica / Clínico',
+    startTime: '13:30',
+    endTime: '21:45',
+    drivingDuration: '08:15',
+    computedDuration: '8h 15m (Jornada completa)',
+    fixedRate: 83.00,
+    color: '#0284c7', // Azul celeste para tarde
+    badges: ['Refuerzo Tarde', 'Turno Tarde'],
+    notes: 'Salidas de fábricas y centros sanitarios turno de tarde.',
   },
   {
     id: 'turno-n1',
@@ -73,14 +132,11 @@ export const FEATURED_SHIFTS: ShiftDefinition[] = [
     terminal: 'Línea N20 Aeropuerto T1-T4',
     startTime: '22:00',
     endTime: '06:00',
-    drivingDuration: '07:20',
-    tomaMinutes: 20,
-    dejeMinutes: 20,
-    includeTomaDeje: true,
-    computedDuration: '8h continuas + nocturnidad consolidada',
+    drivingDuration: '08:00',
+    computedDuration: '8h continuas nocturnas',
     fixedRate: 104.50,
-    color: '#1e293b', // Slate dark
-    badges: ['Nocturnidad fija incluida'],
+    color: '#7c3aed', // Morado para noche
+    badges: ['Nocturnidad fija'],
     notes: 'Jornada completa en tramo de nocturnidad con plus consolidado.',
   },
   {
@@ -94,13 +150,10 @@ export const FEATURED_SHIFTS: ShiftDefinition[] = [
     startTime: '08:00',
     endTime: '20:00',
     drivingDuration: '09:00',
-    tomaMinutes: 30,
-    dejeMinutes: 30,
-    includeTomaDeje: true,
     computedDuration: 'Jornada Completa / Día',
     fixedRate: 125.00,
     color: '#059669', // Emerald
-    badges: ['Dieta & Toma completa'],
+    badges: ['Dieta completa'],
     notes: 'Inspección técnica pre-viaje + lavado inc. Servicio discrecional.',
   },
   {
@@ -113,33 +166,11 @@ export const FEATURED_SHIFTS: ShiftDefinition[] = [
     terminal: 'Cochera Central (Sector Este)',
     startTime: '06:30',
     endTime: '14:45',
-    drivingDuration: '07:35',
-    tomaMinutes: 20,
-    dejeMinutes: 20,
-    includeTomaDeje: true,
-    computedDuration: '8h 15m',
+    drivingDuration: '08:15',
+    computedDuration: '8h 15m (Jornada completa)',
     fixedRate: 83.00,
-    color: '#3b82f6',
+    color: '#eab308', // Amarillo para mañana
     badges: ['Urbano regular'],
-  },
-  {
-    id: 'turno-t1',
-    code: 'T1',
-    title: 'Tarde Regular Línea 101',
-    category: 'tarde',
-    dayType: 'laborable',
-    modality: 'continuado',
-    terminal: 'Cochera Central · Línea 101',
-    startTime: '14:15',
-    endTime: '22:30',
-    drivingDuration: '07:35',
-    tomaMinutes: 20,
-    dejeMinutes: 20,
-    includeTomaDeje: true,
-    computedDuration: '8h 15m',
-    fixedRate: 82.00,
-    color: '#0284c7',
-    badges: ['Toma y Deje integrado'],
   },
   {
     id: 'turno-d',
@@ -152,12 +183,9 @@ export const FEATURED_SHIFTS: ShiftDefinition[] = [
     startTime: '00:00',
     endTime: '00:00',
     drivingDuration: '00:00',
-    tomaMinutes: 0,
-    dejeMinutes: 0,
-    includeTomaDeje: false,
     computedDuration: 'Descanso oficial',
     fixedRate: 0,
-    color: '#10b981', // Green
+    color: '#10b981', // Verde
     badges: ['Descanso'],
   },
   {
@@ -171,12 +199,9 @@ export const FEATURED_SHIFTS: ShiftDefinition[] = [
     startTime: '07:00',
     endTime: '15:00',
     drivingDuration: '08:00',
-    tomaMinutes: 0,
-    dejeMinutes: 0,
-    includeTomaDeje: false,
     computedDuration: '8h retén disponible',
     fixedRate: 78.50,
-    color: '#64748b', // Gray
+    color: '#eab308', // Amarillo para mañana
     badges: ['Retén disponible'],
   },
 ];
@@ -196,12 +221,27 @@ function createDirexisPart(
 
   const startHour = parseInt(start.split(':')[0], 10);
   let category: ShiftDefinition['category'] = 'mañana';
-  if (startHour >= 22 || startHour < 4) category = 'noche';
-  else if (startHour >= 12 && startHour < 18) category = 'tarde';
-  else if (startHour >= 18) category = 'noche';
+  if (startHour >= 22 || startHour < 4) {
+    category = 'noche';
+  } else if (startHour >= 12 && startHour < 21) {
+    category = 'tarde';
+  } else if (startHour >= 21) {
+    category = 'noche';
+  }
 
   // Base gross rate calculated: around 10€ - 11€/hour based on agreement
   const rate = Math.round((totalMins / 60) * 10.45 * 100) / 100;
+
+  // Colors requested by user:
+  // Mañana = Amarillo (#eab308)
+  // Tarde = Azul celeste (#0284c7)
+  // Noche = Morado (#7c3aed)
+  let color = '#eab308';
+  if (category === 'tarde') {
+    color = '#0284c7';
+  } else if (category === 'noche') {
+    color = '#7c3aed';
+  }
 
   return {
     id: `direxis-${code.replace(/[^a-zA-Z0-9]/g, '_')}`,
@@ -214,14 +254,11 @@ function createDirexisPart(
     startTime: start,
     endTime: end,
     drivingDuration: durationStr,
-    tomaMinutes: 20,
-    dejeMinutes: 20,
-    includeTomaDeje: true,
-    computedDuration: `${durationStr} (Conducción ${durationStr} + toma/deje)`,
+    computedDuration: `${durationStr} (Jornada completa)`,
     fixedRate: rate,
-    color: dayType === 'festivo' ? '#ef4444' : dayType === 'sabado' ? '#8b5cf6' : '#2563eb',
+    color,
     badges: ['Direxis Oficial', dayType === 'festivo' ? 'Festivo' : dayType === 'sabado' ? 'Sábado' : 'Laborable'],
-    notes: `Parte de trabajo homologado de Direxis Zaragoza con duración neta de ${durationStr}.`,
+    notes: `Parte de trabajo oficial de Direxis Zaragoza con duración total de ${durationStr}.`,
   };
 }
 

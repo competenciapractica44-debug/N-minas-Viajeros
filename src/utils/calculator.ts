@@ -75,6 +75,13 @@ export function calculateMonthlyPayroll(
   let dietasExentas = 0;
   let dietasTributables = 0;
 
+  // Part-time contract factor
+  const isPartTime = profile.contractType === 'tiempo_parcial';
+  const partTimePercent = isPartTime
+    ? (profile.partTimePercentage !== undefined && profile.partTimePercentage > 0 ? profile.partTimePercentage : 50)
+    : 100;
+  const partTimeFactor = partTimePercent / 100;
+
   // Process day by day
   for (let d = 1; d <= daysInMonth; d++) {
     const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
@@ -125,12 +132,12 @@ export function calculateMonthlyPayroll(
         totalWorkedHours += dayHours;
         totalNightHours += dayNight;
 
-        // Shift daily rate
-        if (shiftDef.fixedRate && shiftDef.fixedRate > 0) {
-          shiftGrossAccumulated += shiftDef.fixedRate;
-        } else {
-          shiftGrossAccumulated += yearRate.salarioBaseDia;
-        }
+        // Shift daily rate (adjusted by part-time factor if applicable)
+        const effectiveDayBase = (shiftDef.fixedRate && shiftDef.fixedRate > 0)
+          ? (isPartTime ? shiftDef.fixedRate * partTimeFactor : shiftDef.fixedRate)
+          : (yearRate.salarioBaseDia * partTimeFactor);
+
+        shiftGrossAccumulated += effectiveDayBase;
 
         // Holiday plus (Art. 17)
         if (isHoliday) {
@@ -157,7 +164,7 @@ export function calculateMonthlyPayroll(
 
   // Calculate Convenio Standard Pluses
   const plusConductorPerceptor = profile.hasConductorPerceptorPlus
-    ? workedDays * yearRate.plusConductorPerceptorDia
+    ? workedDays * yearRate.plusConductorPerceptorDia * (isPartTime ? partTimeFactor : 1)
     : 0;
 
   const plusQuebrantoMoneda = profile.hasMonetaryQuebranto
@@ -166,41 +173,83 @@ export function calculateMonthlyPayroll(
 
   const plusNocturnidad = totalNightHours * yearRate.plusNocturnidadHora;
 
-  // Prorrata de 3 pagas extras (Art. 11: 30 días x 3 pagas = 90 días año)
-  // Prorrata mensual = (90 * salarioBaseDia) / 12 = 7.5 * salarioBaseDia
-  const prorrataPagasExtra = profile.prorratearPagasExtra
-    ? parseFloat((7.5 * yearRate.salarioBaseDia).toFixed(2))
-    : 0;
+  // Prorrateo de pagas extraordinarias (Art. 11 Convenio Zaragoza: 3 pagas de 30 días de salario base = 90 días año)
+  // Opciones:
+  // 1) 'tres_pagas': 3 pagas prorrateadas mensualmente (7,5 días de salario base / mes)
+  // 2) 'una_paga': 1 paga prorrateada mensualmente (Marzo: 2,5 días / mes), y las otras 2 se cobran íntegras en Julio y Diciembre (30 días de salario base cada una)
+  // 3) 'ninguna': no prorratear ninguna (cobro íntegro en sus meses de devengo: Marzo, Julio y Diciembre)
+  const prorrateoMode = profile.prorrateoPagasExtra || (profile.prorratearPagasExtra !== false ? 'tres_pagas' : 'ninguna');
 
-  // Base salary portion: if not using shift-fixed rates, workedDays * salarioBaseDia
-  // For transparent breakdown, we display standard convenio base:
-  const salarioBase = workedDays * yearRate.salarioBaseDia;
+  let prorrataPagasExtra = 0;
+  let pagaExtraIntegraMes = 0;
+  let pagaExtraIntegraNombre: string | undefined = undefined;
 
-  // Plus toma y deje or difference if fixed rate was applied
-  const shiftRateExtraOverBase = Math.max(0, shiftGrossAccumulated - salarioBase);
+  const fullExtraPayAmount = parseFloat((30 * yearRate.salarioBaseDia * partTimeFactor).toFixed(2));
 
-  // Total Devengado (Bruto)
+  if (prorrateoMode === 'tres_pagas') {
+    prorrataPagasExtra = parseFloat((7.5 * yearRate.salarioBaseDia * partTimeFactor).toFixed(2));
+  } else if (prorrateoMode === 'una_paga') {
+    // 1 paga prorrateada (Marzo) a razón de 2.5 días de salario base al mes
+    prorrataPagasExtra = parseFloat((2.5 * yearRate.salarioBaseDia * partTimeFactor).toFixed(2));
+    // Julio y Diciembre se cobran íntegras
+    if (month === 7) {
+      pagaExtraIntegraMes = fullExtraPayAmount;
+      pagaExtraIntegraNombre = 'Paga Extraordinaria de Verano (Julio)';
+    } else if (month === 12) {
+      pagaExtraIntegraMes = fullExtraPayAmount;
+      pagaExtraIntegraNombre = 'Paga Extraordinaria de Navidad (Diciembre)';
+    }
+  } else {
+    // 'ninguna'
+    prorrataPagasExtra = 0;
+    if (month === 3) {
+      pagaExtraIntegraMes = fullExtraPayAmount;
+      pagaExtraIntegraNombre = 'Paga Extraordinaria de Marzo';
+    } else if (month === 7) {
+      pagaExtraIntegraMes = fullExtraPayAmount;
+      pagaExtraIntegraNombre = 'Paga Extraordinaria de Verano (Julio)';
+    } else if (month === 12) {
+      pagaExtraIntegraMes = fullExtraPayAmount;
+      pagaExtraIntegraNombre = 'Paga Extraordinaria de Navidad (Diciembre)';
+    }
+  }
+
+  // Base salary portion: uses accumulated shift tariff or workedDays * daily base
+  const salarioBase = shiftGrossAccumulated > 0
+    ? shiftGrossAccumulated
+    : (workedDays * yearRate.salarioBaseDia * partTimeFactor);
+
+  // Total Devengado (Bruto total incluyendo pagas extras si aplican este mes)
   const totalDevengado = parseFloat(
     (
       salarioBase +
-      shiftRateExtraOverBase +
       plusConductorPerceptor +
       plusQuebrantoMoneda +
       plusNocturnidad +
       festivoPluses +
       outsideAgreementExtrasTotal +
-      prorrataPagasExtra
+      prorrataPagasExtra +
+      pagaExtraIntegraMes
     ).toFixed(2)
   );
 
-  // Seguridad Social Base de Cotización (Spanish law: includes proportional extra pays and taxable earnings)
-  // Excludes exempt per diems up to statutory limit
+  // Seguridad Social Base de Cotización (Spanish Labor Law):
+  // La cotización mensual incluye obligatoriamente la doceava parte de las pagas extras (7.5 días de salario base)
+  // aunque se cobren de forma íntegra en Julio/Diciembre (el mes de cobro de paga íntegra no cotiza doble).
+  const regularDevengadoCotizable = totalDevengado - pagaExtraIntegraMes - dietasExentas;
+  const extraProrrataCotizacion = prorrateoMode === 'tres_pagas'
+    ? 0
+    : prorrateoMode === 'una_paga'
+      ? (5.0 * yearRate.salarioBaseDia * partTimeFactor) // Falta la parte de Julio y Diciembre que no va en nómina mensual
+      : (7.5 * yearRate.salarioBaseDia * partTimeFactor);
+
+  const baseCalculadaSS = regularDevengadoCotizable + extraProrrataCotizacion;
+  const minBaseSS = 1323.00 * (isPartTime ? Math.max(partTimeFactor, 0.4) : 1.0);
+  const maxBaseSS = 4709.25;
+
   const baseCotizacionSS = Math.max(
-    1323.00,
-    Math.min(
-      4709.25,
-      totalDevengado - dietasExentas + (profile.prorratearPagasExtra ? 0 : (7.5 * yearRate.salarioBaseDia))
-    )
+    minBaseSS,
+    Math.min(maxBaseSS, baseCalculadaSS)
   );
 
   // Deducciones Seguridad Social Trabajador
@@ -217,7 +266,7 @@ export function calculateMonthlyPayroll(
     (contingenciasComunes + desempleo + formacionProfesional + mei).toFixed(2)
   );
 
-  // Base IRPF
+  // Base IRPF (incluye salario devengado e integras de extras de este mes, excluye dietas exentas)
   const baseIrpf = Math.max(0, totalDevengado - dietasExentas);
   const retencionIrpf = profile.irpfPercentage;
   const retencionIrpfImporte = parseFloat(((baseIrpf * retencionIrpf) / 100).toFixed(2));
@@ -254,14 +303,16 @@ export function calculateMonthlyPayroll(
 
     totalWorkedHours: Math.round(totalWorkedHours * 100) / 100,
     nightHours: Math.round(totalNightHours * 100) / 100,
+    partTimeFactor,
 
     salarioBase: parseFloat(salarioBase.toFixed(2)),
     plusConductorPerceptor: parseFloat(plusConductorPerceptor.toFixed(2)),
     plusQuebrantoMoneda: parseFloat(plusQuebrantoMoneda.toFixed(2)),
     plusNocturnidad: parseFloat(plusNocturnidad.toFixed(2)),
     plusFestivos: parseFloat(festivoPluses.toFixed(2)),
-    plusTomaDeje: parseFloat(shiftRateExtraOverBase.toFixed(2)),
     prorrataPagasExtra,
+    pagaExtraIntegraMes,
+    pagaExtraIntegraNombre,
     totalExtrasFueraConvenio: parseFloat(outsideAgreementExtrasTotal.toFixed(2)),
     dietasExentas: parseFloat(dietasExentas.toFixed(2)),
     dietasTributables: parseFloat(dietasTributables.toFixed(2)),

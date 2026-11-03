@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { SlidersHorizontal, Plus, CheckCircle2, Edit2, Trash2, X, Info } from 'lucide-react';
 import { ExtraConcept, ExtraUnit } from '../types';
 import { formatCurrency } from '../utils/exporter';
+import { ConfirmModal } from './ConfirmModal';
 
 interface ExtrasViewProps {
   extras: ExtraConcept[];
@@ -18,6 +19,7 @@ export const ExtrasView: React.FC<ExtrasViewProps> = ({
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingExtra, setEditingExtra] = useState<ExtraConcept | null>(null);
+  const [extraToDelete, setExtraToDelete] = useState<ExtraConcept | null>(null);
 
   // Form states
   const [name, setName] = useState('');
@@ -195,8 +197,9 @@ export const ExtrasView: React.FC<ExtrasViewProps> = ({
                   <Edit2 className="w-3.5 h-3.5" />
                 </button>
                 <button
-                  onClick={() => onDeleteExtra(item.id)}
-                  className="p-1 text-slate-400 hover:text-rose-600 rounded"
+                  type="button"
+                  onClick={() => setExtraToDelete(item)}
+                  className="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors"
                   title="Eliminar concepto"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
@@ -341,6 +344,20 @@ export const ExtrasView: React.FC<ExtrasViewProps> = ({
             </div>
 
             <div className="flex items-center gap-2 pt-3 border-t border-slate-100">
+              {editingExtra && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const toDel = editingExtra;
+                    setIsModalOpen(false);
+                    setExtraToDelete(toDel);
+                  }}
+                  className="p-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl transition-colors shrink-0"
+                  title="Eliminar este concepto extra"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
               <button
                 type="button"
                 onClick={handleSave}
@@ -359,6 +376,27 @@ export const ExtrasView: React.FC<ExtrasViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Confirmation modal for deleting extra concept */}
+      <ConfirmModal
+        isOpen={Boolean(extraToDelete)}
+        title={extraToDelete ? `¿Eliminar "${extraToDelete.name}"?` : '¿Eliminar extra?'}
+        message={
+          extraToDelete
+            ? `¿Estás seguro de que deseas eliminar permanentemente el concepto extra "${extraToDelete.name}" (+${formatCurrency(extraToDelete.amount)})?\n\nDejará de aparecer en la lista de extras para futuras asignaciones.`
+            : ''
+        }
+        confirmText="Sí, eliminar concepto"
+        cancelText="Volver"
+        isDestructive={true}
+        onConfirm={() => {
+          if (extraToDelete) {
+            onDeleteExtra(extraToDelete.id);
+            setExtraToDelete(null);
+          }
+        }}
+        onCancel={() => setExtraToDelete(null)}
+      />
     </div>
   );
 };
