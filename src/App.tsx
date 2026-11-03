@@ -38,8 +38,8 @@ function getInitialOctoberAssignments(): DayAssignment[] {
     5: 'D',
     6: 'D',
     7: 'M2',
-    8: 'SP1',
-    9: 'SP1',
+    8: 'T1',
+    9: 'T2',
     10: 'R',
     11: 'N1',
     12: 'D',
@@ -48,13 +48,13 @@ function getInitialOctoberAssignments(): DayAssignment[] {
     15: 'M1',
     16: 'T1',
     17: 'T1',
-    18: 'SP1',
+    18: 'M2',
     19: 'D',
     20: 'D',
     21: 'M1',
     22: 'M2',
-    23: 'SP1',
-    24: 'SP1', // Has extras in screenshot 3
+    23: 'T1',
+    24: 'T2', // Has extras in screenshot 3
     25: 'T1',
     26: 'D',
     27: 'D',
@@ -106,26 +106,36 @@ export default function App() {
   // Persistent Shifts (Internal Database)
   const [shifts, setShifts] = useState<ShiftDefinition[]>(() => {
     try {
-      const saved = localStorage.getItem('rutanomina_shifts_v4');
-      if (saved) return JSON.parse(saved);
-      // Migrate from older version if present to incorporate new afternoon shifts
-      const oldSaved = localStorage.getItem('rutanomina_shifts_v3');
+      const saved = localStorage.getItem('rutanomina_shifts_v6');
+      if (saved) {
+        const parsed: ShiftDefinition[] = JSON.parse(saved);
+        return parsed.filter((s) => s.category !== 'partido' && s.code !== 'SP1' && s.modality !== 'partido');
+      }
+      // Migrate from older version if present to incorporate new Saturday and Sunday/Holiday shifts, and clean out partido/SP1
+      const oldSaved =
+        localStorage.getItem('rutanomina_shifts_v5') ||
+        localStorage.getItem('rutanomina_shifts_v4') ||
+        localStorage.getItem('rutanomina_shifts_v3');
       if (oldSaved) {
-        const parsed: ShiftDefinition[] = JSON.parse(oldSaved);
+        const parsed: ShiftDefinition[] = JSON.parse(oldSaved).filter(
+          (s: ShiftDefinition) => s.category !== 'partido' && s.code !== 'SP1' && s.modality !== 'partido'
+        );
         const existingCodes = new Set(parsed.map((s) => s.code));
-        const missing = ALL_INITIAL_SHIFTS.filter((s) => !existingCodes.has(s.code));
+        const missing = ALL_INITIAL_SHIFTS.filter(
+          (s) => !existingCodes.has(s.code) && s.category !== 'partido' && s.code !== 'SP1' && s.modality !== 'partido'
+        );
         const merged = [...parsed, ...missing];
         return merged;
       }
     } catch (e) {
       console.error(e);
     }
-    return ALL_INITIAL_SHIFTS;
+    return ALL_INITIAL_SHIFTS.filter((s) => s.category !== 'partido' && s.code !== 'SP1');
   });
 
   useEffect(() => {
     try {
-      localStorage.setItem('rutanomina_shifts_v4', JSON.stringify(shifts));
+      localStorage.setItem('rutanomina_shifts_v6', JSON.stringify(shifts));
     } catch (e) {
       console.error(e);
     }

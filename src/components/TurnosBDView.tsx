@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
-import { Search, Plus, Edit2, Clock, CheckCircle2, Award, ShieldCheck, Bus, RefreshCw, Trash2 } from 'lucide-react';
-import { ShiftDefinition, ShiftCategory, DayType } from '../types';
+import { Search, Plus, Edit2, Clock, CheckCircle2, Award, ShieldCheck, Bus, RefreshCw, Trash2, Calendar } from 'lucide-react';
+import { ShiftDefinition } from '../types';
 import { formatCurrency } from '../utils/exporter';
 import { ConfirmModal } from './ConfirmModal';
 
@@ -13,6 +13,23 @@ interface TurnosBDViewProps {
   currentYear: number;
 }
 
+type DayFilterType = 'todos' | 'laborable' | 'sabado' | 'festivo';
+type TimeFilterType = 'todos' | 'mañana' | 'tarde' | 'noche';
+
+const DAY_FILTERS: { id: DayFilterType; label: string; fullLabel: string }[] = [
+  { id: 'todos', label: 'Todos', fullLabel: 'Todos los días' },
+  { id: 'laborable', label: 'L-V', fullLabel: 'Laborables (Lunes a Viernes)' },
+  { id: 'sabado', label: 'Sáb', fullLabel: 'Sábados' },
+  { id: 'festivo', label: 'Dom/Fest', fullLabel: 'Domingos y Festivos' },
+];
+
+const TIME_FILTERS: { id: TimeFilterType; label: string; dotClass?: string }[] = [
+  { id: 'todos', label: 'Todos' },
+  { id: 'mañana', label: 'Mañana', dotClass: 'bg-amber-400' },
+  { id: 'tarde', label: 'Tarde', dotClass: 'bg-sky-500' },
+  { id: 'noche', label: 'Noche', dotClass: 'bg-purple-600' },
+];
+
 export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
   shifts,
   onOpenNewTurnoModal,
@@ -22,10 +39,78 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
   currentYear,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<ShiftCategory>('todos');
-  const [selectedDayType, setSelectedDayType] = useState<DayType>('todos');
+  const [selectedDayType, setSelectedDayType] = useState<DayFilterType>('todos');
+  const [selectedTimeSlot, setSelectedTimeSlot] = useState<TimeFilterType>('todos');
   const [shiftToDelete, setShiftToDelete] = useState<ShiftDefinition | null>(null);
   const [confirmRestore, setConfirmRestore] = useState(false);
+
+  // Contadores para el filtro de Jornada (Día)
+  const dayCounts = useMemo(() => {
+    const counts: Record<DayFilterType, number> = {
+      todos: 0,
+      laborable: 0,
+      sabado: 0,
+      festivo: 0,
+    };
+    shifts.forEach((s) => {
+      if (s.code === 'D') return;
+      counts.todos++;
+      if (s.dayType === 'laborable') {
+        counts.laborable++;
+      } else if (
+        s.dayType === 'sabado' ||
+        s.title.toLowerCase().includes('sábado') ||
+        (s.badges && s.badges.some((b) => b.toLowerCase().includes('sábado')))
+      ) {
+        counts.sabado++;
+      } else if (
+        s.dayType === 'festivo' ||
+        s.title.toLowerCase().includes('festivo') ||
+        s.title.toLowerCase().includes('domingo') ||
+        (s.badges && s.badges.some((b) => b.toLowerCase().includes('festivo') || b.toLowerCase().includes('domingo')))
+      ) {
+        counts.festivo++;
+      }
+    });
+    return counts;
+  }, [shifts]);
+
+  // Contadores para el filtro de Franja Horaria (respetando la jornada seleccionada)
+  const timeCounts = useMemo(() => {
+    const counts: Record<TimeFilterType, number> = {
+      todos: 0,
+      mañana: 0,
+      tarde: 0,
+      noche: 0,
+    };
+    shifts.forEach((s) => {
+      if (s.code === 'D') return;
+
+      let matchesDay = true;
+      if (selectedDayType === 'laborable') {
+        matchesDay = s.dayType === 'laborable';
+      } else if (selectedDayType === 'sabado') {
+        matchesDay =
+          s.dayType === 'sabado' ||
+          s.title.toLowerCase().includes('sábado') ||
+          (s.badges && s.badges.some((b) => b.toLowerCase().includes('sábado')));
+      } else if (selectedDayType === 'festivo') {
+        matchesDay =
+          s.dayType === 'festivo' ||
+          s.title.toLowerCase().includes('festivo') ||
+          s.title.toLowerCase().includes('domingo') ||
+          (s.badges && s.badges.some((b) => b.toLowerCase().includes('festivo') || b.toLowerCase().includes('domingo')));
+      }
+
+      if (!matchesDay) return;
+
+      counts.todos++;
+      if (s.category === 'mañana') counts.mañana++;
+      else if (s.category === 'tarde') counts.tarde++;
+      else if (s.category === 'noche') counts.noche++;
+    });
+    return counts;
+  }, [shifts, selectedDayType]);
 
   // Filter shifts
   const filteredShifts = useMemo(() => {
@@ -34,37 +119,35 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
       if (s.code === 'D') return false;
 
       const matchesSearch =
+        !searchTerm.trim() ||
         s.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
         s.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
         s.terminal.toLowerCase().includes(searchTerm.toLowerCase());
 
-      const matchesCat =
-        selectedCategory === 'todos' || s.category === selectedCategory;
-
-      const matchesDayType =
-        selectedDayType === 'todos' || s.dayType === selectedDayType || s.dayType === 'todos';
-
-      return matchesSearch && matchesCat && matchesDayType;
-    });
-  }, [shifts, searchTerm, selectedCategory, selectedDayType]);
-
-  const categoryCounts = useMemo(() => {
-    const counts: Record<string, number> = {
-      todos: 0,
-      mañana: 0,
-      tarde: 0,
-      partido: 0,
-      noche: 0,
-      discrecional: 0,
-    };
-    shifts.forEach((s) => {
-      if (s.code !== 'D') {
-        counts.todos++;
-        if (counts[s.category] !== undefined) counts[s.category]++;
+      let matchesDay = true;
+      if (selectedDayType === 'laborable') {
+        matchesDay = s.dayType === 'laborable';
+      } else if (selectedDayType === 'sabado') {
+        matchesDay =
+          s.dayType === 'sabado' ||
+          s.title.toLowerCase().includes('sábado') ||
+          (s.badges && s.badges.some((b) => b.toLowerCase().includes('sábado')));
+      } else if (selectedDayType === 'festivo') {
+        matchesDay =
+          s.dayType === 'festivo' ||
+          s.title.toLowerCase().includes('festivo') ||
+          s.title.toLowerCase().includes('domingo') ||
+          (s.badges && s.badges.some((b) => b.toLowerCase().includes('festivo') || b.toLowerCase().includes('domingo')));
       }
+
+      let matchesTime = true;
+      if (selectedTimeSlot !== 'todos') {
+        matchesTime = s.category === selectedTimeSlot;
+      }
+
+      return matchesSearch && matchesDay && matchesTime;
     });
-    return counts;
-  }, [shifts]);
+  }, [shifts, searchTerm, selectedDayType, selectedTimeSlot]);
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-4 pb-24 space-y-4">
@@ -102,8 +185,7 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
           onChange={(e) => setSearchTerm(e.target.value)}
           placeholder="Buscar código o línea..."
           className="w-full bg-white text-xs sm:text-sm pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 shadow-xs placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-        >
-        </input>
+        />
         {searchTerm && (
           <button
             onClick={() => setSearchTerm('')}
@@ -114,62 +196,112 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
         )}
       </div>
 
-      {/* Category Pills matching design */}
-      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-        {[
-          { id: 'todos', label: 'Todos', count: categoryCounts.todos },
-          { id: 'mañana', label: 'Mañanas', count: categoryCounts.mañana },
-          { id: 'tarde', label: 'Tardes', count: categoryCounts.tarde },
-          { id: 'partido', label: 'Partidos', count: categoryCounts.partido },
-          { id: 'noche', label: 'Noches', count: categoryCounts.noche },
-          { id: 'discrecional', label: 'Discrecionales', count: categoryCounts.discrecional },
-        ].map((tab) => {
-          const isActive = selectedCategory === tab.id;
-          return (
-            <button
-              key={tab.id}
-              onClick={() => setSelectedCategory(tab.id as ShiftCategory)}
-              className={`px-3.5 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-colors flex items-center gap-1.5 ${
-                isActive
-                  ? 'bg-slate-900 text-white shadow-xs'
-                  : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/80'
-              }`}
-            >
-              <span>{tab.label}</span>
-              <span
-                className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
-                  isActive ? 'bg-slate-800 text-slate-200' : 'bg-slate-100 text-slate-500'
-                }`}
+      {/* Sistema Combinado de Filtros (Jornada y Franja horaria) */}
+      <div className="bg-white rounded-2xl p-3 sm:p-3.5 border border-slate-200/90 shadow-xs space-y-3">
+        {/* Nivel 1: Jornada / Día */}
+        <div>
+          <div className="flex items-center justify-between text-[11px] font-bold text-slate-500 mb-1.5 px-0.5">
+            <span className="flex items-center gap-1.5 uppercase tracking-wider text-slate-700">
+              <Calendar className="w-3.5 h-3.5 text-blue-600" />
+              1. Día / Jornada
+            </span>
+            {selectedDayType !== 'todos' && (
+              <button
+                type="button"
+                onClick={() => setSelectedDayType('todos')}
+                className="text-blue-600 hover:text-blue-800 text-[10px] font-semibold hover:underline"
               >
-                {tab.count}
-              </span>
-            </button>
-          );
-        })}
-      </div>
+                Ver todos
+              </button>
+            )}
+          </div>
+          <div className="grid grid-cols-4 gap-1.5 w-full">
+            {DAY_FILTERS.map((item) => {
+              const isActive = selectedDayType === item.id;
+              const count = dayCounts[item.id];
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setSelectedDayType(item.id)}
+                  title={item.fullLabel}
+                  className={`w-full py-2 px-1 rounded-xl text-center transition-all flex flex-col items-center justify-center gap-0.5 ${
+                    isActive
+                      ? 'bg-slate-900 text-white shadow-xs font-bold ring-1 ring-slate-900'
+                      : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200/80 font-medium'
+                  }`}
+                >
+                  <span className="text-xs truncate w-full">{item.label}</span>
+                  <span
+                    className={`text-[10px] font-mono leading-none px-1.5 py-0.5 rounded-full ${
+                      isActive
+                        ? 'bg-slate-800 text-slate-200'
+                        : 'bg-white text-slate-500 border border-slate-200/60'
+                    }`}
+                  >
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
-      {/* Day Type Secondary Filter */}
-      <div className="flex items-center justify-between text-xs text-slate-500 px-1">
-        <span className="font-medium">Filtrar por jornada:</span>
-        <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200/60">
-          {[
-            { id: 'todos', label: 'Todos' },
-            { id: 'laborable', label: 'L-V' },
-            { id: 'sabado', label: 'Sáb' },
-            { id: 'festivo', label: 'Dom/Fest' },
-          ].map((type) => (
-            <button
-              key={type.id}
-              onClick={() => setSelectedDayType(type.id as DayType)}
-              className={`px-2 py-0.5 rounded-md text-[11px] font-medium transition-colors ${
-                selectedDayType === type.id
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              {type.label}
-            </button>
-          ))}
+        {/* Nivel 2: Franja Horaria (Mañana / Tarde / Noche) */}
+        <div className="pt-2.5 border-t border-slate-100">
+          <div className="flex items-center justify-between text-[11px] font-bold text-slate-500 mb-1.5 px-0.5">
+            <span className="flex items-center gap-1.5 uppercase tracking-wider text-slate-700">
+              <Clock className="w-3.5 h-3.5 text-amber-500" />
+              2. Horario / Franja
+            </span>
+            {selectedTimeSlot !== 'todos' && (
+              <button
+                type="button"
+                onClick={() => setSelectedTimeSlot('todos')}
+                className="text-blue-600 hover:text-blue-800 text-[10px] font-semibold hover:underline"
+              >
+                Todas las franjas
+              </button>
+            )}
+          </div>
+          <div className="grid grid-cols-4 gap-1.5 w-full">
+            {TIME_FILTERS.map((item) => {
+              const isActive = selectedTimeSlot === item.id;
+              const count = timeCounts[item.id];
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setSelectedTimeSlot(item.id)}
+                  className={`w-full py-2 px-1 rounded-xl text-center transition-all flex flex-col items-center justify-center gap-0.5 ${
+                    isActive
+                      ? 'bg-blue-600 text-white shadow-xs font-bold ring-1 ring-blue-600'
+                      : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200/80 font-medium'
+                  }`}
+                >
+                  <div className="flex items-center justify-center gap-1 w-full">
+                    {item.dotClass && (
+                      <span
+                        className={`w-2 h-2 rounded-full shrink-0 ${
+                          isActive ? 'bg-white' : item.dotClass
+                        }`}
+                      />
+                    )}
+                    <span className="text-xs truncate">{item.label}</span>
+                  </div>
+                  <span
+                    className={`text-[10px] font-mono leading-none px-1.5 py-0.5 rounded-full ${
+                      isActive
+                        ? 'bg-blue-700 text-blue-100'
+                        : 'bg-white text-slate-500 border border-slate-200/60'
+                    }`}
+                  >
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 

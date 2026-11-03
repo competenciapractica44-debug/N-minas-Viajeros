@@ -19,25 +19,6 @@ export const FEATURED_SHIFTS: ShiftDefinition[] = [
     notes: 'Servicio continuado de mañana con alta demanda en hora punta.',
   },
   {
-    id: 'turno-sp1',
-    code: 'SP1',
-    title: 'Servicio Partido Escolar y Urbano',
-    category: 'partido',
-    dayType: 'laborable',
-    modality: 'partido',
-    terminal: 'Colegio Mayor + Línea Urbana 14',
-    startTime: '06:45',
-    endTime: '10:15',
-    secondStartTime: '13:45',
-    secondEndTime: '18:15',
-    drivingDuration: '08:00',
-    computedDuration: '8h 00m efectivas + compensado',
-    fixedRate: 91.50,
-    color: '#f97316', // Naranja para partido
-    badges: ['Servicio Partido'],
-    notes: '2 tramos horarios de servicio según programación escolar y urbana.',
-  },
-  {
     id: 'turno-t1',
     code: 'T1',
     title: 'Tarde Regular Línea 101',
@@ -204,6 +185,74 @@ export const FEATURED_SHIFTS: ShiftDefinition[] = [
     color: '#eab308', // Amarillo para mañana
     badges: ['Retén disponible'],
   },
+  {
+    id: 'turno-s1',
+    code: 'S1',
+    title: 'Sábado Mañana Línea Interurbana',
+    category: 'mañana',
+    dayType: 'sabado',
+    modality: 'continuado',
+    terminal: 'Estación Central Delicias · Línea 401',
+    startTime: '07:00',
+    endTime: '15:30',
+    drivingDuration: '08:30',
+    computedDuration: '8h 30m (Jornada Sábado)',
+    fixedRate: 86.50,
+    color: '#eab308', // Amarillo para mañana
+    badges: ['Servicio Sábado', 'Turno Mañana'],
+    notes: 'Servicio ordinario de fin de semana turno de mañana.',
+  },
+  {
+    id: 'turno-s2',
+    code: 'S2',
+    title: 'Sábado Tarde Refuerzo Líneas Urbanas',
+    category: 'tarde',
+    dayType: 'sabado',
+    modality: 'continuado',
+    terminal: 'Cochera Central · Líneas 101/102',
+    startTime: '15:00',
+    endTime: '23:30',
+    drivingDuration: '08:30',
+    computedDuration: '8h 30m (Jornada Sábado)',
+    fixedRate: 86.50,
+    color: '#0284c7', // Azul celeste para tarde
+    badges: ['Servicio Sábado', 'Turno Tarde'],
+    notes: 'Refuerzo de ocio y comercio turno de tarde de sábado.',
+  },
+  {
+    id: 'turno-f1',
+    code: 'F1',
+    title: 'Domingo y Festivo Mañana Ordinario',
+    category: 'mañana',
+    dayType: 'festivo',
+    modality: 'continuado',
+    terminal: 'Terminal Intermodal · Zaragoza',
+    startTime: '08:00',
+    endTime: '16:15',
+    drivingDuration: '08:15',
+    computedDuration: '8h 15m (Festivo +25%)',
+    fixedRate: 102.50,
+    color: '#eab308', // Amarillo para mañana
+    badges: ['Domingos y Festivos', 'Turno Mañana'],
+    notes: 'Servicio en festivo con retribución de recargo de festivo según convenio.',
+  },
+  {
+    id: 'turno-f2',
+    code: 'F2',
+    title: 'Domingo y Festivo Tarde Enlace Interurbano',
+    category: 'tarde',
+    dayType: 'festivo',
+    modality: 'continuado',
+    terminal: 'Corredor Norte / Garrapinillos',
+    startTime: '15:15',
+    endTime: '23:30',
+    drivingDuration: '08:15',
+    computedDuration: '8h 15m (Festivo +25%)',
+    fixedRate: 103.00,
+    color: '#0284c7', // Azul celeste para tarde
+    badges: ['Domingos y Festivos', 'Turno Tarde'],
+    notes: 'Turno de tarde en domingo o festivo con plus festivo consolidado.',
+  },
 ];
 
 // Helper to create DIREXIS ZARAGOZA official work parts
@@ -229,8 +278,9 @@ function createDirexisPart(
     category = 'noche';
   }
 
-  // Base gross rate calculated: around 10€ - 11€/hour based on agreement
-  const rate = Math.round((totalMins / 60) * 10.45 * 100) / 100;
+  // Base gross rate calculated: 10.45€/h standard, 13.06€/h for festivos (+25%)
+  const hourlyBase = dayType === 'festivo' ? 13.06 : 10.45;
+  const rate = Math.round((totalMins / 60) * hourlyBase * 100) / 100;
 
   // Colors requested by user:
   // Mañana = Amarillo (#eab308)
@@ -243,10 +293,12 @@ function createDirexisPart(
     color = '#7c3aed';
   }
 
+  const dayLabel = dayType === 'festivo' ? 'Domingos y Festivos' : dayType === 'sabado' ? 'Sábados' : 'L-V Laborable';
+
   return {
     id: `direxis-${code.replace(/[^a-zA-Z0-9]/g, '_')}`,
     code,
-    title: `Parte ${code} · Direxis Zaragoza (${dayType === 'laborable' ? 'L-V' : dayType === 'sabado' ? 'Sábado' : 'Domingo/Festivo'})`,
+    title: `Parte ${code} · Direxis Zaragoza (${dayLabel})`,
     category,
     dayType,
     modality: category === 'noche' ? 'nocturno' : 'continuado',
@@ -257,8 +309,12 @@ function createDirexisPart(
     computedDuration: `${durationStr} (Jornada completa)`,
     fixedRate: rate,
     color,
-    badges: ['Direxis Oficial', dayType === 'festivo' ? 'Festivo' : dayType === 'sabado' ? 'Sábado' : 'Laborable'],
-    notes: `Parte de trabajo oficial de Direxis Zaragoza con duración total de ${durationStr}.`,
+    badges: [
+      'Direxis Oficial',
+      dayType === 'sabado' ? 'Servicio Sábado' : dayType === 'festivo' ? 'Domingos y Festivos' : 'Laborable',
+      category === 'tarde' ? 'Turno Tarde' : category === 'mañana' ? 'Turno Mañana' : 'Turno Noche'
+    ],
+    notes: `Parte de trabajo oficial de Direxis Zaragoza para ${dayLabel} con duración total de ${durationStr}.`,
   };
 }
 

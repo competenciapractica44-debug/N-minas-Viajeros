@@ -1,6 +1,6 @@
 export type DayType = 'laborable' | 'sabado' | 'festivo' | 'todos';
 
-export type ShiftCategory = 'todos' | 'mañana' | 'tarde' | 'partido' | 'noche' | 'discrecional' | 'descanso';
+export type ShiftCategory = 'todos' | 'mañana' | 'tarde' | 'partido' | 'noche' | 'sabado' | 'festivo' | 'discrecional' | 'descanso';
 
 export type ShiftModality = 'continuado' | 'partido' | 'nocturno' | 'discrecional';
 

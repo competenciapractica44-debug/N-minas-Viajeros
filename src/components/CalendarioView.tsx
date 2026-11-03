@@ -506,7 +506,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
           {[
             { code: 'M1', label: 'Mañana', rate: 82.00, color: '#eab308' },
             { code: 'T1', label: 'Tarde', rate: 82.00, color: '#0284c7' },
-            { code: 'SP1', label: 'Partido', rate: 91.50, color: '#f97316' },
+            { code: 'S1', label: 'Sábado', rate: 82.00, color: '#0284c7' },
             { code: 'N1', label: 'Nocturno', rate: 104.50, color: '#7c3aed' },
             { code: 'D', label: 'Descanso', rate: 0, color: '#10b981' },
             { code: 'R', label: 'Reserva', rate: 78.50, color: '#eab308' },
@@ -552,7 +552,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
           >
             <option value="">Seleccionar entre todos los partes Direxis Zaragoza (98 turnos)...</option>
             {shifts
-              .filter((s) => !['M1', 'T1', 'SP1', 'N1', 'D', 'R'].includes(s.code))
+              .filter((s) => !['M1', 'T1', 'S1', 'N1', 'D', 'R'].includes(s.code))
               .map((s) => (
                 <option key={s.id} value={s.code}>
                   {s.code} · {s.title} ({s.startTime}-{s.endTime}) - {formatCurrency(s.fixedRate || 0)}
