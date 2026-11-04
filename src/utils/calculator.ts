@@ -2,9 +2,88 @@ import {
   DayAssignment,
   ShiftDefinition,
   ConvenioYearRate,
+  ConvenioInfo,
   WorkerProfile,
   PayrollBreakdown,
+  ExtrasCutoffMode,
+  PayrollExtraItemDetail,
+  MonthlySalaryEvolution,
 } from '../types';
+
+const MONTH_NAMES_SHORT = [
+  'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
+  'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'
+];
+
+/**
+ * Format total minutes into human Spanish duration (e.g. 65 -> "1h y 5min", 40 -> "40min")
+ */
+export function formatMinutesToHoursAndMinutes(totalMinutes: number): string {
+  if (!totalMinutes || totalMinutes <= 0) return '0 min';
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = Math.round(totalMinutes % 60);
+  if (hours > 0 && minutes > 0) {
+    return `${hours}h y ${minutes}min`;
+  }
+  if (hours > 0) {
+    return `${hours}h`;
+  }
+  return `${minutes}min`;
+}
+
+/**
+ * Returns date bounds and description for extras/variable calculation cutoff
+ */
+export function getExtrasDateRange(
+  year: number,
+  month: number, // 1 to 12
+  cutoffMode: ExtrasCutoffMode = 'direxis_25_24',
+  customStartDay = 25
+): {
+  startDateStr: string;
+  endDateStr: string;
+  label: string;
+  periodText: string;
+} {
+  if (cutoffMode === 'mes_natural') {
+    const lastDay = new Date(year, month, 0).getDate();
+    const startDateStr = `${year}-${String(month).padStart(2, '0')}-01`;
+    const endDateStr = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+    return {
+      startDateStr,
+      endDateStr,
+      label: 'Mes natural (del 1 al último día del mes)',
+      periodText: `1 ${MONTH_NAMES_SHORT[month - 1]} - ${lastDay} ${MONTH_NAMES_SHORT[month - 1]}`,
+    };
+  }
+
+  // Direxis (25 to 24) or custom
+  const startDay = cutoffMode === 'direxis_25_24' ? 25 : (customStartDay || 25);
+  const endDay = startDay === 1 ? 31 : startDay - 1;
+
+  // Previous month and year
+  const prevMonth = month === 1 ? 12 : month - 1;
+  const prevYear = month === 1 ? year - 1 : year;
+  const maxPrevDays = new Date(prevYear, prevMonth, 0).getDate();
+  const safeStartDay = Math.min(startDay, maxPrevDays);
+
+  const startDateStr = `${prevYear}-${String(prevMonth).padStart(2, '0')}-${String(safeStartDay).padStart(2, '0')}`;
+  const endDateStr = `${year}-${String(month).padStart(2, '0')}-${String(endDay).padStart(2, '0')}`;
+
+  const isDirexis = cutoffMode === 'direxis_25_24' || startDay === 25;
+  const label = isDirexis
+    ? 'Ciclo Direxis Zaragoza (del 25 mes anterior al 24 del mes actual)'
+    : `Corte personalizado (del ${safeStartDay} al ${endDay})`;
+
+  const periodText = `${safeStartDay} ${MONTH_NAMES_SHORT[prevMonth - 1]} - ${endDay} ${MONTH_NAMES_SHORT[month - 1]}`;
+
+  return {
+    startDateStr,
+    endDateStr,
+    label,
+    periodText,
+  };
+}
 
 /**
  * Calculates night hours worked between 22:00 and 06:00 for given start and end time
@@ -71,9 +150,6 @@ export function calculateMonthlyPayroll(
 
   let shiftGrossAccumulated = 0;
   let festivoPluses = 0;
-  let outsideAgreementExtrasTotal = 0;
-  let dietasExentas = 0;
-  let dietasTributables = 0;
 
   // Part-time contract factor
   const isPartTime = profile.contractType === 'tiempo_parcial';
@@ -82,7 +158,7 @@ export function calculateMonthlyPayroll(
     : 100;
   const partTimeFactor = partTimePercent / 100;
 
-  // Process day by day
+  // Process calendar month days (Salario base, regular shifts, hours, holiday pluses)
   for (let d = 1; d <= daysInMonth; d++) {
     const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
     const dateObj = new Date(year, month - 1, d);
@@ -150,16 +226,79 @@ export function calculateMonthlyPayroll(
         }
       }
     }
+  }
 
-    // Process extras attached to this day
-    if (assignment?.extras && assignment.extras.length > 0) {
-      for (const extra of assignment.extras) {
-        outsideAgreementExtrasTotal += extra.amount;
-        if (extra.name.toLowerCase().includes('dieta')) {
-          dietasExentas += extra.amount;
+  // Process EXTRAS according to the chosen cutoff cycle (e.g. Direxis 25th prev month to 24th current month, or calendar month)
+  const cutoffMode = profile.extrasCutoffMode || 'direxis_25_24';
+  const customStartDay = profile.customCutoffStartDay || 25;
+  const cutoffRange = getExtrasDateRange(year, month, cutoffMode, customStartDay);
+
+  const extrasItemsList: PayrollExtraItemDetail[] = [];
+  let outsideAgreementExtrasTotal = 0;
+  let dietasExentas = 0;
+  let dietasTributables = 0;
+  let totalLateFinishMinutes = 0;
+  let totalLateFinishAmount = 0;
+
+  assignments.forEach((assignment) => {
+    if (assignment.date >= cutoffRange.startDateStr && assignment.date <= cutoffRange.endDateStr) {
+      if (assignment.extras && assignment.extras.length > 0) {
+        for (const extra of assignment.extras) {
+          outsideAgreementExtrasTotal += extra.amount;
+          if (extra.name.toLowerCase().includes('dieta')) {
+            dietasExentas += extra.amount;
+          }
+          extrasItemsList.push({
+            date: assignment.date,
+            name: extra.name,
+            amount: extra.amount,
+            notes: extra.notes,
+          });
         }
       }
+
+      // Check late finish / exceso de turno
+      if (assignment.lateFinishMinutes && assignment.lateFinishMinutes > 0) {
+        totalLateFinishMinutes += assignment.lateFinishMinutes;
+        const computedLateAmount = assignment.lateFinishAmount !== undefined
+          ? assignment.lateFinishAmount
+          : parseFloat(((assignment.lateFinishMinutes / 60) * yearRate.horaOrdinaria).toFixed(2));
+        totalLateFinishAmount += computedLateAmount;
+
+        const durationFormatted = formatMinutesToHoursAndMinutes(assignment.lateFinishMinutes);
+        const reasonText = assignment.lateFinishReason ? ` (${assignment.lateFinishReason})` : '';
+        extrasItemsList.push({
+          date: assignment.date,
+          name: `Terminado más tarde: +${durationFormatted}${reasonText}`,
+          amount: computedLateAmount,
+          notes: `Exceso de jornada compensado a ${yearRate.horaOrdinaria.toFixed(2)} €/h`,
+        });
+      }
     }
+  });
+
+  // Calculate pending extras that occurred in the current month after the cutoff end date (e.g. days 25-31 in Direxis mode)
+  let pendingNextMonthExtrasCount = 0;
+  let pendingNextMonthExtrasTotal = 0;
+  if (cutoffMode !== 'mes_natural') {
+    const currentMonthPrefix = `${year}-${String(month).padStart(2, '0')}-`;
+    assignments.forEach((assignment) => {
+      if (assignment.date.startsWith(currentMonthPrefix) && assignment.date > cutoffRange.endDateStr) {
+        if (assignment.extras && assignment.extras.length > 0) {
+          for (const extra of assignment.extras) {
+            pendingNextMonthExtrasCount++;
+            pendingNextMonthExtrasTotal += extra.amount;
+          }
+        }
+        if (assignment.lateFinishMinutes && assignment.lateFinishMinutes > 0) {
+          pendingNextMonthExtrasCount++;
+          const lateAmt = assignment.lateFinishAmount !== undefined
+            ? assignment.lateFinishAmount
+            : parseFloat(((assignment.lateFinishMinutes / 60) * yearRate.horaOrdinaria).toFixed(2));
+          pendingNextMonthExtrasTotal += lateAmt;
+        }
+      }
+    });
   }
 
   // Calculate Convenio Standard Pluses
@@ -214,20 +353,42 @@ export function calculateMonthlyPayroll(
     }
   }
 
-  // Base salary portion: uses accumulated shift tariff or workedDays * daily base
-  const salarioBase = shiftGrossAccumulated > 0
+  // Retribución de Vacaciones según Art. 9 Convenio Colectivo Transporte de Zaragoza:
+  // 1) Salario Base por cada día de vacaciones disfrutado
+  // 2) Plus de Vacaciones de 10,00 €/día en días 'V' (solo si el contrato está al 100% de jornada y la opción está activa en perfil)
+  const isJornadaCompleta100 = !isPartTime || partTimeFactor >= 1.0;
+  const isAutoVacationPlusActive = profile.hasVacationPlus100Percent !== false;
+  const shouldApplyVacationPlus = isAutoVacationPlusActive && isJornadaCompleta100;
+
+  const plusVacacionesDia = yearRate.plusVacacionesDia || 10.00;
+  const plusVacaciones = shouldApplyVacationPlus
+    ? parseFloat((vacationDays * plusVacacionesDia).toFixed(2))
+    : 0;
+
+  const retribucionVacacionesBase = parseFloat(
+    (vacationDays * yearRate.salarioBaseDia * partTimeFactor).toFixed(2)
+  );
+
+  // Base salary portion: uses accumulated shift tariff or workedDays * daily base, plus vacation base pay
+  const baseDeDiasTrabajados = shiftGrossAccumulated > 0
     ? shiftGrossAccumulated
     : (workedDays * yearRate.salarioBaseDia * partTimeFactor);
+  const salarioBase = parseFloat((baseDeDiasTrabajados + retribucionVacacionesBase).toFixed(2));
 
-  // Total Devengado (Bruto total incluyendo pagas extras si aplican este mes)
+  const horasExtra = parseFloat((totalLateFinishMinutes / 60).toFixed(2));
+  const importeHorasExtra = parseFloat(totalLateFinishAmount.toFixed(2));
+
+  // Total Devengado (Bruto total incluyendo plus de vacaciones, horas extras / terminado tarde y pagas extras si aplican este mes)
   const totalDevengado = parseFloat(
     (
       salarioBase +
+      plusVacaciones +
       plusConductorPerceptor +
       plusQuebrantoMoneda +
       plusNocturnidad +
       festivoPluses +
       outsideAgreementExtrasTotal +
+      importeHorasExtra +
       prorrataPagasExtra +
       pagaExtraIntegraMes
     ).toFixed(2)
@@ -301,11 +462,21 @@ export function calculateMonthlyPayroll(
     vacationDays,
     sickDays,
 
-    totalWorkedHours: Math.round(totalWorkedHours * 100) / 100,
+    totalWorkedHours: Math.round((totalWorkedHours + horasExtra) * 100) / 100,
     nightHours: Math.round(totalNightHours * 100) / 100,
     partTimeFactor,
 
+    // Extras Cutoff Configuration info
+    extrasCutoffMode: cutoffMode,
+    extrasCutoffPeriod: cutoffRange.periodText,
+    extrasCutoffLabel: cutoffRange.label,
+    extrasItemsList,
+    pendingNextMonthExtrasCount,
+    pendingNextMonthExtrasTotal: parseFloat(pendingNextMonthExtrasTotal.toFixed(2)),
+
     salarioBase: parseFloat(salarioBase.toFixed(2)),
+    retribucionVacacionesBase,
+    plusVacaciones,
     plusConductorPerceptor: parseFloat(plusConductorPerceptor.toFixed(2)),
     plusQuebrantoMoneda: parseFloat(plusQuebrantoMoneda.toFixed(2)),
     plusNocturnidad: parseFloat(plusNocturnidad.toFixed(2)),
@@ -316,8 +487,8 @@ export function calculateMonthlyPayroll(
     totalExtrasFueraConvenio: parseFloat(outsideAgreementExtrasTotal.toFixed(2)),
     dietasExentas: parseFloat(dietasExentas.toFixed(2)),
     dietasTributables: parseFloat(dietasTributables.toFixed(2)),
-    horasExtra: 0,
-    importeHorasExtra: 0,
+    horasExtra,
+    importeHorasExtra,
 
     totalDevengado,
     baseCotizacionSS: parseFloat(baseCotizacionSS.toFixed(2)),
@@ -343,4 +514,94 @@ export function calculateMonthlyPayroll(
     ssEmpresaMEI,
     totalCosteEmpresa,
   };
+}
+
+/**
+ * Calculates monthly net salary evolution across the entire selected year (12 months)
+ * Computes exact payroll for months with logged assignments and realistic projection for unlogged months
+ */
+export function calculateYearlySalaryEvolution(
+  year: number,
+  assignments: DayAssignment[],
+  shiftsMap: Map<string, ShiftDefinition>,
+  convenio: ConvenioInfo,
+  profile: WorkerProfile
+): MonthlySalaryEvolution[] {
+  const yearRate =
+    convenio.ratesByYear[year] ||
+    convenio.ratesByYear[2026] ||
+    convenio.ratesByYear[2024];
+
+  const monthNames = [
+    'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
+    'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'
+  ];
+  const fullMonthNames = [
+    'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+    'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
+  ];
+
+  const result: MonthlySalaryEvolution[] = [];
+
+  for (let m = 1; m <= 12; m++) {
+    const monthPrefix = `${year}-${String(m).padStart(2, '0')}-`;
+    const monthAssignments = assignments.filter((a) => a.date.startsWith(monthPrefix));
+    const hasLoggedShifts = monthAssignments.some((a) => a.shiftCode && a.shiftCode !== 'D');
+
+    let payroll: PayrollBreakdown;
+    let isProjected = false;
+
+    if (hasLoggedShifts) {
+      payroll = calculateMonthlyPayroll(
+        assignments,
+        shiftsMap,
+        yearRate,
+        profile,
+        year,
+        m
+      );
+    } else {
+      isProjected = true;
+      // Generate standard representative schedule for this month (Mon-Fri as standard M1 morning shift)
+      const daysInM = new Date(year, m, 0).getDate();
+      const syntheticAssignments: DayAssignment[] = [];
+      for (let d = 1; d <= daysInM; d++) {
+        const dStr = `${year}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        const dayOfWeek = new Date(year, m - 1, d).getDay(); // 0 is Sunday, 6 is Saturday
+        const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+        syntheticAssignments.push({
+          date: dStr,
+          shiftCode: isWeekend ? 'D' : 'M1',
+          isRest: isWeekend,
+          isSunday: dayOfWeek === 0,
+          extras: [],
+        });
+      }
+      payroll = calculateMonthlyPayroll(
+        syntheticAssignments,
+        shiftsMap,
+        yearRate,
+        profile,
+        year,
+        m
+      );
+    }
+
+    result.push({
+      month: m,
+      monthName: monthNames[m - 1],
+      fullMonthName: fullMonthNames[m - 1],
+      year,
+      netSalary: payroll.liquidoPercibir,
+      grossSalary: payroll.totalDevengado,
+      deductions: payroll.totalDeducido,
+      hasExtraPay: (payroll.pagaExtraIntegraMes || 0) > 0,
+      extraPayName: payroll.pagaExtraIntegraNombre,
+      isProjected,
+      workedDays: payroll.workedDays,
+      totalHours: payroll.totalWorkedHours,
+    });
+  }
+
+  return result;
 }

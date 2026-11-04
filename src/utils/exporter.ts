@@ -90,9 +90,16 @@ export function exportToPDF(
   );
 
   const devengosRows = [
-    ['Salario Base Jornadas (Convenio)', `${payroll.workedDays} días`, formatCurrency(payroll.salarioBase)],
+    [
+      'Salario Base Jornadas (Convenio)',
+      payroll.vacationDays > 0 ? `${payroll.workedDays} trab + ${payroll.vacationDays} vac` : `${payroll.workedDays} días`,
+      formatCurrency(payroll.salarioBase),
+    ],
   ];
 
+  if (payroll.plusVacaciones > 0) {
+    devengosRows.push(['Plus de Vacaciones (Art. 9 Convenio)', `${payroll.vacationDays} días`, formatCurrency(payroll.plusVacaciones)]);
+  }
   if (payroll.plusConductorPerceptor > 0) {
     devengosRows.push(['Plus Conductor-Perceptor (Art. 19)', `${payroll.workedDays} días`, formatCurrency(payroll.plusConductorPerceptor)]);
   }
@@ -115,7 +122,11 @@ export function exportToPDF(
     devengosRows.push([payroll.pagaExtraIntegraNombre || 'Paga Extraordinaria Íntegra', '30 días salario base', formatCurrency(payroll.pagaExtraIntegraMes)]);
   }
   if (payroll.totalExtrasFueraConvenio > 0) {
-    devengosRows.push(['Complementos Fuera de Convenio Pactados', 'Asignados en cuadrante', formatCurrency(payroll.totalExtrasFueraConvenio)]);
+    const cutoffText = payroll.extrasCutoffPeriod ? `Corte ${payroll.extrasCutoffPeriod}` : 'Asignados en cuadrante';
+    devengosRows.push(['Complementos y Extras Fuera de Convenio', cutoffText, formatCurrency(payroll.totalExtrasFueraConvenio)]);
+  }
+  if (payroll.importeHorasExtra > 0) {
+    devengosRows.push(['Horas Extraordinarias / Exceso Horario', `${payroll.horasExtra} horas`, formatCurrency(payroll.importeHorasExtra)]);
   }
 
   autoTable(doc, {
@@ -279,19 +290,22 @@ export function exportToExcel(
     ['I. DATOS DE JORNADA', 'VALOR', 'UNIDAD'],
     ['Días Trabajados en el Mes', payroll.workedDays, 'días'],
     ['Días de Descanso', payroll.restDays, 'días'],
+    ['Días de Vacaciones Retribuidas', payroll.vacationDays, 'días'],
     ['Días Festivos / Domingos', payroll.holidayDays, 'días'],
     ['Horas Totales Trabajadas', payroll.totalWorkedHours, 'horas'],
     ['Horas Nocturnas (22:00 a 06:00)', payroll.nightHours, 'horas'],
     [],
     ['II. DEVENGOS (BRUTO)', 'CANTIDAD / BASE', 'IMPORTE (€)'],
     ['Salario Base Convenio', `${payroll.workedDays} días`, payroll.salarioBase],
+    ...(payroll.plusVacaciones > 0 ? [['Plus de Vacaciones (Art. 9 Convenio)', `${payroll.vacationDays} días`, payroll.plusVacaciones]] : []),
     ['Plus Conductor-Perceptor (Art. 19)', `${payroll.workedDays} días`, payroll.plusConductorPerceptor],
     ['Quebranto de Moneda (Art. 20)', `${payroll.workedDays} días`, payroll.plusQuebrantoMoneda],
     ['Plus Nocturnidad (Art. 18)', `${payroll.nightHours} horas`, payroll.plusNocturnidad],
     ['Plus Festivos y Domingos (Art. 17)', `${payroll.holidayDays} días`, payroll.plusFestivos],
     ['Prorrata Pagas Extras (Art. 11)', profile.prorrateoPagasExtra === 'una_paga' ? '1 paga (Marzo)' : '3 pagas', payroll.prorrataPagasExtra],
     ...(payroll.pagaExtraIntegraMes > 0 ? [[payroll.pagaExtraIntegraNombre || 'Paga Extraordinaria Íntegra', '30 días salario base', payroll.pagaExtraIntegraMes]] : []),
-    ['Complementos Fuera de Convenio Pactados', 'Cuadrante', payroll.totalExtrasFueraConvenio],
+    ['Complementos y Extras Fuera de Convenio', payroll.extrasCutoffPeriod ? `Corte ${payroll.extrasCutoffPeriod}` : 'Cuadrante', payroll.totalExtrasFueraConvenio],
+    ...(payroll.importeHorasExtra > 0 ? [['Horas Extraordinarias / Exceso Horario', `${payroll.horasExtra} horas`, payroll.importeHorasExtra]] : []),
     ['TOTAL DEVENGADO (BRUTO TOTAL)', '', payroll.totalDevengado],
     [],
     ['III. DEDUCCIONES TRABAJADOR', 'TIPO / PORCENTAJE', 'IMPORTE (€)'],
@@ -329,13 +343,13 @@ export function exportToExcel(
       return [
         item.date,
         `Día ${dayNum}`,
-        item.shiftCode || 'Descanso',
-        shift?.terminal || shift?.title || (item.shiftCode === 'D' ? 'Descanso' : '-'),
+        item.shiftCode === 'V' ? 'V (Vacaciones)' : item.shiftCode || 'Descanso',
+        shift?.terminal || shift?.title || (item.shiftCode === 'D' ? 'Descanso' : item.shiftCode === 'V' ? 'Vacaciones Retribuidas (Convenio Zaragoza)' : '-'),
         shift?.startTime || '-',
         shift?.endTime || '-',
-        shift?.computedDuration || '-',
+        shift?.computedDuration || (item.shiftCode === 'V' ? 'Jornada vacaciones retribuida' : '-'),
         extrasStr,
-        shift?.fixedRate || (item.shiftCode === 'D' ? 0 : convenio.ratesByYear[payroll.year]?.salarioBaseDia || 50.37),
+        shift?.fixedRate || (item.shiftCode === 'D' ? 0 : item.shiftCode === 'V' ? (convenio.ratesByYear[payroll.year]?.salarioBaseDia || 50.37) + (convenio.ratesByYear[payroll.year]?.plusVacacionesDia || 10.00) : convenio.ratesByYear[payroll.year]?.salarioBaseDia || 50.37),
       ];
     });
 

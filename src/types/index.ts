@@ -1,6 +1,6 @@
 export type DayType = 'laborable' | 'sabado' | 'festivo' | 'todos';
 
-export type ShiftCategory = 'todos' | 'mañana' | 'tarde' | 'partido' | 'noche' | 'sabado' | 'festivo' | 'discrecional' | 'descanso';
+export type ShiftCategory = 'todos' | 'mañana' | 'tarde' | 'partido' | 'noche' | 'sabado' | 'festivo' | 'discrecional' | 'descanso' | 'vacaciones';
 
 export type ShiftModality = 'continuado' | 'partido' | 'nocturno' | 'discrecional';
 
@@ -8,7 +8,7 @@ export interface ShiftDefinition {
   id: string;
   code: string;
   title: string;
-  category: 'mañana' | 'tarde' | 'partido' | 'noche' | 'discrecional' | 'descanso';
+  category: 'mañana' | 'tarde' | 'partido' | 'noche' | 'discrecional' | 'descanso' | 'vacaciones';
   dayType: DayType;
   modality: ShiftModality;
   terminal: string; // e.g. "Cochera Central - Línea 101"
@@ -62,6 +62,12 @@ export interface DayAssignment {
   customVehicle?: string;
   extras: DayExtraItem[];
   notes?: string;
+  // Terminado más tarde del turno (exceso de jornada / horas extraordinarias sin pasos mínimos de tiempo)
+  lateFinishMinutes?: number; // Total minutos de exceso (ej. 65 para 1h 5m, 40 para 40m)
+  lateFinishHours?: number;   // Componente de horas (ej. 1)
+  lateFinishMins?: number;    // Componente de minutos (ej. 5, 40)
+  lateFinishAmount?: number;  // Importe económico devengado (€)
+  lateFinishReason?: string;  // Motivo opcional (ej. Retraso por tráfico, avería, relevo tarde)
 }
 
 export interface ConvenioYearRate {
@@ -99,6 +105,8 @@ export interface ConvenioInfo {
 
 export type ExtraPayProrrateo = 'tres_pagas' | 'una_paga' | 'ninguna';
 
+export type ExtrasCutoffMode = 'direxis_25_24' | 'mes_natural' | 'personalizado';
+
 export interface WorkerProfile {
   name: string;
   nif: string;
@@ -110,10 +118,20 @@ export interface WorkerProfile {
   partTimePercentage?: number; // e.g. 50 (50%), 75 (75%)
   prorrateoPagasExtra: ExtraPayProrrateo; // 'tres_pagas' | 'una_paga' | 'ninguna'
   prorratearPagasExtra?: boolean; // legacy compatibility
+  extrasCutoffMode?: ExtrasCutoffMode; // 'direxis_25_24' (25 mes anterior al 24 actual) | 'mes_natural' (1 al 31) | 'personalizado'
+  customCutoffStartDay?: number; // e.g. 25
   hasMonetaryQuebranto: boolean; // cobra billetes en efectivo
   hasConductorPerceptorPlus: boolean;
+  hasVacationPlus100Percent?: boolean; // Activar automáticamente el plus de vacaciones (10 €/día) en días 'V' sólo si la jornada está al 100%
   unionFeeDeduction: number; // e.g. 0.00
   advancePayment: number; // anticipos
+}
+
+export interface PayrollExtraItemDetail {
+  date: string;
+  name: string;
+  amount: number;
+  notes?: string;
 }
 
 export interface PayrollBreakdown {
@@ -131,8 +149,18 @@ export interface PayrollBreakdown {
   nightHours: number;
   partTimeFactor: number; // 1 for full time, e.g. 0.5 for 50%
 
+  // Extras Cutoff Configuration info
+  extrasCutoffMode: ExtrasCutoffMode;
+  extrasCutoffPeriod: string; // e.g. "25 Sep al 24 Oct"
+  extrasCutoffLabel: string; // e.g. "Ciclo Direxis Zaragoza (25 al 24)"
+  extrasItemsList: PayrollExtraItemDetail[];
+  pendingNextMonthExtrasCount?: number; // Extras after cutoff in the current month
+  pendingNextMonthExtrasTotal?: number;
+
   // Devengos
   salarioBase: number;
+  retribucionVacacionesBase: number;
+  plusVacaciones: number;
   plusConductorPerceptor: number;
   plusQuebrantoMoneda: number;
   plusNocturnidad: number;
@@ -171,4 +199,19 @@ export interface PayrollBreakdown {
   ssEmpresaFogasa: number; // 0.20%
   ssEmpresaMEI: number; // 0.58%
   totalCosteEmpresa: number;
+}
+
+export interface MonthlySalaryEvolution {
+  month: number; // 1 to 12
+  monthName: string; // 'Ene', 'Feb', ...
+  fullMonthName: string; // 'Enero', 'Febrero', ...
+  year: number;
+  netSalary: number; // Líquido a percibir (€)
+  grossSalary: number; // Total devengado (€)
+  deductions: number; // Total deducido (€)
+  hasExtraPay: boolean; // Si tiene paga íntegra este mes
+  extraPayName?: string;
+  isProjected: boolean; // Si es proyección estimada o datos reales del cuadrante
+  workedDays: number;
+  totalHours: number;
 }

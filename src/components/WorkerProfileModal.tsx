@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { X, User, Building2, Briefcase, Percent, Check, HelpCircle, Clock, CalendarDays } from 'lucide-react';
-import { WorkerProfile, ExtraPayProrrateo } from '../types';
+import { X, User, Building2, Briefcase, Percent, Check, HelpCircle, Clock, CalendarDays, CalendarRange } from 'lucide-react';
+import { WorkerProfile, ExtraPayProrrateo, ExtrasCutoffMode } from '../types';
 
 interface WorkerProfileModalProps {
   isOpen: boolean;
@@ -19,6 +19,9 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
     ...profile,
     prorrateoPagasExtra: profile.prorrateoPagasExtra || (profile.prorratearPagasExtra !== false ? 'tres_pagas' : 'ninguna'),
     partTimePercentage: profile.partTimePercentage !== undefined ? profile.partTimePercentage : 50,
+    extrasCutoffMode: profile.extrasCutoffMode || 'direxis_25_24',
+    customCutoffStartDay: profile.customCutoffStartDay || 25,
+    hasVacationPlus100Percent: profile.hasVacationPlus100Percent !== undefined ? profile.hasVacationPlus100Percent : true,
   }));
 
   if (!isOpen) return null;
@@ -331,8 +334,158 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
               </div>
             </div>
 
+            {/* Extras Cutoff Mode (Ciclo de Cierre de Variables / Direxis Zaragoza) */}
+            <div className="space-y-2 pt-3 border-t border-slate-100">
+              <label className="text-[11px] font-bold text-slate-800 flex items-center gap-1.5">
+                <CalendarRange className="w-3.5 h-3.5 text-blue-600" />
+                Ciclo de Corte para Extras y Variables Fuera de Salario Base
+              </label>
+              <p className="text-[11px] text-slate-500 leading-relaxed">
+                El salario base se computa siempre por los días naturales del mes. Los conceptos variables y horas extras pueden liquidarse según el día de corte de la empresa para que la nómina se abone puntual.
+              </p>
+
+              <div className="space-y-2 pt-1">
+                {/* Opción 1: Direxis Zaragoza (25 mes anterior al 24 actual) */}
+                <label
+                  onClick={() => setFormData({ ...formData, extrasCutoffMode: 'direxis_25_24' })}
+                  className={`flex items-start gap-3 p-3 rounded-2xl border cursor-pointer transition-all ${
+                    formData.extrasCutoffMode === 'direxis_25_24'
+                      ? 'border-blue-600 bg-blue-50/60 shadow-2xs'
+                      : 'border-slate-200 bg-white hover:bg-slate-50'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="extrasCutoffMode"
+                    checked={formData.extrasCutoffMode === 'direxis_25_24'}
+                    onChange={() => setFormData({ ...formData, extrasCutoffMode: 'direxis_25_24' })}
+                    className="mt-0.5 text-blue-600 focus:ring-blue-500"
+                  />
+                  <div className="space-y-0.5">
+                    <p className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                      <span>Ciclo Oficial Direxis Zaragoza (del 25 al 24)</span>
+                      <span className="text-[10px] font-bold bg-blue-100 text-blue-800 px-1.5 py-0.2 rounded">
+                        Predeterminado
+                      </span>
+                    </p>
+                    <p className="text-[11px] text-slate-500 leading-normal">
+                      Los extras se cuentan desde el <strong>día 25 del mes anterior</strong> hasta el <strong>día 24 del mes en curso</strong>. Los extras generados a partir del día 25 pasan a la nómina del mes siguiente.
+                    </p>
+                  </div>
+                </label>
+
+                {/* Opción 2: Mes natural completo (1 al 31) */}
+                <label
+                  onClick={() => setFormData({ ...formData, extrasCutoffMode: 'mes_natural' })}
+                  className={`flex items-start gap-3 p-3 rounded-2xl border cursor-pointer transition-all ${
+                    formData.extrasCutoffMode === 'mes_natural'
+                      ? 'border-emerald-600 bg-emerald-50/60 shadow-2xs'
+                      : 'border-slate-200 bg-white hover:bg-slate-50'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="extrasCutoffMode"
+                    checked={formData.extrasCutoffMode === 'mes_natural'}
+                    onChange={() => setFormData({ ...formData, extrasCutoffMode: 'mes_natural' })}
+                    className="mt-0.5 text-emerald-600 focus:ring-emerald-500"
+                  />
+                  <div className="space-y-0.5">
+                    <p className="font-bold text-slate-900 text-xs">
+                      Mes Natural Completo (del día 1 al último día del mes)
+                    </p>
+                    <p className="text-[11px] text-slate-500 leading-normal">
+                      Todos los extras devengados entre el día 1 y el día 30/31 del mes en curso se liquidan en la misma nómina mensual.
+                    </p>
+                  </div>
+                </label>
+
+                {/* Opción 3: Personalizado */}
+                <label
+                  onClick={() => setFormData({ ...formData, extrasCutoffMode: 'personalizado' })}
+                  className={`flex items-start gap-3 p-3 rounded-2xl border cursor-pointer transition-all ${
+                    formData.extrasCutoffMode === 'personalizado'
+                      ? 'border-purple-600 bg-purple-50/60 shadow-2xs'
+                      : 'border-slate-200 bg-white hover:bg-slate-50'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="extrasCutoffMode"
+                    checked={formData.extrasCutoffMode === 'personalizado'}
+                    onChange={() => setFormData({ ...formData, extrasCutoffMode: 'personalizado' })}
+                    className="mt-0.5 text-purple-600 focus:ring-purple-500"
+                  />
+                  <div className="space-y-2 w-full">
+                    <p className="font-bold text-slate-900 text-xs">
+                      Día de corte personalizado
+                    </p>
+                    {formData.extrasCutoffMode === 'personalizado' && (
+                      <div className="flex items-center gap-2 pt-1">
+                        <span className="text-[11px] text-slate-600">Desde el día</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={28}
+                          value={formData.customCutoffStartDay || 25}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              customCutoffStartDay: Math.max(1, Math.min(28, parseInt(e.target.value, 10) || 25)),
+                            })
+                          }
+                          className="w-16 py-1 px-2 border border-slate-300 rounded-lg text-xs font-mono font-bold text-center bg-white"
+                        />
+                        <span className="text-[11px] text-slate-600">
+                          del mes anterior al{' '}
+                          <strong>{((formData.customCutoffStartDay || 25) - 1) || 31}</strong> del mes en curso.
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </label>
+              </div>
+            </div>
+
             {/* Agreement pluses */}
-            <div className="space-y-2 pt-2 border-t border-slate-100">
+            <div className="space-y-3 pt-3 border-t border-slate-100">
+              <span className="font-bold text-slate-900 uppercase tracking-wider text-[11px] block">
+                Pluses e Incentivos de Convenio
+              </span>
+
+              {/* Opción Plus de Vacaciones (10€/día en días 'V' sólo si el contrato está al 100%) */}
+              <div className="p-3 bg-cyan-50/70 rounded-2xl border border-cyan-200/80 space-y-1.5 transition-all">
+                <label className="flex items-start gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={formData.hasVacationPlus100Percent !== false}
+                    onChange={(e) => setFormData({ ...formData, hasVacationPlus100Percent: e.target.checked })}
+                    className="mt-0.5 rounded text-cyan-600 focus:ring-cyan-500 w-4 h-4 shrink-0"
+                  />
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="font-bold text-slate-900 text-xs">
+                        Activar automáticamente el Plus de Vacaciones (10 €/día)
+                      </span>
+                      <span className="text-[10px] font-bold bg-cyan-100 text-cyan-800 px-1.5 py-0.2 rounded">
+                        Art. 9 · Sólo al 100% de jornada
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-600 leading-normal">
+                      Aplica automáticamente el incentivo del Art. 9 del Convenio (10,00 €/día) en todos los días marcados como 'V' en el calendario, <strong>únicamente si el contrato se encuentra al 100% de jornada</strong>.
+                    </p>
+                    {isPartTime && (formData.partTimePercentage || 50) < 100 && (
+                      <div className="flex items-center gap-1.5 text-[10px] text-amber-800 bg-amber-100/70 p-1.5 rounded-lg font-medium mt-1">
+                        <span>ℹ️</span>
+                        <span>
+                          Tu jornada actual está configurada al <strong>{formData.partTimePercentage || 50}%</strong>. Este plus no se devengará en la nómina hasta alcanzar el 100% de jornada.
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </label>
+              </div>
+
               <label className="flex items-center gap-2 cursor-pointer p-2 rounded-xl hover:bg-slate-50 transition-colors">
                 <input
                   type="checkbox"

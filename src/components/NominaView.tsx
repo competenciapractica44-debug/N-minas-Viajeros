@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   FileText,
   Table as TableIcon,
@@ -10,19 +10,28 @@ import {
   AlertCircle,
   Clock,
   Coins,
+  CalendarRange,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import {
   PayrollBreakdown,
   WorkerProfile,
   ConvenioInfo,
+  MonthlySalaryEvolution,
 } from '../types';
 import { formatCurrency } from '../utils/exporter';
+import { YearlySalaryChart } from './YearlySalaryChart';
 
 interface NominaViewProps {
   payroll: PayrollBreakdown;
   profile: WorkerProfile;
   convenio: ConvenioInfo;
   monthName: string;
+  selectedYear: number;
+  selectedMonth: number;
+  yearlyEvolution: MonthlySalaryEvolution[];
+  onSelectMonth?: (month: number) => void;
   onUpdateProfile: (partial: Partial<WorkerProfile>) => void;
   onExportPDF: () => void;
   onExportExcel: () => void;
@@ -33,10 +42,15 @@ export const NominaView: React.FC<NominaViewProps> = ({
   profile,
   convenio,
   monthName,
+  selectedYear,
+  selectedMonth,
+  yearlyEvolution,
+  onSelectMonth,
   onUpdateProfile,
   onExportPDF,
   onExportExcel,
 }) => {
+  const [showExtrasDetails, setShowExtrasDetails] = useState(false);
   const isPartTime = profile.contractType === 'tiempo_parcial';
   const currentJornadaPercentage = isPartTime
     ? (profile.partTimePercentage !== undefined && profile.partTimePercentage > 0
@@ -127,6 +141,14 @@ export const NominaView: React.FC<NominaViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Visualización de Datos Recharts: Evolución Anual del Salario Neto */}
+      <YearlySalaryChart
+        data={yearlyEvolution}
+        selectedMonth={selectedMonth}
+        selectedYear={selectedYear}
+        onSelectMonth={onSelectMonth}
+      />
 
       {/* Interactive Controls Row: IRPF & Tanto por Ciento de Jornada */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -223,6 +245,100 @@ export const NominaView: React.FC<NominaViewProps> = ({
         </div>
       </div>
 
+      {/* Control Interactivo: Ciclo de Corte de Extras y Variables (Cierre Direxis) */}
+      <div className="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-xs space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+              <CalendarRange className="w-4 h-4" />
+            </div>
+            <div>
+              <h4 className="text-xs font-bold text-slate-900 leading-tight">
+                Ciclo de Corte para Extras y Variables
+              </h4>
+              <p className="text-[11px] text-slate-500">
+                El sueldo base corresponde a los días del mes natural. Los extras y variables se cierran según el ciclo de la empresa:
+              </p>
+            </div>
+          </div>
+          <div className="text-left sm:text-right shrink-0">
+            <span className="text-[10px] text-slate-400 block uppercase font-bold tracking-wider">Período de Extras</span>
+            <span className="text-xs font-mono font-bold text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded-lg border border-blue-200 inline-block">
+              {payroll.extrasCutoffPeriod}
+            </span>
+          </div>
+        </div>
+
+        {/* 3 options switcher */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <button
+            type="button"
+            onClick={() => onUpdateProfile({ extrasCutoffMode: 'direxis_25_24' })}
+            className={`p-2.5 rounded-xl border text-left transition-all flex flex-col justify-between ${
+              (profile.extrasCutoffMode || 'direxis_25_24') === 'direxis_25_24'
+                ? 'bg-blue-50/80 border-blue-600 ring-1 ring-blue-600 shadow-2xs'
+                : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-900">Direxis Zaragoza</span>
+              {(profile.extrasCutoffMode || 'direxis_25_24') === 'direxis_25_24' && (
+                <span className="w-2 h-2 rounded-full bg-blue-600"></span>
+              )}
+            </div>
+            <p className="text-[10px] text-slate-500 mt-1">Del 25 mes ant. al 24 actual</p>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onUpdateProfile({ extrasCutoffMode: 'mes_natural' })}
+            className={`p-2.5 rounded-xl border text-left transition-all flex flex-col justify-between ${
+              profile.extrasCutoffMode === 'mes_natural'
+                ? 'bg-emerald-50/80 border-emerald-600 ring-1 ring-emerald-600 shadow-2xs'
+                : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-900">Mes Natural</span>
+              {profile.extrasCutoffMode === 'mes_natural' && (
+                <span className="w-2 h-2 rounded-full bg-emerald-600"></span>
+              )}
+            </div>
+            <p className="text-[10px] text-slate-500 mt-1">Del día 1 al fin de mes</p>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onUpdateProfile({ extrasCutoffMode: 'personalizado', customCutoffStartDay: profile.customCutoffStartDay || 25 })}
+            className={`p-2.5 rounded-xl border text-left transition-all flex flex-col justify-between ${
+              profile.extrasCutoffMode === 'personalizado'
+                ? 'bg-purple-50/80 border-purple-600 ring-1 ring-purple-600 shadow-2xs'
+                : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-900">Personalizado</span>
+              {profile.extrasCutoffMode === 'personalizado' && (
+                <span className="w-2 h-2 rounded-full bg-purple-600"></span>
+              )}
+            </div>
+            <p className="text-[10px] text-slate-500 mt-1">
+              Del {profile.customCutoffStartDay || 25} al {(profile.customCutoffStartDay || 25) - 1}
+            </p>
+          </button>
+        </div>
+
+        {/* If pending extras after cutoff exist in current month */}
+        {payroll.pendingNextMonthExtrasCount && payroll.pendingNextMonthExtrasCount > 0 ? (
+          <div className="flex items-start gap-2 p-2.5 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-900">
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <div className="text-[11px] leading-tight">
+              <strong>{payroll.pendingNextMonthExtrasCount} extras generados entre el día 25 y el 31 (+{formatCurrency(payroll.pendingNextMonthExtrasTotal || 0)})</strong> pasarán a la nómina del mes siguiente según el corte oficial de Direxis.
+            </div>
+          </div>
+        ) : null}
+      </div>
+
       {/* Detailed Section: Devengos vs Deducciones */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* DEVENGOS (Percepciones Salariales) */}
@@ -241,12 +357,44 @@ export const NominaView: React.FC<NominaViewProps> = ({
               <div>
                 <p className="font-semibold text-slate-800">Salario Base Convenio</p>
                 <p className="text-[10px] text-slate-400">
-                  {payroll.workedDays} días x {formatCurrency(convenio.ratesByYear[payroll.year]?.salarioBaseDia || 50.37)}
+                  {payroll.workedDays} días trabajados
+                  {payroll.vacationDays > 0 && ` + ${payroll.vacationDays} días vacaciones`}
+                  {` x ${formatCurrency(convenio.ratesByYear[payroll.year]?.salarioBaseDia || 50.37)}`}
                   {payroll.partTimeFactor < 1 && ` (Jornada al ${Math.round(payroll.partTimeFactor * 100)}%)`}
                 </p>
               </div>
               <span className="font-bold font-mono text-slate-900">{formatCurrency(payroll.salarioBase)}</span>
             </div>
+
+            {payroll.plusVacaciones > 0 ? (
+              <div className="flex items-center justify-between pt-2 bg-cyan-50/70 p-2.5 rounded-xl border border-cyan-200">
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-cyan-500"></span>
+                    <p className="font-bold text-cyan-950">Plus de Vacaciones (Art. 9 Convenio)</p>
+                  </div>
+                  <p className="text-[10px] text-cyan-700">
+                    {payroll.vacationDays} {payroll.vacationDays === 1 ? 'día disfrutado' : 'días disfrutados'} x {formatCurrency(convenio.ratesByYear[payroll.year]?.plusVacacionesDia || 10.00)}/día (Contrato al 100%)
+                  </p>
+                </div>
+                <span className="font-extrabold font-mono text-cyan-800 text-sm">+{formatCurrency(payroll.plusVacaciones)}</span>
+              </div>
+            ) : payroll.vacationDays > 0 ? (
+              <div className="flex items-center justify-between pt-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-slate-600">
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-slate-400"></span>
+                    <p className="font-semibold text-slate-700">Plus de Vacaciones (Art. 9 Convenio)</p>
+                  </div>
+                  <p className="text-[10px] text-slate-500">
+                    {payroll.partTimeFactor < 1
+                      ? `Inactivo: Contrato al ${Math.round(payroll.partTimeFactor * 100)}% de jornada (la opción de perfil requiere jornada al 100%).`
+                      : 'Inactivo: Desactivado en el Perfil del trabajador.'}
+                  </p>
+                </div>
+                <span className="font-mono text-slate-400 text-xs">0,00 €</span>
+              </div>
+            ) : null}
 
             {payroll.plusConductorPerceptor > 0 && (
               <div className="flex items-center justify-between pt-2">
@@ -317,13 +465,76 @@ export const NominaView: React.FC<NominaViewProps> = ({
               </div>
             )}
 
-            {payroll.totalExtrasFueraConvenio > 0 && (
-              <div className="flex items-center justify-between pt-2 bg-amber-50/50 p-2 rounded-xl">
+            {payroll.importeHorasExtra > 0 && (
+              <div className="flex items-center justify-between pt-2 bg-indigo-50/70 p-2.5 rounded-xl border border-indigo-200/80">
                 <div>
-                  <p className="font-semibold text-amber-900">Complementos Fuera de Convenio</p>
-                  <p className="text-[10px] text-amber-700">Conceptos pactados asignados</p>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-indigo-600"></span>
+                    <p className="font-bold text-indigo-950">Horas Extraordinarias / Exceso Horario</p>
+                  </div>
+                  <p className="text-[10px] text-indigo-700">
+                    {payroll.horasExtra} horas acumuladas por terminar más tarde de turno ({formatCurrency(convenio.ratesByYear[payroll.year]?.horaOrdinaria || 12.87)}/h)
+                  </p>
                 </div>
-                <span className="font-bold font-mono text-amber-800">+{formatCurrency(payroll.totalExtrasFueraConvenio)}</span>
+                <span className="font-extrabold font-mono text-indigo-900 text-sm">+{formatCurrency(payroll.importeHorasExtra)}</span>
+              </div>
+            )}
+
+            {payroll.totalExtrasFueraConvenio > 0 ? (
+              <div className="pt-2 bg-amber-50/50 p-2.5 rounded-xl border border-amber-200/60 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <p className="font-semibold text-amber-900">Complementos y Extras Fuera de Convenio</p>
+                      <span className="text-[10px] font-bold bg-amber-100 text-amber-800 px-1.5 py-0.2 rounded">
+                        {payroll.extrasItemsList.length} extras
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-amber-700">
+                      Corte: <strong>{payroll.extrasCutoffPeriod}</strong>
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold font-mono text-amber-800">+{formatCurrency(payroll.totalExtrasFueraConvenio)}</span>
+                    {payroll.extrasItemsList.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setShowExtrasDetails(!showExtrasDetails)}
+                        className="text-amber-800 hover:text-amber-950 p-0.5 rounded transition-colors"
+                        title={showExtrasDetails ? 'Ocultar desglose' : 'Ver desglose'}
+                      >
+                        {showExtrasDetails ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Desglose de extras incluidos en el período de corte */}
+                {showExtrasDetails && payroll.extrasItemsList.length > 0 && (
+                  <div className="pt-2 border-t border-amber-200/60 space-y-1.5 text-[11px] animate-fadeIn">
+                    {payroll.extrasItemsList.map((item, idx) => (
+                      <div key={idx} className="flex items-center justify-between py-0.5 text-slate-700 border-b border-amber-100/60 last:border-0">
+                        <div className="flex items-center gap-1.5 truncate max-w-[210px] sm:max-w-xs">
+                          <span className="font-mono text-[10px] font-bold text-amber-800 bg-amber-100/70 px-1 rounded shrink-0">
+                            {item.date.slice(5)}
+                          </span>
+                          <span className="truncate">{item.name}</span>
+                        </div>
+                        <span className="font-mono font-bold text-emerald-800 shrink-0">
+                          +{formatCurrency(item.amount)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="flex items-center justify-between pt-2 text-slate-400">
+                <div>
+                  <p className="font-medium text-slate-500">Complementos y Extras Fuera de Convenio</p>
+                  <p className="text-[10px] text-slate-400">Sin extras en el ciclo ({payroll.extrasCutoffPeriod})</p>
+                </div>
+                <span className="font-mono text-slate-400">0,00 €</span>
               </div>
             )}
           </div>

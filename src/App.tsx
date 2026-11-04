@@ -19,7 +19,7 @@ import {
 import { ALL_INITIAL_SHIFTS } from './data/defaultTurnos';
 import { DEFAULT_EXTRAS } from './data/defaultExtras';
 import { DEFAULT_CONVENIO_ZARAGOZA } from './data/convenioZaragoza';
-import { calculateMonthlyPayroll } from './utils/calculator';
+import { calculateMonthlyPayroll, calculateYearlySalaryEvolution } from './utils/calculator';
 import { exportToPDF, exportToExcel } from './utils/exporter';
 
 const MONTH_NAMES = [
@@ -83,6 +83,10 @@ function getInitialOctoberAssignments(): DayAssignment[] {
       extras.push(
         { id: 'oct16-1', name: 'Gratificación refuerzo imprevisto', amount: 35.00 }
       );
+    } else if (d === 26) {
+      extras.push(
+        { id: 'oct26-1', name: 'Hora extra prolongación servicio', amount: 30.00, notes: 'Devengado tras el corte oficial de Direxis' }
+      );
     }
 
     assignments.push({
@@ -92,6 +96,27 @@ function getInitialOctoberAssignments(): DayAssignment[] {
       isSunday: [6, 13, 20, 27].includes(d),
       customLine: d === 24 ? 'Línea Interurbana 421 · Coche 304' : undefined,
       extras,
+    });
+  }
+
+  // Previous month tail: September 25-30 (relevant for Direxis 25 Sep - 24 Oct cutoff)
+  const sepSchedule: Record<number, { code: string; extras?: { id: string; name: string; amount: number; notes?: string }[] }> = {
+    25: { code: 'M1' },
+    26: { code: 'T1', extras: [{ id: 'sep26-1', name: 'Lavado y repostaje autocar', amount: 25.00, notes: 'Plus servicio tarde de septiembre' }] },
+    27: { code: 'M1' },
+    28: { code: 'D' },
+    29: { code: 'D' },
+    30: { code: 'M2' },
+  };
+
+  for (let d = 25; d <= 30; d++) {
+    const item = sepSchedule[d];
+    assignments.push({
+      date: `2024-09-${d}`,
+      shiftCode: item.code,
+      isRest: item.code === 'D',
+      isSunday: d === 29,
+      extras: item.extras || [],
     });
   }
 
@@ -109,7 +134,12 @@ export default function App() {
       const saved = localStorage.getItem('rutanomina_shifts_v6');
       if (saved) {
         const parsed: ShiftDefinition[] = JSON.parse(saved);
-        return parsed.filter((s) => s.category !== 'partido' && s.code !== 'SP1' && s.modality !== 'partido');
+        const filtered = parsed.filter((s) => s.category !== 'partido' && s.code !== 'SP1' && s.modality !== 'partido');
+        if (!filtered.some((s) => s.code === 'V')) {
+          const vDef = ALL_INITIAL_SHIFTS.find((s) => s.code === 'V');
+          if (vDef) filtered.push(vDef);
+        }
+        return filtered;
       }
       // Migrate from older version if present to incorporate new Saturday and Sunday/Holiday shifts, and clean out partido/SP1
       const oldSaved =
@@ -163,8 +193,16 @@ export default function App() {
   // Persistent Calendar Assignments
   const [assignments, setAssignments] = useState<DayAssignment[]>(() => {
     try {
-      const saved = localStorage.getItem('rutanomina_assignments_v1');
+      const saved = localStorage.getItem('rutanomina_assignments_v2');
       if (saved) return JSON.parse(saved);
+      const oldSaved = localStorage.getItem('rutanomina_assignments_v1');
+      if (oldSaved) {
+        const parsed: DayAssignment[] = JSON.parse(oldSaved);
+        const dates = new Set(parsed.map((a) => a.date));
+        const initial = getInitialOctoberAssignments();
+        const missing = initial.filter((a) => !dates.has(a.date));
+        return [...parsed, ...missing];
+      }
     } catch (e) {
       console.error(e);
     }
@@ -173,7 +211,7 @@ export default function App() {
 
   useEffect(() => {
     try {
-      localStorage.setItem('rutanomina_assignments_v1', JSON.stringify(assignments));
+      localStorage.setItem('rutanomina_assignments_v2', JSON.stringify(assignments));
     } catch (e) {
       console.error(e);
     }
@@ -202,7 +240,15 @@ export default function App() {
   const [profile, setProfile] = useState<WorkerProfile>(() => {
     try {
       const saved = localStorage.getItem('rutanomina_profile_v1');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return {
+          extrasCutoffMode: 'direxis_25_24',
+          customCutoffStartDay: 25,
+          hasVacationPlus100Percent: true,
+          ...parsed,
+        };
+      }
     } catch (e) {
       console.error(e);
     }
@@ -217,8 +263,11 @@ export default function App() {
       partTimePercentage: 50,
       prorrateoPagasExtra: 'tres_pagas',
       prorratearPagasExtra: true,
+      extrasCutoffMode: 'direxis_25_24',
+      customCutoffStartDay: 25,
       hasMonetaryQuebranto: true,
       hasConductorPerceptorPlus: true,
+      hasVacationPlus100Percent: true,
       unionFeeDeduction: 0,
       advancePayment: 0,
     };
@@ -265,6 +314,17 @@ export default function App() {
       selectedMonth
     );
   }, [assignments, shiftsMap, currentYearRate, profile, selectedYear, selectedMonth]);
+
+  // Computed 12-Month Salary Evolution across the selected year
+  const yearlyEvolution = useMemo(() => {
+    return calculateYearlySalaryEvolution(
+      selectedYear,
+      assignments,
+      shiftsMap,
+      convenio,
+      profile
+    );
+  }, [selectedYear, assignments, shiftsMap, convenio, profile]);
 
   // Turno actions
   const handleOpenNewTurno = () => {
@@ -417,6 +477,7 @@ export default function App() {
             shifts={shifts}
             extrasList={extras.filter((e) => e.active)}
             convenio={convenio}
+            profile={profile}
             onEditShift={handleEditTurno}
           />
         )}
@@ -426,6 +487,10 @@ export default function App() {
             payroll={monthlyPayroll}
             profile={profile}
             convenio={convenio}
+            selectedYear={selectedYear}
+            selectedMonth={selectedMonth}
+            yearlyEvolution={yearlyEvolution}
+            onSelectMonth={(m) => setSelectedMonth(m)}
             monthName={MONTH_NAMES[selectedMonth - 1]}
             onUpdateProfile={(partial) => setProfile((prev) => ({ ...prev, ...partial }))}
             onExportPDF={handleExportPDF}

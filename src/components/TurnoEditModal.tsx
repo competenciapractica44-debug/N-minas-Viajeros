@@ -17,6 +17,7 @@ const PRESET_COLORS = [
   { label: 'Amarillo (Mañana)', value: '#eab308' },
   { label: 'Azul Celeste (Tarde)', value: '#0284c7' },
   { label: 'Morado (Noche)', value: '#7c3aed' },
+  { label: 'Turquesa (Vacaciones)', value: '#06b6d4' },
   { label: 'Naranja (Partido)', value: '#f97316' },
   { label: 'Verde (Descanso)', value: '#10b981' },
   { label: 'Gris (Reserva)', value: '#64748b' },

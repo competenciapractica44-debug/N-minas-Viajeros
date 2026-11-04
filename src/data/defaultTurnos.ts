@@ -170,6 +170,23 @@ export const FEATURED_SHIFTS: ShiftDefinition[] = [
     badges: ['Descanso'],
   },
   {
+    id: 'turno-v',
+    code: 'V',
+    title: 'Vacaciones Retribuidas (Convenio Zaragoza)',
+    category: 'vacaciones',
+    dayType: 'todos',
+    modality: 'continuado',
+    terminal: 'Vacaciones anuales reglamentarias',
+    startTime: '00:00',
+    endTime: '00:00',
+    drivingDuration: '00:00',
+    computedDuration: 'Día de vacaciones retribuido',
+    fixedRate: 60.37,
+    color: '#06b6d4', // Cyan turquesa distintivo
+    badges: ['Vacaciones Art. 9', 'Plus 10,00 €/día', 'Retribuido'],
+    notes: 'Retribución de salario base diario (50,37 € en 2024) más plus de vacaciones de 10,00 €/día según Art. 9 del Convenio Colectivo de Transporte de Zaragoza (proporcional al % de jornada).',
+  },
+  {
     id: 'turno-r',
     code: 'R',
     title: 'Reserva de Cochera / Retén',

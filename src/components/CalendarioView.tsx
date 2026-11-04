@@ -1,8 +1,9 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
   Clock,
+  Timer,
   Plus,
   Trash2,
   Calendar as CalendarIcon,
@@ -10,14 +11,20 @@ import {
   Layers,
   Sparkles,
   Edit3,
+  ChevronDown,
+  ChevronUp,
+  RotateCcw,
+  AlertCircle,
 } from 'lucide-react';
 import {
   DayAssignment,
   ShiftDefinition,
   ExtraConcept,
   ConvenioInfo,
+  WorkerProfile,
 } from '../types';
 import { formatCurrency } from '../utils/exporter';
+import { formatMinutesToHoursAndMinutes } from '../utils/calculator';
 import { ConfirmModal } from './ConfirmModal';
 
 interface CalendarioViewProps {
@@ -29,6 +36,7 @@ interface CalendarioViewProps {
   shifts: ShiftDefinition[];
   extrasList: ExtraConcept[];
   convenio: ConvenioInfo;
+  profile?: WorkerProfile;
   onEditShift?: (shift: ShiftDefinition) => void;
 }
 
@@ -46,6 +54,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
   shifts,
   extrasList,
   convenio,
+  profile,
   onEditShift,
 }) => {
   const [selectedDayNumber, setSelectedDayNumber] = useState(1);
@@ -55,6 +64,18 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
   const [customExtraAmount, setCustomExtraAmount] = useState(25.00);
   const [showRemoveShiftConfirm, setShowRemoveShiftConfirm] = useState(false);
   const [extraToRemove, setExtraToRemove] = useState<{ id: string; name: string } | null>(null);
+
+  // Terminado más tarde del turno (horas y minutos sin pasos mínimos)
+  const [isLateSectionOpen, setIsLateSectionOpen] = useState(false);
+  const [lateHoursInput, setLateHoursInput] = useState(0);
+  const [lateMinsInput, setLateMinsInput] = useState(0);
+  const [lateReasonInput, setLateReasonInput] = useState('');
+
+  // Modal tab selector (Concepto vs Terminado más tarde)
+  const [modalExtraTab, setModalExtraTab] = useState<'concepto' | 'tiempo'>('concepto');
+  const [modalLateHours, setModalLateHours] = useState(0);
+  const [modalLateMins, setModalLateMins] = useState(40);
+  const [modalLateReason, setModalLateReason] = useState('');
 
   // Month navigation
   const handlePrevMonth = () => {
@@ -109,10 +130,66 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
     );
   }, [shiftsMap, shifts, currentAssignment.shiftCode]);
 
+  const horaOrdinariaRate = convenio.ratesByYear[selectedYear]?.horaOrdinaria || 12.87;
+
+  // Sync late finish inputs when selected day or assignment changes
+  useEffect(() => {
+    const mins = currentAssignment.lateFinishMinutes || 0;
+    const h = currentAssignment.lateFinishHours !== undefined
+      ? currentAssignment.lateFinishHours
+      : Math.floor(mins / 60);
+    const m = currentAssignment.lateFinishMins !== undefined
+      ? currentAssignment.lateFinishMins
+      : mins % 60;
+    setLateHoursInput(h);
+    setLateMinsInput(m);
+    setLateReasonInput(currentAssignment.lateFinishReason || '');
+    if (mins > 0) {
+      setIsLateSectionOpen(true);
+    }
+  }, [
+    selectedDateStr,
+    currentAssignment.lateFinishMinutes,
+    currentAssignment.lateFinishHours,
+    currentAssignment.lateFinishMins,
+    currentAssignment.lateFinishReason,
+  ]);
+
+  // Save / Update late finish
+  const handleSaveLateFinish = (hours: number, minutes: number, reason: string) => {
+    const safeH = Math.max(0, isNaN(hours) ? 0 : Math.floor(hours));
+    const safeM = Math.max(0, isNaN(minutes) ? 0 : Math.round(minutes));
+    const totalMinutes = safeH * 60 + safeM;
+    const amount = totalMinutes > 0 ? parseFloat(((totalMinutes / 60) * horaOrdinariaRate).toFixed(2)) : 0;
+
+    onUpdateAssignment(selectedDateStr, {
+      lateFinishMinutes: totalMinutes,
+      lateFinishHours: safeH,
+      lateFinishMins: safeM,
+      lateFinishAmount: amount,
+      lateFinishReason: reason.trim() || undefined,
+    });
+  };
+
+  const handleClearLateFinish = () => {
+    setLateHoursInput(0);
+    setLateMinsInput(0);
+    setLateReasonInput('');
+    setIsLateSectionOpen(false);
+    onUpdateAssignment(selectedDateStr, {
+      lateFinishMinutes: 0,
+      lateFinishHours: 0,
+      lateFinishMins: 0,
+      lateFinishAmount: 0,
+      lateFinishReason: undefined,
+    });
+  };
+
   // Counters
   const counters = useMemo(() => {
     let turnosCount = 0;
     let descansosCount = 0;
+    let vacacionesCount = 0;
     let extrasTotal = 0;
 
     for (let d = 1; d <= daysInMonth; d++) {
@@ -121,6 +198,8 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
       if (asg) {
         if (asg.shiftCode === 'D' || asg.isRest) {
           descansosCount++;
+        } else if (asg.shiftCode === 'V' || asg.isVacation) {
+          vacacionesCount++;
         } else if (asg.shiftCode) {
           turnosCount++;
         }
@@ -129,20 +208,56 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
             extrasTotal += e.amount;
           });
         }
+        if (asg.lateFinishMinutes && asg.lateFinishMinutes > 0) {
+          const lateAmt = asg.lateFinishAmount !== undefined
+            ? asg.lateFinishAmount
+            : (asg.lateFinishMinutes / 60) * horaOrdinariaRate;
+          extrasTotal += lateAmt;
+        }
       }
     }
-    return { turnosCount, descansosCount, extrasTotal };
-  }, [assignments, daysInMonth, selectedYear, selectedMonth]);
+    return { turnosCount, descansosCount, vacacionesCount, extrasTotal };
+  }, [assignments, daysInMonth, selectedYear, selectedMonth, horaOrdinariaRate]);
+
+  // Helper: check if vacation plus (10€/day) applies based on profile 100% contract condition
+  const isJornada100 = !profile || profile.contractType !== 'tiempo_parcial' || (profile.partTimePercentage || 100) >= 100;
+  const isAutoVacationPlusActive = profile?.hasVacationPlus100Percent !== false;
+  const appliesVacationPlus = isAutoVacationPlusActive && isJornada100;
 
   // Day subtotal devengado
   const selectedDayTotal = useMemo(() => {
     let base = 0;
-    if (currentShift && currentShift.code !== 'D') {
-      base = currentShift.fixedRate || convenio.ratesByYear[selectedYear]?.salarioBaseDia || 50.37;
+    if (currentShift) {
+      if (currentShift.code === 'D') {
+        base = 0;
+      } else if (currentShift.code === 'V') {
+        const factor = (!isJornada100 && profile?.partTimePercentage) ? profile.partTimePercentage / 100 : 1;
+        const baseDia = (convenio.ratesByYear[selectedYear]?.salarioBaseDia || 50.37) * factor;
+        const plusVac = appliesVacationPlus ? (convenio.ratesByYear[selectedYear]?.plusVacacionesDia || 10.00) : 0;
+        base = baseDia + plusVac;
+      } else {
+        base = currentShift.fixedRate || convenio.ratesByYear[selectedYear]?.salarioBaseDia || 50.37;
+      }
     }
     const extrasSum = currentAssignment.extras?.reduce((sum, e) => sum + e.amount, 0) || 0;
-    return base + extrasSum;
-  }, [currentShift, currentAssignment.extras, convenio, selectedYear]);
+    const lateAmt = currentAssignment.lateFinishAmount !== undefined
+      ? currentAssignment.lateFinishAmount
+      : (currentAssignment.lateFinishMinutes
+          ? parseFloat(((currentAssignment.lateFinishMinutes / 60) * horaOrdinariaRate).toFixed(2))
+          : 0);
+    return base + extrasSum + lateAmt;
+  }, [
+    currentShift,
+    currentAssignment.extras,
+    currentAssignment.lateFinishMinutes,
+    currentAssignment.lateFinishAmount,
+    convenio,
+    selectedYear,
+    isJornada100,
+    appliesVacationPlus,
+    profile?.partTimePercentage,
+    horaOrdinariaRate,
+  ]);
 
   // Date formatted in human Spanish
   const formattedDayTitle = useMemo(() => {
@@ -155,10 +270,10 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
 
   // Assign shift quickly
   const handleAssignShift = (code: string) => {
-    const shift = shiftsMap.get(code);
     onUpdateAssignment(selectedDateStr, {
       shiftCode: code,
       isRest: code === 'D',
+      isVacation: code === 'V',
     });
   };
 
@@ -229,7 +344,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
       </div>
 
       {/* KPI Counters Banner matching screenshot 3 */}
-      <div className="flex items-center justify-center gap-4 text-xs font-semibold py-1">
+      <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-4 text-xs font-semibold py-1">
         <span className="flex items-center gap-1.5 text-slate-700">
           <span className="w-2 h-2 rounded-full bg-blue-600"></span>
           <strong>{counters.turnosCount}</strong> Turnos
@@ -239,6 +354,15 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
           <span className="w-2 h-2 rounded-full bg-emerald-600"></span>
           <strong>{counters.descansosCount}</strong> Descansos
         </span>
+        {counters.vacacionesCount > 0 && (
+          <>
+            <span className="text-slate-300">·</span>
+            <span className="flex items-center gap-1.5 text-cyan-800">
+              <span className="w-2 h-2 rounded-full bg-cyan-500"></span>
+              <strong>{counters.vacacionesCount}</strong> Vacaciones
+            </span>
+          </>
+        )}
         <span className="text-slate-300">·</span>
         <span className="flex items-center gap-1.5 text-slate-700">
           <span className="w-2 h-2 rounded-full bg-amber-500"></span>
@@ -276,9 +400,10 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
             const shiftCode = asg?.shiftCode;
             const shiftDef = shiftCode ? shiftsMap.get(shiftCode) || shifts.find((s) => s.code === shiftCode) : null;
             const isSelected = selectedDayNumber === dayNum;
-            const hasExtras = asg?.extras && asg.extras.length > 0;
+            const hasExtras = (asg?.extras && asg.extras.length > 0) || Boolean(asg?.lateFinishMinutes && asg.lateFinishMinutes > 0);
 
             const isRest = shiftCode === 'D' || asg?.isRest;
+            const isVacation = shiftCode === 'V' || asg?.isVacation;
 
             // Determine badge appearance
             let badgeBg = '#f1f5f9';
@@ -286,6 +411,9 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
             if (isRest) {
               badgeBg = '#dcfce7'; // green
               badgeColor = '#15803d';
+            } else if (isVacation) {
+              badgeBg = '#cffafe'; // cyan-100
+              badgeColor = '#0891b2'; // cyan-600
             } else if (shiftDef) {
               badgeBg = `${shiftDef.color}18`;
               badgeColor = shiftDef.color;
@@ -399,48 +527,324 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
 
         {/* Shift Details Box */}
         {currentShift ? (
-          <div className="bg-slate-50/80 rounded-2xl p-3.5 border border-slate-200/70 space-y-2">
-            <div className="flex items-center justify-between text-xs font-semibold text-slate-800">
-              <span className="flex items-center gap-1.5 text-slate-700">
-                <Clock className="w-3.5 h-3.5 text-blue-600" />
-                {currentShift.modality === 'partido' && currentShift.secondStartTime
-                  ? `Horario Partido (${currentShift.startTime}-${currentShift.endTime} / ${currentShift.secondStartTime}-${currentShift.secondEndTime})`
-                  : `Horario Continuo (${currentShift.startTime} - ${currentShift.endTime})`}
-              </span>
-              <span className="text-sm font-bold font-mono text-slate-900">
-                {formatCurrency(currentShift.fixedRate || convenio.ratesByYear[selectedYear]?.salarioBaseDia || 0)}
-              </span>
+          currentShift.code === 'V' ? (
+            <div className="bg-cyan-50/90 rounded-2xl p-3.5 border border-cyan-200/80 space-y-2">
+              <div className="flex items-center justify-between text-xs font-semibold text-cyan-950">
+                <span className="flex items-center gap-1.5 font-bold">
+                  <CalendarIcon className="w-4 h-4 text-cyan-600" />
+                  Vacaciones Anuales Retribuidas
+                </span>
+                <span className="text-sm font-bold font-mono text-cyan-800">
+                  {formatCurrency(
+                    ((convenio.ratesByYear[selectedYear]?.salarioBaseDia || 50.37) * (!isJornada100 && profile?.partTimePercentage ? profile.partTimePercentage / 100 : 1)) +
+                    (appliesVacationPlus ? (convenio.ratesByYear[selectedYear]?.plusVacacionesDia || 10.00) : 0)
+                  )}
+                </span>
+              </div>
+              {appliesVacationPlus ? (
+                <p className="text-[11px] text-cyan-800 leading-relaxed">
+                  Jornada retribuida completa (100%): Salario Base diario ({formatCurrency(convenio.ratesByYear[selectedYear]?.salarioBaseDia || 50.37)}) + <strong>Plus de Vacaciones de {formatCurrency(convenio.ratesByYear[selectedYear]?.plusVacacionesDia || 10.00)}/día</strong> según el Art. 9 del Convenio Colectivo de Zaragoza.
+                </p>
+              ) : !isJornada100 ? (
+                <p className="text-[11px] text-cyan-900 leading-relaxed">
+                  Jornada de vacaciones retribuida con Salario Base proporcional ({formatCurrency((convenio.ratesByYear[selectedYear]?.salarioBaseDia || 50.37) * ((profile?.partTimePercentage || 50) / 100))}). El <strong>Plus de Vacaciones (10 €/día)</strong> no se devenga al estar contratado al {profile?.partTimePercentage || 50}% (la opción configurada en el perfil requiere contrato al 100%).
+                </p>
+              ) : (
+                <p className="text-[11px] text-cyan-900 leading-relaxed">
+                  Jornada de vacaciones retribuida con Salario Base diario ({formatCurrency(convenio.ratesByYear[selectedYear]?.salarioBaseDia || 50.37)}). El <strong>Plus de Vacaciones (10 €/día)</strong> se encuentra desactivado en tu Perfil de trabajador.
+                </p>
+              )}
+              <div className="flex items-center justify-between text-[11px] text-cyan-700 pt-1 border-t border-cyan-200/60">
+                <span className="flex items-center gap-1 font-medium">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-cyan-600" />
+                  {appliesVacationPlus ? 'Plus de 10 €/día activo (contrato al 100%)' : 'Retribución Salario Base diaria'}
+                </span>
+                <span className="text-[10px] font-bold text-cyan-700 uppercase bg-cyan-100 px-2 py-0.5 rounded-md">Art. 9 Convenio</span>
+              </div>
             </div>
+          ) : (
+            <div className="bg-slate-50/80 rounded-2xl p-3.5 border border-slate-200/70 space-y-2">
+              <div className="flex items-center justify-between text-xs font-semibold text-slate-800">
+                <span className="flex items-center gap-1.5 text-slate-700">
+                  <Clock className="w-3.5 h-3.5 text-blue-600" />
+                  {currentShift.modality === 'partido' && currentShift.secondStartTime
+                    ? `Horario Partido (${currentShift.startTime}-${currentShift.endTime} / ${currentShift.secondStartTime}-${currentShift.secondEndTime})`
+                    : `Horario Continuo (${currentShift.startTime} - ${currentShift.endTime})`}
+                </span>
+                <span className="text-sm font-bold font-mono text-slate-900">
+                  {formatCurrency(currentShift.fixedRate || convenio.ratesByYear[selectedYear]?.salarioBaseDia || 0)}
+                </span>
+              </div>
 
-            <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1 border-t border-slate-200/50">
-              <span className="flex items-center gap-1 text-emerald-700 font-medium">
-                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                Tarifa BD: {currentShift.computedDuration || 'Jornada completa'}
-              </span>
-              <span className="text-[10px] font-bold text-slate-400 uppercase">Fijado BD</span>
+              <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1 border-t border-slate-200/50">
+                <span className="flex items-center gap-1 text-emerald-700 font-medium">
+                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                  Tarifa BD: {currentShift.computedDuration || 'Jornada completa'}
+                </span>
+                <span className="text-[10px] font-bold text-slate-400 uppercase">Fijado BD</span>
+              </div>
             </div>
-          </div>
+          )
         ) : (
           <div className="p-3 bg-slate-50 rounded-xl text-center text-xs text-slate-500 border border-dashed border-slate-200">
             Ningún turno asignado para este día. Elige uno abajo en el teclado rápido.
           </div>
         )}
 
-        {/* PARTICULARIDADES / EXTRAS DEL DÍA matching screenshot 3 */}
+        {/* PARTICULARIDADES / EXTRAS DEL DÍA matching screenshot 3 & User Request */}
         <div className="space-y-2.5 pt-1">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
               Particularidades / Extras del Día
             </span>
-            <button
-              onClick={() => setIsAddingExtraModal(true)}
-              className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1 hover:underline"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Añadir</span>
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setIsLateSectionOpen(!isLateSectionOpen)}
+                className={`text-xs font-bold px-2.5 py-1 rounded-lg border flex items-center gap-1 transition-all ${
+                  isLateSectionOpen || (currentAssignment.lateFinishMinutes || 0) > 0
+                    ? 'bg-indigo-50 border-indigo-300 text-indigo-700 ring-1 ring-indigo-200'
+                    : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                }`}
+                title="Desplegar opciones para indicar si se ha terminado más tarde de lo que marca el turno"
+              >
+                <Clock className="w-3.5 h-3.5 text-indigo-600" />
+                <span>Terminado más tarde</span>
+                {(currentAssignment.lateFinishMinutes || 0) > 0 && (
+                  <span className="w-2 h-2 rounded-full bg-indigo-600"></span>
+                )}
+                {isLateSectionOpen ? <ChevronUp className="w-3 h-3 text-indigo-600" /> : <ChevronDown className="w-3 h-3 text-slate-400" />}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setModalExtraTab('concepto');
+                  setIsAddingExtraModal(true);
+                }}
+                className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1 hover:underline px-1 py-1"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Añadir</span>
+              </button>
+            </div>
           </div>
 
+          {/* APARTADO DESPLEGABLE: Terminado más tarde de lo que marca el turno */}
+          {isLateSectionOpen ? (
+            <div className="bg-gradient-to-br from-indigo-50/90 via-blue-50/50 to-indigo-50/80 rounded-2xl p-3.5 border border-indigo-200/90 shadow-2xs space-y-3 transition-all animate-in fade-in duration-200">
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 bg-indigo-600 text-white rounded-lg shadow-xs">
+                    <Timer className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                      Terminado más tarde de lo que marca el turno
+                    </h4>
+                    <p className="text-[10px] text-slate-500">
+                      Indica el exceso horario (horas y minutos libres sin pasos mínimos).
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsLateSectionOpen(false)}
+                  className="p-1 text-slate-400 hover:text-slate-600 rounded-md transition-colors"
+                  title="Plegar apartado"
+                >
+                  <ChevronUp className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Dual Time inputs: Horas y Minutos libres sin pasos mínimos */}
+              <div className="grid grid-cols-2 gap-2 sm:gap-3 bg-white p-2.5 rounded-xl border border-indigo-100 shadow-2xs">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[11px] font-bold text-slate-700">
+                      Horas (h)
+                    </label>
+                    <span className="text-[10px] text-slate-400">Paso libre</span>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      min="0"
+                      max="24"
+                      step="1"
+                      value={lateHoursInput === 0 ? '' : lateHoursInput}
+                      onChange={(e) => {
+                        const val = e.target.value === '' ? 0 : parseInt(e.target.value) || 0;
+                        setLateHoursInput(val);
+                        handleSaveLateFinish(val, lateMinsInput, lateReasonInput);
+                      }}
+                      placeholder="0"
+                      className="w-full py-2 px-3 pr-8 text-center text-lg font-black font-mono rounded-xl border border-slate-200 bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500"
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">h</span>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[11px] font-bold text-slate-700">
+                      Minutos (min)
+                    </label>
+                    <span className="text-[10px] text-indigo-600 font-medium">Sin mínimo</span>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      min="0"
+                      max="59"
+                      step="1"
+                      value={lateMinsInput === 0 ? '' : lateMinsInput}
+                      onChange={(e) => {
+                        const val = e.target.value === '' ? 0 : parseInt(e.target.value) || 0;
+                        setLateMinsInput(val);
+                        handleSaveLateFinish(lateHoursInput, val, lateReasonInput);
+                      }}
+                      placeholder="0"
+                      className="w-full py-2 px-3 pr-10 text-center text-lg font-black font-mono rounded-xl border border-slate-200 bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500"
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">min</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Botones de sugerencia / atajos rápidos */}
+              <div className="space-y-1.5">
+                <span className="text-[10px] font-semibold text-slate-500 block">Atajos rápidos (puedes pulsar o teclear cualquier minuto arriba):</span>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {[
+                    { label: '+5 min', addH: 0, addM: 5 },
+                    { label: '+10 min', addH: 0, addM: 10 },
+                    { label: '+15 min', addH: 0, addM: 15 },
+                    { label: '+30 min', addH: 0, addM: 30 },
+                    { label: '40 min', setH: 0, setM: 40 },
+                    { label: '1h y 5m', setH: 1, setM: 5 },
+                    { label: '+1 hora', addH: 1, addM: 0 },
+                  ].map((preset) => (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      onClick={() => {
+                        let newH = lateHoursInput;
+                        let newM = lateMinsInput;
+                        if (preset.setH !== undefined) {
+                          newH = preset.setH;
+                          newM = preset.setM || 0;
+                        } else {
+                          const total = newH * 60 + newM + (preset.addH || 0) * 60 + (preset.addM || 0);
+                          newH = Math.floor(total / 60);
+                          newM = total % 60;
+                        }
+                        setLateHoursInput(newH);
+                        setLateMinsInput(newM);
+                        handleSaveLateFinish(newH, newM, lateReasonInput);
+                      }}
+                      className="text-[10px] font-bold px-2 py-1 bg-white hover:bg-indigo-50 text-indigo-700 rounded-lg border border-indigo-200/90 transition-colors shadow-2xs"
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                  {(lateHoursInput > 0 || lateMinsInput > 0) && (
+                    <button
+                      type="button"
+                      onClick={handleClearLateFinish}
+                      className="text-[10px] font-semibold px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg border border-rose-200 transition-colors ml-auto flex items-center gap-1"
+                    >
+                      <RotateCcw className="w-3 h-3" />
+                      <span>Limpiar</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Motivo opcional */}
+              <div>
+                <label className="text-[11px] font-semibold text-slate-700 block mb-1">
+                  Motivo / Incidencia del retraso (opcional)
+                </label>
+                <input
+                  type="text"
+                  value={lateReasonInput}
+                  onChange={(e) => {
+                    setLateReasonInput(e.target.value);
+                    handleSaveLateFinish(lateHoursInput, lateMinsInput, e.target.value);
+                  }}
+                  placeholder="ej. Retraso por atasco en entrada, espera relevo, avería..."
+                  className="w-full text-xs py-1.5 px-3 rounded-xl border border-slate-200 bg-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                />
+              </div>
+
+              {/* Live Preview Box */}
+              {lateHoursInput > 0 || lateMinsInput > 0 ? (
+                <div className="flex items-center justify-between p-2.5 bg-indigo-600 text-white rounded-xl text-xs font-semibold shadow-xs">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-indigo-200 shrink-0" />
+                    <div>
+                      <p className="font-bold">
+                        +{formatMinutesToHoursAndMinutes(lateHoursInput * 60 + lateMinsInput)} de exceso
+                      </p>
+                      <p className="text-[10px] text-indigo-200">
+                        {lateHoursInput * 60 + lateMinsInput} min totales a {formatCurrency(horaOrdinariaRate)}/h
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-sm font-black font-mono">
+                    +{formatCurrency(parseFloat((((lateHoursInput * 60 + lateMinsInput) / 60) * horaOrdinariaRate).toFixed(2)))}
+                  </span>
+                </div>
+              ) : (
+                <div className="p-2 bg-white/70 rounded-xl text-center text-[11px] text-slate-500 italic border border-indigo-100">
+                  Introduce arriba horas o minutos para computar el exceso en la nómina.
+                </div>
+              )}
+            </div>
+          ) : (currentAssignment.lateFinishMinutes || 0) > 0 ? (
+            /* Card cuando está plegado pero hay minutos guardados */
+            <div className="flex items-center justify-between p-2.5 bg-indigo-50/80 rounded-xl border border-indigo-200 text-xs">
+              <div className="flex items-center gap-2">
+                <div className="p-1 bg-indigo-600 text-white rounded-lg">
+                  <Clock className="w-3.5 h-3.5" />
+                </div>
+                <div>
+                  <p className="font-bold text-indigo-950">
+                    Terminado más tarde: +{formatMinutesToHoursAndMinutes(currentAssignment.lateFinishMinutes || 0)}
+                  </p>
+                  {currentAssignment.lateFinishReason ? (
+                    <p className="text-[10px] text-indigo-700">{currentAssignment.lateFinishReason}</p>
+                  ) : (
+                    <p className="text-[10px] text-indigo-600">Exceso compensado según Art. 16/12 Convenio</p>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="font-bold font-mono text-indigo-900">
+                  +{formatCurrency(currentAssignment.lateFinishAmount || (((currentAssignment.lateFinishMinutes || 0) / 60) * horaOrdinariaRate))}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsLateSectionOpen(true)}
+                  className="px-2 py-0.5 text-indigo-600 hover:text-indigo-800 hover:bg-indigo-100 rounded-md transition-colors text-[10px] font-bold"
+                  title="Modificar exceso de tiempo"
+                >
+                  Editar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClearLateFinish}
+                  className="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors"
+                  title="Eliminar exceso de jornada"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {/* Lista de otros extras asignados */}
           {currentAssignment.extras && currentAssignment.extras.length > 0 ? (
             <div className="space-y-2">
               {currentAssignment.extras.map((extra) => (
@@ -472,7 +876,9 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
               ))}
             </div>
           ) : (
-            <p className="text-xs text-slate-400 italic">Sin extras asignados para este día.</p>
+            !isLateSectionOpen && !(currentAssignment.lateFinishMinutes && currentAssignment.lateFinishMinutes > 0) && (
+              <p className="text-xs text-slate-400 italic">Sin extras asignados para este día.</p>
+            )
           )}
 
           {/* Subtotal devengado del día matching screenshot 3 */}
@@ -502,13 +908,22 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
         </div>
 
         {/* Quick buttons strip */}
-        <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
           {[
             { code: 'M1', label: 'Mañana', rate: 82.00, color: '#eab308' },
             { code: 'T1', label: 'Tarde', rate: 82.00, color: '#0284c7' },
             { code: 'S1', label: 'Sábado', rate: 82.00, color: '#0284c7' },
             { code: 'N1', label: 'Nocturno', rate: 104.50, color: '#7c3aed' },
             { code: 'D', label: 'Descanso', rate: 0, color: '#10b981' },
+            {
+              code: 'V',
+              label: 'Vacaciones',
+              rate: appliesVacationPlus
+                ? 60.37
+                : Math.round(((convenio.ratesByYear[selectedYear]?.salarioBaseDia || 50.37) * (!isJornada100 && profile?.partTimePercentage ? profile.partTimePercentage / 100 : 1)) * 100) / 100,
+              color: '#06b6d4',
+              subtitle: appliesVacationPlus ? '+10€' : 'Base',
+            },
             { code: 'R', label: 'Reserva', rate: 78.50, color: '#eab308' },
           ].map((item) => (
             <button
@@ -528,6 +943,11 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                 >
                   {item.code}
                 </span>
+                {item.subtitle && (
+                  <span className="text-[9px] font-bold text-cyan-800 bg-cyan-100 px-1 py-0.5 rounded">
+                    {item.subtitle}
+                  </span>
+                )}
               </div>
               <div className="mt-1">
                 <span className="text-[11px] font-semibold text-slate-700 block truncate">
@@ -552,7 +972,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
           >
             <option value="">Seleccionar entre todos los partes Direxis Zaragoza (98 turnos)...</option>
             {shifts
-              .filter((s) => !['M1', 'T1', 'S1', 'N1', 'D', 'R'].includes(s.code))
+              .filter((s) => !['M1', 'T1', 'S1', 'N1', 'D', 'R', 'V'].includes(s.code))
               .map((s) => (
                 <option key={s.id} value={s.code}>
                   {s.code} · {s.title} ({s.startTime}-{s.endTime}) - {formatCurrency(s.fixedRate || 0)}
@@ -562,81 +982,259 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
         </div>
       </div>
 
-      {/* Modal to add extra concept to day */}
+      {/* Modal to add extra concept or late finish to day */}
       {isAddingExtraModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
           <div className="bg-white w-full max-w-sm rounded-3xl p-5 shadow-2xl border border-slate-200 space-y-4">
-            <h3 className="text-sm font-bold text-slate-900">Añadir Extra al Día {selectedDayNumber}</h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-slate-900">Particularidades · Día {selectedDayNumber}</h3>
+              <span className="text-[10px] font-bold uppercase text-slate-400 bg-slate-100 px-2 py-0.5 rounded-md">
+                {MONTH_NAMES[selectedMonth - 1]}
+              </span>
+            </div>
 
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs font-semibold text-slate-600 block mb-1">
-                  Elegir concepto preconfigurado
-                </label>
-                <select
-                  value={selectedExtraConceptId}
-                  onChange={(e) => {
-                    setSelectedExtraConceptId(e.target.value);
-                    const found = extrasList.find((x) => x.id === e.target.value);
-                    if (found) {
-                      setCustomExtraName(found.name);
-                      setCustomExtraAmount(found.amount);
-                    }
-                  }}
-                  className="w-full text-xs py-2 px-3 rounded-xl border border-slate-200 bg-white"
-                >
-                  <option value="">-- Seleccionar o escribir manual --</option>
-                  {extrasList.map((e) => (
-                    <option key={e.id} value={e.id}>
-                      {e.name} (+{formatCurrency(e.amount)})
-                    </option>
+            {/* Modal Tabs */}
+            <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-xl text-xs font-bold">
+              <button
+                type="button"
+                onClick={() => setModalExtraTab('concepto')}
+                className={`py-1.5 rounded-lg transition-all text-center ${
+                  modalExtraTab === 'concepto'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-500 hover:text-slate-900'
+                }`}
+              >
+                Concepto Extra (€)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setModalExtraTab('tiempo');
+                  setModalLateHours(lateHoursInput || 0);
+                  setModalLateMins(lateMinsInput || (currentAssignment.lateFinishMinutes ? currentAssignment.lateFinishMinutes % 60 : 40));
+                  setModalLateReason(lateReasonInput || currentAssignment.lateFinishReason || '');
+                }}
+                className={`py-1.5 rounded-lg transition-all text-center flex items-center justify-center gap-1 ${
+                  modalExtraTab === 'tiempo'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'text-slate-500 hover:text-indigo-600'
+                }`}
+              >
+                <Clock className="w-3.5 h-3.5" />
+                <span>Terminado Tarde</span>
+              </button>
+            </div>
+
+            {modalExtraTab === 'concepto' ? (
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-600 block mb-1">
+                    Elegir concepto preconfigurado
+                  </label>
+                  <select
+                    value={selectedExtraConceptId}
+                    onChange={(e) => {
+                      if (e.target.value === '__late_finish__') {
+                        setModalExtraTab('tiempo');
+                        setModalLateHours(lateHoursInput || 0);
+                        setModalLateMins(lateMinsInput || 40);
+                        return;
+                      }
+                      setSelectedExtraConceptId(e.target.value);
+                      const found = extrasList.find((x) => x.id === e.target.value);
+                      if (found) {
+                        setCustomExtraName(found.name);
+                        setCustomExtraAmount(found.amount);
+                      }
+                    }}
+                    className="w-full text-xs py-2 px-3 rounded-xl border border-slate-200 bg-white"
+                  >
+                    <option value="">-- Seleccionar o escribir manual --</option>
+                    <option value="__late_finish__">⏱️ Terminado más tarde del turno (Horas y minutos)</option>
+                    {extrasList.map((e) => (
+                      <option key={e.id} value={e.id}>
+                        {e.name} (+{formatCurrency(e.amount)})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-slate-600 block mb-1">
+                    Descripción del Concepto
+                  </label>
+                  <input
+                    type="text"
+                    value={customExtraName}
+                    onChange={(e) => setCustomExtraName(e.target.value)}
+                    placeholder="ej. Limpieza interior autocar"
+                    className="w-full text-xs py-2 px-3 rounded-xl border border-slate-200"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-slate-600 block mb-1">
+                    Importe Bruto Adicional (€)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    value={customExtraAmount}
+                    onChange={(e) => setCustomExtraAmount(parseFloat(e.target.value) || 0)}
+                    className="w-full text-xs py-2 px-3 rounded-xl border border-slate-200 font-mono font-bold"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={handleAddExtraToDay}
+                    className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs transition-colors"
+                  >
+                    Añadir al Día
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsAddingExtraModal(false)}
+                    className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-xs transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* Modal Tab: Terminado más tarde de horario (horas y minutos libres) */
+              <div className="space-y-3">
+                <div className="p-2.5 bg-indigo-50/80 rounded-xl border border-indigo-100 text-xs text-indigo-900 leading-relaxed">
+                  <strong>Tiempo trabajado tras fin de turno:</strong> Puedes indicar horas y minutos libremente (ej. 40 min, 1h y 5 min). Se retribuye a {formatCurrency(horaOrdinariaRate)}/h.
+                </div>
+
+                {/* Dual Horas & Minutos inputs */}
+                <div className="grid grid-cols-2 gap-2.5 bg-slate-50 p-3 rounded-2xl border border-slate-200">
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-700 block mb-1">Horas (h)</label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        min="0"
+                        max="24"
+                        step="1"
+                        value={modalLateHours === 0 ? '' : modalLateHours}
+                        onChange={(e) => setModalLateHours(e.target.value === '' ? 0 : parseInt(e.target.value) || 0)}
+                        placeholder="0"
+                        className="w-full py-2 px-2.5 pr-7 text-center text-lg font-black font-mono rounded-xl border border-slate-200 bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                      <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">h</span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-700 block mb-1">Minutos (min)</label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        min="0"
+                        max="59"
+                        step="1"
+                        value={modalLateMins === 0 ? '' : modalLateMins}
+                        onChange={(e) => setModalLateMins(e.target.value === '' ? 0 : parseInt(e.target.value) || 0)}
+                        placeholder="0"
+                        className="w-full py-2 px-2.5 pr-8 text-center text-lg font-black font-mono rounded-xl border border-slate-200 bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                      <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">min</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Preset Chips */}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {[
+                    { label: '+5m', addM: 5 },
+                    { label: '+10m', addM: 10 },
+                    { label: '+15m', addM: 15 },
+                    { label: '+30m', addM: 30 },
+                    { label: '40 min', setH: 0, setM: 40 },
+                    { label: '1h y 5m', setH: 1, setM: 5 },
+                    { label: '+1h', addH: 1 },
+                  ].map((preset) => (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      onClick={() => {
+                        let h = modalLateHours;
+                        let m = modalLateMins;
+                        if (preset.setH !== undefined) {
+                          h = preset.setH;
+                          m = preset.setM || 0;
+                        } else {
+                          const total = h * 60 + m + (preset.addH || 0) * 60 + (preset.addM || 0);
+                          h = Math.floor(total / 60);
+                          m = total % 60;
+                        }
+                        setModalLateHours(h);
+                        setModalLateMins(m);
+                      }}
+                      className="text-[10px] font-bold px-2 py-1 bg-white hover:bg-indigo-50 text-indigo-700 rounded-lg border border-indigo-200 transition-colors shadow-2xs"
+                    >
+                      {preset.label}
+                    </button>
                   ))}
-                </select>
-              </div>
+                </div>
 
-              <div>
-                <label className="text-xs font-semibold text-slate-600 block mb-1">
-                  Descripción del Concepto
-                </label>
-                <input
-                  type="text"
-                  value={customExtraName}
-                  onChange={(e) => setCustomExtraName(e.target.value)}
-                  placeholder="ej. Limpieza interior autocar"
-                  className="w-full text-xs py-2 px-3 rounded-xl border border-slate-200"
-                />
-              </div>
+                {/* Motivo */}
+                <div>
+                  <label className="text-xs font-semibold text-slate-600 block mb-1">
+                    Motivo / Observación
+                  </label>
+                  <input
+                    type="text"
+                    value={modalLateReason}
+                    onChange={(e) => setModalLateReason(e.target.value)}
+                    placeholder="ej. Retraso tráfico en A-2, avería coche, relevo tarde..."
+                    className="w-full text-xs py-2 px-3 rounded-xl border border-slate-200"
+                  />
+                </div>
 
-              <div>
-                <label className="text-xs font-semibold text-slate-600 block mb-1">
-                  Importe Bruto Adicional (€)
-                </label>
-                <input
-                  type="number"
-                  step="0.5"
-                  value={customExtraAmount}
-                  onChange={(e) => setCustomExtraAmount(parseFloat(e.target.value) || 0)}
-                  className="w-full text-xs py-2 px-3 rounded-xl border border-slate-200 font-mono font-bold"
-                />
-              </div>
-            </div>
+                {/* Computation preview */}
+                <div className="p-2.5 bg-indigo-600 text-white rounded-xl text-xs flex items-center justify-between font-semibold">
+                  <div>
+                    <p className="font-bold">
+                      {formatMinutesToHoursAndMinutes(modalLateHours * 60 + modalLateMins)} de exceso
+                    </p>
+                    <p className="text-[10px] text-indigo-200">
+                      ({modalLateHours * 60 + modalLateMins} minutos totales)
+                    </p>
+                  </div>
+                  <span className="text-sm font-black font-mono">
+                    +{formatCurrency(parseFloat((((modalLateHours * 60 + modalLateMins) / 60) * horaOrdinariaRate).toFixed(2)))}
+                  </span>
+                </div>
 
-            <div className="flex items-center gap-2 pt-2">
-              <button
-                type="button"
-                onClick={handleAddExtraToDay}
-                className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs transition-colors"
-              >
-                Añadir al Día
-              </button>
-              <button
-                type="button"
-                onClick={() => setIsAddingExtraModal(false)}
-                className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-xs transition-colors"
-              >
-                Cancelar
-              </button>
-            </div>
+                <div className="flex items-center gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLateHoursInput(modalLateHours);
+                      setLateMinsInput(modalLateMins);
+                      setLateReasonInput(modalLateReason);
+                      handleSaveLateFinish(modalLateHours, modalLateMins, modalLateReason);
+                      setIsLateSectionOpen(true);
+                      setIsAddingExtraModal(false);
+                    }}
+                    className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs transition-colors shadow-xs"
+                  >
+                    Guardar Exceso en el Día
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsAddingExtraModal(false)}
+                    className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-xs transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
