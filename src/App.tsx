@@ -522,6 +522,7 @@ export default function App() {
         onSave={handleSaveTurno}
         onDelete={handleDeleteTurno}
         shiftToEdit={editingShift}
+        yearRate={currentYearRate}
       />
 
       <ConvenioModal

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { X, Clock, Plus, Minus, Check, Sparkles, ArrowLeft, Trash2 } from 'lucide-react';
-import { ShiftDefinition, ShiftModality } from '../types';
+import { X, Clock, Plus, Minus, Check, Sparkles, ArrowLeft, Trash2, Moon } from 'lucide-react';
+import { ShiftDefinition, ShiftModality, ConvenioYearRate } from '../types';
 import { calculateNightHours, calculateTotalHours } from '../utils/calculator';
 import { formatCurrency } from '../utils/exporter';
 import { ConfirmModal } from './ConfirmModal';
@@ -11,6 +11,7 @@ interface TurnoEditModalProps {
   onSave: (shift: ShiftDefinition) => void;
   onDelete?: (shiftId: string) => void;
   shiftToEdit?: ShiftDefinition | null;
+  yearRate?: ConvenioYearRate;
 }
 
 const PRESET_COLORS = [
@@ -29,12 +30,13 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
   onSave,
   onDelete,
   shiftToEdit,
+  yearRate,
 }) => {
   const [code, setCode] = useState('M3');
   const [color, setColor] = useState('#eab308'); // Amarillo predeterminado para mañana
   const [title, setTitle] = useState('');
   const [modality, setModality] = useState<ShiftModality>('continuado');
-  const [terminal, setTerminal] = useState('Cochera Central (Sector Este)');
+  const [terminal, setTerminal] = useState('Línea de Servicio');
   const [isPartida, setIsPartida] = useState(false);
 
   // Schedules
@@ -44,11 +46,33 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
   const [secondEndTime, setSecondEndTime] = useState('19:00');
 
   // Retribución
-  const [baseJornada, setBaseJornada] = useState(72.50);
-  const [includePlusPuntualidad, setIncludePlusPuntualidad] = useState(true);
+  const [includePlusPuntualidad, setIncludePlusPuntualidad] = useState(false);
   const [plusPuntualidadVal, setPlusPuntualidadVal] = useState(12.00);
   const [includePlusNocturnidad, setIncludePlusNocturnidad] = useState(false);
   const [isHolidayRate, setIsHolidayRate] = useState(false);
+
+  // Effective year rates from Convenio (defaults to 2026: 13.62 €/h, nocturnidad 2.48 €/h)
+  const effectiveYearRate: ConvenioYearRate = useMemo(() => {
+    return yearRate || {
+      year: 2026,
+      salarioBaseDia: 53.18,
+      salarioBaseAnual: 24196.90,
+      horaOrdinaria: 13.62,
+      plusNocturnidadHora: 2.48,
+      plusConductorPerceptorDia: 6.27,
+      plusConductorPerceptorDiaReducido: 3.14,
+      quebrantoMonedaDia: 1.89,
+      plusFestivoMayor4h: 40.80,
+      plusFestivoMenor4h: 30.60,
+      plus24y31Diciembre: 30.60,
+      dietaComidaCenaRegular: 15.00,
+      dietaComidaCenaDiscrecional: 19.00,
+      dietaPernoctaRegular: 12.27,
+      dietaPernoctaDiscrecional: 16.25,
+      plusVacacionesDia: 10.00,
+      horasJornadaAnual: 1776,
+    };
+  }, [yearRate]);
 
   // Override / manual amount
   const [customGrossRate, setCustomGrossRate] = useState<number | null>(null);
@@ -60,12 +84,15 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
       setColor(shiftToEdit.color || '#eab308');
       setTitle(shiftToEdit.title);
       setModality(shiftToEdit.modality);
-      setTerminal(shiftToEdit.terminal);
+      setTerminal(shiftToEdit.terminal || 'Línea de Servicio');
       setIsPartida(shiftToEdit.modality === 'partido');
       setStartTime(shiftToEdit.startTime);
       setEndTime(shiftToEdit.endTime);
       setSecondStartTime(shiftToEdit.secondStartTime || '15:00');
       setSecondEndTime(shiftToEdit.secondEndTime || '19:00');
+      if (shiftToEdit.dayType === 'festivo') {
+        setIsHolidayRate(true);
+      }
       if (shiftToEdit.fixedRate) {
         setCustomGrossRate(shiftToEdit.fixedRate);
       }
@@ -73,14 +100,12 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
       // Default clean state
       setCode('M3');
       setColor('#eab308'); // Amarillo predeterminado
-      setTitle('Mañana Refuerzo Hospital - Línea 105');
+      setTitle('Mañana Regular Línea 105');
       setModality('continuado');
-      setTerminal('Cochera Central (Sector Este)');
+      setTerminal('Línea de Servicio');
       setIsPartida(false);
       setStartTime('06:30');
-      setEndTime('14:15');
-      setBaseJornada(82.00);
-      setPlusPuntualidadVal(12.00);
+      setEndTime('14:45');
       setCustomGrossRate(null);
     }
   }, [shiftToEdit, isOpen]);
@@ -101,25 +126,52 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
 
   const drivingHoursStr = `${Math.floor(drivingMinutes / 60)}h ${String(drivingMinutes % 60).padStart(2, '0')}m`;
 
-  // Automatic gross calculation
+  // Real-time night hours in tramo 22:00 a 06:00
+  const nightHours = useMemo(() => {
+    if (isPartida) {
+      return (
+        calculateNightHours(startTime, endTime) +
+        calculateNightHours(secondStartTime, secondEndTime)
+      );
+    }
+    return calculateNightHours(startTime, endTime);
+  }, [isPartida, startTime, endTime, secondStartTime, secondEndTime]);
+
+  // Whenever shift has hours in 22:00 - 06:00, automatically select nocturnidad
+  useEffect(() => {
+    if (nightHours > 0) {
+      setIncludePlusNocturnidad(true);
+    }
+  }, [nightHours]);
+
+  // Automatic gross calculation strictly according to Convenio Colectivo
   const calculatedGross = useMemo(() => {
-    let total = baseJornada;
-    if (includePlusPuntualidad) total += plusPuntualidadVal;
-    if (includePlusNocturnidad) {
-      const nightH = calculateNightHours(startTime, endTime);
-      total += nightH * 2.48;
+    const totalHours = drivingMinutes / 60;
+    const hourlyBase = totalHours * effectiveYearRate.horaOrdinaria;
+    let total = hourlyBase;
+
+    // Plus nocturnidad (Art. 18: 2,48 €/h en tramo 22:00 a 06:00)
+    if (includePlusNocturnidad || nightHours > 0) {
+      total += nightHours * (effectiveYearRate.plusNocturnidadHora || 2.48);
     }
+
+    if (includePlusPuntualidad) {
+      total += plusPuntualidadVal;
+    }
+
     if (isHolidayRate) {
-      total = total * 1.25;
+      // Plus festivo Art. 17 Convenio
+      total += totalHours > 4 ? effectiveYearRate.plusFestivoMayor4h : effectiveYearRate.plusFestivoMenor4h;
     }
+
     return Math.round(total * 100) / 100;
   }, [
-    baseJornada,
+    drivingMinutes,
+    effectiveYearRate,
+    includePlusNocturnidad,
+    nightHours,
     includePlusPuntualidad,
     plusPuntualidadVal,
-    includePlusNocturnidad,
-    startTime,
-    endTime,
     isHolidayRate,
   ]);
 
@@ -327,24 +379,6 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
                 ))}
               </div>
             </div>
-
-            {/* Cochera o Terminal */}
-            <div>
-              <label className="text-[11px] font-semibold text-slate-700 block mb-1">
-                Cochera o Terminal de Relevo
-              </label>
-              <select
-                value={terminal}
-                onChange={(e) => setTerminal(e.target.value)}
-                className="w-full text-xs py-2 px-3 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-              >
-                <option value="Cochera Central (Sector Este)">Cochera Central (Sector Este)</option>
-                <option value="Terminal Estación Intermodal Delicias">Terminal Estación Intermodal Delicias</option>
-                <option value="Base Principal Zaragoza Polígono Plaza">Base Principal Zaragoza Polígono Plaza</option>
-                <option value="Cochera Norte / Valdespartera">Cochera Norte / Valdespartera</option>
-                <option value="Servicio Discrecional / Circuito">Servicio Discrecional / Circuito</option>
-              </select>
-            </div>
           </div>
 
           {/* SECTION 2: HORARIOS Y TRAMOS */}
@@ -501,17 +535,68 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
               </p>
             </div>
 
-            {/* CONCEPTOS Y PLUSES INTEGRADOS */}
-            <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200/80 space-y-2 text-xs">
-              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                Conceptos y pluses integrados
-              </span>
-
-              <div className="flex items-center justify-between text-slate-700 py-1">
-                <span>Salario base jornada estándar</span>
-                <span className="font-semibold font-mono">{formatCurrency(baseJornada)}</span>
+            {/* CONCEPTOS Y PLUSES SEGÚN CONVENIO */}
+            <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200/80 space-y-2.5 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                  Cálculo según Convenio ({effectiveYearRate.year})
+                </span>
+                {customGrossRate !== null && (
+                  <button
+                    type="button"
+                    onClick={() => setCustomGrossRate(null)}
+                    className="text-[10px] font-semibold text-blue-600 hover:text-blue-800 underline"
+                  >
+                    Usar cálculo oficial ({formatCurrency(calculatedGross)})
+                  </button>
+                )}
               </div>
 
+              {/* Base por horas */}
+              <div className="flex items-center justify-between text-slate-700 py-1 border-b border-slate-200/50">
+                <div>
+                  <span className="font-medium block">Horas de servicio ({drivingHoursStr})</span>
+                  <span className="text-[10px] text-slate-500">
+                    {(drivingMinutes / 60).toFixed(2)}h × {formatCurrency(effectiveYearRate.horaOrdinaria)}/h ordinaria
+                  </span>
+                </div>
+                <span className="font-bold font-mono text-slate-800">
+                  {formatCurrency(((drivingMinutes / 60) * effectiveYearRate.horaOrdinaria))}
+                </span>
+              </div>
+
+              {/* Plus Nocturnidad 22:00 a 06:00 */}
+              <div className={`p-2.5 rounded-xl border transition-colors ${
+                nightHours > 0
+                  ? 'bg-purple-50/70 border-purple-200 text-purple-900'
+                  : 'bg-white/60 border-slate-200/70 text-slate-600'
+              }`}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-start gap-2">
+                    <Moon className={`w-4 h-4 mt-0.5 shrink-0 ${nightHours > 0 ? 'text-purple-600' : 'text-slate-400'}`} />
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-semibold text-xs">Plus Nocturnidad (22:00 - 06:00)</span>
+                        {nightHours > 0 && (
+                          <span className="px-1.5 py-0.2 rounded bg-purple-200/70 text-purple-800 text-[10px] font-bold">
+                            Activo auto
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-slate-500 mt-0.5">
+                        {nightHours > 0
+                          ? `${nightHours.toFixed(2)}h nocturnas detectadas en el horario a ${effectiveYearRate.plusNocturnidadHora.toFixed(2)} €/h (Art. 18 Convenio)`
+                          : 'El turno no coincide con el tramo nocturno (22:00 a 06:00)'}
+                      </p>
+                    </div>
+                  </div>
+                  <span className={`font-mono font-bold text-xs shrink-0 ${nightHours > 0 ? 'text-purple-700' : 'text-slate-400'}`}>
+                    +{formatCurrency(nightHours * effectiveYearRate.plusNocturnidadHora)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Plus puntualidad opcional */}
               <label className="flex items-center justify-between text-slate-700 py-1 cursor-pointer">
                 <div className="flex items-center gap-2">
                   <input
@@ -524,26 +609,11 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
                 </div>
                 <span className="font-semibold text-emerald-600 font-mono">+{formatCurrency(plusPuntualidadVal)}</span>
               </label>
-
-              <label className="flex items-center justify-between text-slate-700 py-1 cursor-pointer">
-                <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={includePlusNocturnidad}
-                    onChange={(e) => setIncludePlusNocturnidad(e.target.checked)}
-                    className="rounded text-blue-600"
-                  />
-                  <span>Plus nocturnidad (22:00 a 06:00)</span>
-                </div>
-                <span className="font-semibold text-slate-500 font-mono">
-                  +{formatCurrency(includePlusNocturnidad ? calculateNightHours(startTime, endTime) * 2.48 : 0)}
-                </span>
-              </label>
             </div>
 
             {/* Aplicación tarifaria automática */}
             <div className="flex items-center justify-between p-2.5 bg-slate-100 rounded-xl text-xs">
-              <span className="font-semibold text-slate-700">Aplicación tarifaria:</span>
+              <span className="font-semibold text-slate-700">Tipo de jornada:</span>
               <div className="flex items-center gap-3">
                 <label className="flex items-center gap-1.5 cursor-pointer">
                   <input
@@ -553,7 +623,7 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
                     onChange={() => setIsHolidayRate(false)}
                     className="text-blue-600"
                   />
-                  <span>Laborable Normal</span>
+                  <span>Laborable</span>
                 </label>
                 <label className="flex items-center gap-1.5 cursor-pointer">
                   <input
@@ -563,7 +633,7 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
                     onChange={() => setIsHolidayRate(true)}
                     className="text-blue-600"
                   />
-                  <span>Festivo (+25%)</span>
+                  <span>Festivo / Domingo (+{formatCurrency(drivingMinutes / 60 > 4 ? effectiveYearRate.plusFestivoMayor4h : effectiveYearRate.plusFestivoMenor4h)})</span>
                 </label>
               </div>
             </div>

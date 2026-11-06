@@ -15,6 +15,7 @@ import {
   ChevronUp,
   RotateCcw,
   AlertCircle,
+  Moon,
 } from 'lucide-react';
 import {
   DayAssignment,
@@ -24,7 +25,7 @@ import {
   WorkerProfile,
 } from '../types';
 import { formatCurrency } from '../utils/exporter';
-import { formatMinutesToHoursAndMinutes } from '../utils/calculator';
+import { formatMinutesToHoursAndMinutes, computeShiftRateFromConvenio } from '../utils/calculator';
 import { ConfirmModal } from './ConfirmModal';
 
 interface CalendarioViewProps {
@@ -227,23 +228,27 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
   // Day subtotal devengado
   const selectedDayTotal = useMemo(() => {
     let base = 0;
+    const yearRate = convenio.ratesByYear[selectedYear] || convenio.ratesByYear[2026];
+    const isSunday = new Date(selectedYear, selectedMonth - 1, selectedDayNumber).getDay() === 0;
+
     if (currentShift) {
       if (currentShift.code === 'D') {
         base = 0;
       } else if (currentShift.code === 'V') {
         const factor = (!isJornada100 && profile?.partTimePercentage) ? profile.partTimePercentage / 100 : 1;
-        const baseDia = (convenio.ratesByYear[selectedYear]?.salarioBaseDia || 50.37) * factor;
-        const plusVac = appliesVacationPlus ? (convenio.ratesByYear[selectedYear]?.plusVacacionesDia || 10.00) : 0;
+        const baseDia = (yearRate.salarioBaseDia || 50.37) * factor;
+        const plusVac = appliesVacationPlus ? (yearRate.plusVacacionesDia || 10.00) : 0;
         base = baseDia + plusVac;
       } else {
-        base = currentShift.fixedRate || convenio.ratesByYear[selectedYear]?.salarioBaseDia || 50.37;
+        const shiftCalc = computeShiftRateFromConvenio(currentShift, yearRate, { isSunday });
+        base = shiftCalc.totalRate;
       }
     }
     const extrasSum = currentAssignment.extras?.reduce((sum, e) => sum + e.amount, 0) || 0;
     const lateAmt = currentAssignment.lateFinishAmount !== undefined
       ? currentAssignment.lateFinishAmount
       : (currentAssignment.lateFinishMinutes
-          ? parseFloat(((currentAssignment.lateFinishMinutes / 60) * horaOrdinariaRate).toFixed(2))
+          ? parseFloat(((currentAssignment.lateFinishMinutes / 60) * (yearRate.horaOrdinaria || horaOrdinariaRate)).toFixed(2))
           : 0);
     return base + extrasSum + lateAmt;
   }, [
@@ -253,6 +258,8 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
     currentAssignment.lateFinishAmount,
     convenio,
     selectedYear,
+    selectedMonth,
+    selectedDayNumber,
     isJornada100,
     appliesVacationPlus,
     profile?.partTimePercentage,
@@ -563,27 +570,50 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
               </div>
             </div>
           ) : (
-            <div className="bg-slate-50/80 rounded-2xl p-3.5 border border-slate-200/70 space-y-2">
-              <div className="flex items-center justify-between text-xs font-semibold text-slate-800">
-                <span className="flex items-center gap-1.5 text-slate-700">
-                  <Clock className="w-3.5 h-3.5 text-blue-600" />
-                  {currentShift.modality === 'partido' && currentShift.secondStartTime
-                    ? `Horario Partido (${currentShift.startTime}-${currentShift.endTime} / ${currentShift.secondStartTime}-${currentShift.secondEndTime})`
-                    : `Horario Continuo (${currentShift.startTime} - ${currentShift.endTime})`}
-                </span>
-                <span className="text-sm font-bold font-mono text-slate-900">
-                  {formatCurrency(currentShift.fixedRate || convenio.ratesByYear[selectedYear]?.salarioBaseDia || 0)}
-                </span>
-              </div>
+            (() => {
+              const activeRate = convenio.ratesByYear[selectedYear] || convenio.ratesByYear[2026];
+              const isSunday = new Date(selectedYear, selectedMonth - 1, selectedDayNumber).getDay() === 0;
+              const shiftRateCalc = computeShiftRateFromConvenio(currentShift, activeRate, { isSunday });
 
-              <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1 border-t border-slate-200/50">
-                <span className="flex items-center gap-1 text-emerald-700 font-medium">
-                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                  Tarifa BD: {currentShift.computedDuration || 'Jornada completa'}
-                </span>
-                <span className="text-[10px] font-bold text-slate-400 uppercase">Fijado BD</span>
-              </div>
-            </div>
+              return (
+                <div className="bg-slate-50/80 rounded-2xl p-3.5 border border-slate-200/70 space-y-2">
+                  <div className="flex items-center justify-between text-xs font-semibold text-slate-800">
+                    <span className="flex items-center gap-1.5 text-slate-700">
+                      <Clock className="w-3.5 h-3.5 text-blue-600" />
+                      {currentShift.modality === 'partido' && currentShift.secondStartTime
+                        ? `Horario Partido (${currentShift.startTime}-${currentShift.endTime} / ${currentShift.secondStartTime}-${currentShift.secondEndTime})`
+                        : `Horario Continuo (${currentShift.startTime} - ${currentShift.endTime})`}
+                    </span>
+                    <span className="text-sm font-bold font-mono text-emerald-800">
+                      {formatCurrency(shiftRateCalc.totalRate)}
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-1.5 text-[11px] text-slate-500 pt-1.5 border-t border-slate-200/60">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="flex items-center gap-1 text-slate-700 font-medium">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                        {shiftRateCalc.totalHours}h ({formatCurrency(shiftRateCalc.hourlyRate)}/h)
+                      </span>
+                      {shiftRateCalc.hasNight && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-purple-100 text-purple-800 font-bold text-[10px]">
+                          <Moon className="w-3 h-3 text-purple-600" />
+                          {shiftRateCalc.nightHours}h nocturnas (+{formatCurrency(shiftRateCalc.nightAmount)})
+                        </span>
+                      )}
+                      {shiftRateCalc.holidayAmount > 0 && (
+                        <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-bold text-[10px]">
+                          Plus festivo (+{formatCurrency(shiftRateCalc.holidayAmount)})
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[10px] font-bold text-slate-500 uppercase bg-slate-200/70 px-1.5 py-0.5 rounded">
+                      Convenio {selectedYear}
+                    </span>
+                  </div>
+                </div>
+              );
+            })()
           )
         ) : (
           <div className="p-3 bg-slate-50 rounded-xl text-center text-xs text-slate-500 border border-dashed border-slate-200">
@@ -975,7 +1005,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
               .filter((s) => !['M1', 'T1', 'S1', 'N1', 'D', 'R', 'V'].includes(s.code))
               .map((s) => (
                 <option key={s.id} value={s.code}>
-                  {s.code} · {s.title} ({s.startTime}-{s.endTime}) - {formatCurrency(s.fixedRate || 0)}
+                  {s.code} · {s.title} ({s.startTime}-{s.endTime}) - {formatCurrency(computeShiftRateFromConvenio(s, convenio.ratesByYear[selectedYear] || convenio.ratesByYear[2026]).totalRate)}
                 </option>
               ))}
           </select>

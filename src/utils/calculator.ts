@@ -125,6 +125,109 @@ export function calculateTotalHours(startTime: string, endTime: string): number 
   return Math.round((diff / 60) * 100) / 100;
 }
 
+export interface ShiftRateCalculation {
+  totalHours: number;
+  dayHours: number;
+  nightHours: number;
+  hourlyRate: number; // Convenio horaOrdinaria for the year (e.g. 13.62 in 2026, 12.87 in 2024)
+  nightRate: number;  // Convenio plusNocturnidadHora (2.48 €/h)
+  baseAmount: number; // totalHours * hourlyRate
+  nightAmount: number; // nightHours * 2.48
+  holidayAmount: number; // If Sunday / Festivo, Art. 17 plus (40.80 €)
+  totalRate: number;  // baseAmount + nightAmount + holidayAmount
+  hasNight: boolean;  // nightHours > 0
+}
+
+/**
+ * Computes official remuneration and hours for a shift according to Convenio Colectivo de Zaragoza
+ * (hourly rate + night bonus for hours between 22:00 and 06:00 + holiday plus if applicable)
+ */
+export function computeShiftRateFromConvenio(
+  shift: ShiftDefinition,
+  yearRate: ConvenioYearRate,
+  options?: { isHoliday?: boolean; isSunday?: boolean }
+): ShiftRateCalculation {
+  let totalHours = 0;
+  let nightHours = 0;
+
+  if (shift.code === 'D') {
+    return {
+      totalHours: 0,
+      dayHours: 0,
+      nightHours: 0,
+      hourlyRate: yearRate.horaOrdinaria,
+      nightRate: yearRate.plusNocturnidadHora || 2.48,
+      baseAmount: 0,
+      nightAmount: 0,
+      holidayAmount: 0,
+      totalRate: 0,
+      hasNight: false,
+    };
+  }
+
+  if (shift.code === 'V') {
+    const baseDia = yearRate.salarioBaseDia;
+    const plusVac = yearRate.plusVacacionesDia || 10.0;
+    return {
+      totalHours: 0,
+      dayHours: 0,
+      nightHours: 0,
+      hourlyRate: yearRate.horaOrdinaria,
+      nightRate: yearRate.plusNocturnidadHora || 2.48,
+      baseAmount: baseDia,
+      nightAmount: 0,
+      holidayAmount: 0,
+      totalRate: parseFloat((baseDia + plusVac).toFixed(2)),
+      hasNight: false,
+    };
+  }
+
+  if (shift.modality === 'partido' && shift.secondStartTime && shift.secondEndTime) {
+    const h1 = calculateTotalHours(shift.startTime, shift.endTime);
+    const h2 = calculateTotalHours(shift.secondStartTime, shift.secondEndTime);
+    totalHours = h1 + h2;
+    nightHours = calculateNightHours(shift.startTime, shift.endTime) +
+                 calculateNightHours(shift.secondStartTime, shift.secondEndTime);
+  } else {
+    totalHours = calculateTotalHours(shift.startTime, shift.endTime);
+    nightHours = calculateNightHours(shift.startTime, shift.endTime);
+  }
+
+  const dayHours = Math.max(0, Math.round((totalHours - nightHours) * 100) / 100);
+  const hourlyRate = yearRate.horaOrdinaria;
+  const nightRate = yearRate.plusNocturnidadHora || 2.48;
+
+  // Base hours pay according to Convenio
+  const baseAmount = parseFloat((totalHours * hourlyRate).toFixed(2));
+  // Plus nocturnidad (Art. 18: 2,48 €/h en tramo 22:00 a 06:00)
+  const nightAmount = parseFloat((nightHours * nightRate).toFixed(2));
+
+  // Plus Festivos y Domingos (Art. 17)
+  const isFestivo = Boolean(options?.isHoliday || options?.isSunday || shift.dayType === 'festivo');
+  const holidayAmount = isFestivo
+    ? (totalHours > 4 ? yearRate.plusFestivoMayor4h : yearRate.plusFestivoMenor4h)
+    : 0;
+
+  // Total rate: if custom shift has an explicit override, respect it; otherwise compute exact Convenio sum
+  const computedTotal = parseFloat((baseAmount + nightAmount + holidayAmount).toFixed(2));
+  const totalRate = (shift.isCustom && shift.fixedRate !== undefined && shift.fixedRate > 0)
+    ? shift.fixedRate
+    : computedTotal;
+
+  return {
+    totalHours: Math.round(totalHours * 100) / 100,
+    dayHours,
+    nightHours: Math.round(nightHours * 100) / 100,
+    hourlyRate,
+    nightRate,
+    baseAmount,
+    nightAmount,
+    holidayAmount,
+    totalRate,
+    hasNight: nightHours > 0,
+  };
+}
+
 /**
  * Comprehensive payroll calculation according to Zaragoza Transport Collective Agreement & Spanish Labor / Tax Laws
  */
@@ -190,38 +293,25 @@ export function calculateMonthlyPayroll(
         workedDays++;
         if (isHoliday) holidayDays++;
 
-        // Work hours & night hours
-        let dayHours = 0;
-        let dayNight = 0;
+        // Shift calculation from Convenio (hours, night hours and base rate)
+        const calc = computeShiftRateFromConvenio(shiftDef, yearRate, { isHoliday, isSunday });
+        totalWorkedHours += calc.totalHours;
+        totalNightHours += calc.nightHours;
 
-        if (shiftDef.modality === 'partido' && shiftDef.secondStartTime && shiftDef.secondEndTime) {
-          const h1 = calculateTotalHours(shiftDef.startTime, shiftDef.endTime);
-          const h2 = calculateTotalHours(shiftDef.secondStartTime, shiftDef.secondEndTime);
-          dayHours = h1 + h2;
-          dayNight = calculateNightHours(shiftDef.startTime, shiftDef.endTime) +
-                     calculateNightHours(shiftDef.secondStartTime, shiftDef.secondEndTime);
-        } else {
-          dayHours = calculateTotalHours(shiftDef.startTime, shiftDef.endTime);
-          dayNight = calculateNightHours(shiftDef.startTime, shiftDef.endTime);
-        }
-
-        totalWorkedHours += dayHours;
-        totalNightHours += dayNight;
-
-        // Shift daily rate (adjusted by part-time factor if applicable)
-        const effectiveDayBase = (shiftDef.fixedRate && shiftDef.fixedRate > 0)
+        // Base wage for regular shift hours according to Convenio (proportional if part-time)
+        const effectiveDayBase = (shiftDef.isCustom && shiftDef.fixedRate && shiftDef.fixedRate > 0)
           ? (isPartTime ? shiftDef.fixedRate * partTimeFactor : shiftDef.fixedRate)
-          : (yearRate.salarioBaseDia * partTimeFactor);
+          : (calc.baseAmount * partTimeFactor);
 
         shiftGrossAccumulated += effectiveDayBase;
 
         // Holiday plus (Art. 17)
         if (isHoliday) {
-          festivoPluses += dayHours > 4 ? yearRate.plusFestivoMayor4h : yearRate.plusFestivoMenor4h;
+          festivoPluses += calc.holidayAmount;
         }
 
         // Special 24/31 Dec night plus
-        if ((month === 12 && (d === 24 || d === 31)) && dayNight > 0) {
+        if ((month === 12 && (d === 24 || d === 31)) && calc.nightHours > 0) {
           festivoPluses += yearRate.plus24y31Diciembre;
         }
       }

@@ -13,7 +13,7 @@ export const FEATURED_SHIFTS: ShiftDefinition[] = [
     endTime: '14:15',
     drivingDuration: '08:15',
     computedDuration: '8h 15m (Jornada completa)',
-    fixedRate: 82.00,
+    fixedRate: 112.37,
     color: '#eab308', // Amarillo para mañana
     badges: ['Servicio Ordinario'],
     notes: 'Servicio continuado de mañana con alta demanda en hora punta.',
@@ -30,10 +30,10 @@ export const FEATURED_SHIFTS: ShiftDefinition[] = [
     endTime: '22:30',
     drivingDuration: '08:15',
     computedDuration: '8h 15m (Jornada completa)',
-    fixedRate: 82.00,
+    fixedRate: 113.61, // 8.25h x 13.62 + 0.5h noct x 2.48
     color: '#0284c7', // Azul celeste para tarde
     badges: ['Servicio Ordinario', 'Turno Tarde'],
-    notes: 'Servicio continuado de tarde en corredor principal.',
+    notes: 'Servicio continuado de tarde en corredor principal con tramo nocturno.',
   },
   {
     id: 'turno-t2',
@@ -47,7 +47,7 @@ export const FEATURED_SHIFTS: ShiftDefinition[] = [
     endTime: '22:30',
     drivingDuration: '08:30',
     computedDuration: '8h 30m (Jornada completa)',
-    fixedRate: 84.00,
+    fixedRate: 117.01, // 8.5h x 13.62 + 0.5h noct x 2.48
     color: '#0284c7', // Azul celeste para tarde
     badges: ['Interurbano estándar', 'Turno Tarde'],
     notes: 'Línea interurbana con venta y cobro a bordo en franja de tarde.',
@@ -64,7 +64,7 @@ export const FEATURED_SHIFTS: ShiftDefinition[] = [
     endTime: '23:00',
     drivingDuration: '08:15',
     computedDuration: '8h 15m (Jornada completa)',
-    fixedRate: 82.50,
+    fixedRate: 114.85, // 8.25h x 13.62 + 1h noct x 2.48
     color: '#0284c7', // Azul celeste para tarde
     badges: ['Urbano Tarde', 'Turno Tarde'],
     notes: 'Servicio urbano continuo de tarde con relevo en terminal.',
@@ -81,7 +81,7 @@ export const FEATURED_SHIFTS: ShiftDefinition[] = [
     endTime: '23:30',
     drivingDuration: '08:15',
     computedDuration: '8h 15m (Jornada completa)',
-    fixedRate: 83.50,
+    fixedRate: 116.09, // 8.25h x 13.62 + 1.5h noct x 2.48
     color: '#0284c7', // Azul celeste para tarde
     badges: ['Interurbano Tarde', 'Turno Tarde'],
     notes: 'Ruta interurbana de alta frecuencia en franja de tarde.',
@@ -98,7 +98,7 @@ export const FEATURED_SHIFTS: ShiftDefinition[] = [
     endTime: '21:45',
     drivingDuration: '08:15',
     computedDuration: '8h 15m (Jornada completa)',
-    fixedRate: 83.00,
+    fixedRate: 112.37,
     color: '#0284c7', // Azul celeste para tarde
     badges: ['Refuerzo Tarde', 'Turno Tarde'],
     notes: 'Salidas de fábricas y centros sanitarios turno de tarde.',
@@ -115,10 +115,10 @@ export const FEATURED_SHIFTS: ShiftDefinition[] = [
     endTime: '06:00',
     drivingDuration: '08:00',
     computedDuration: '8h continuas nocturnas',
-    fixedRate: 104.50,
+    fixedRate: 128.80, // 8h x 13.62 + 8h noct x 2.48
     color: '#7c3aed', // Morado para noche
-    badges: ['Nocturnidad fija'],
-    notes: 'Jornada completa en tramo de nocturnidad con plus consolidado.',
+    badges: ['Nocturnidad fija', 'Turno Noche'],
+    notes: 'Jornada completa en tramo de nocturnidad con plus consolidado (Art. 18 Convenio).',
   },
   {
     id: 'turno-disc',
@@ -295,9 +295,25 @@ function createDirexisPart(
     category = 'noche';
   }
 
-  // Base gross rate calculated: 10.45€/h standard, 13.06€/h for festivos (+25%)
-  const hourlyBase = dayType === 'festivo' ? 13.06 : 10.45;
-  const rate = Math.round((totalMins / 60) * hourlyBase * 100) / 100;
+  // Calculate night hours in 22:00 to 06:00 (Art. 18 Convenio)
+  const [sH, sM] = start.split(':').map(Number);
+  const [eH, eM] = end.split(':').map(Number);
+  const startMins = (sH || 0) * 60 + (sM || 0);
+  let endMins = (eH || 0) * 60 + (eM || 0);
+  if (endMins <= startMins) endMins += 24 * 60;
+  let nightMins = 0;
+  for (let m = startMins; m < endMins; m++) {
+    const mod = m % 1440;
+    if (mod >= 1320 || mod < 360) nightMins++;
+  }
+  const totalHours = totalMins / 60;
+  const nightHours = Math.round((nightMins / 60) * 100) / 100;
+
+  // 2026 Convenio Zaragoza: 13.62 €/h ordinaria, 2.48 €/h nocturna
+  const baseAmt = totalHours * 13.62;
+  const nightAmt = nightHours * 2.48;
+  const festivoAmt = dayType === 'festivo' ? (totalHours > 4 ? 40.80 : 30.60) : 0;
+  const rate = Math.round((baseAmt + nightAmt + festivoAmt) * 100) / 100;
 
   // Colors requested by user:
   // Mañana = Amarillo (#eab308)

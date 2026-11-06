@@ -1,7 +1,9 @@
 import React, { useState, useMemo } from 'react';
-import { Search, Plus, Edit2, Clock, CheckCircle2, Award, ShieldCheck, Bus, RefreshCw, Trash2, Calendar } from 'lucide-react';
+import { Search, Plus, Edit2, Clock, CheckCircle2, Award, ShieldCheck, RefreshCw, Trash2, Calendar, Moon } from 'lucide-react';
 import { ShiftDefinition } from '../types';
 import { formatCurrency } from '../utils/exporter';
+import { computeShiftRateFromConvenio } from '../utils/calculator';
+import { DEFAULT_CONVENIO_ZARAGOZA } from '../data/convenioZaragoza';
 import { ConfirmModal } from './ConfirmModal';
 
 interface TurnosBDViewProps {
@@ -43,6 +45,10 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
   const [selectedTimeSlot, setSelectedTimeSlot] = useState<TimeFilterType>('todos');
   const [shiftToDelete, setShiftToDelete] = useState<ShiftDefinition | null>(null);
   const [confirmRestore, setConfirmRestore] = useState(false);
+
+  const activeYearRate = useMemo(() => {
+    return DEFAULT_CONVENIO_ZARAGOZA.ratesByYear[currentYear] || DEFAULT_CONVENIO_ZARAGOZA.ratesByYear[2026];
+  }, [currentYear]);
 
   // Contadores para el filtro de Jornada (Día)
   const dayCounts = useMemo(() => {
@@ -121,8 +127,7 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
       const matchesSearch =
         !searchTerm.trim() ||
         s.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        s.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        s.terminal.toLowerCase().includes(searchTerm.toLowerCase());
+        s.title.toLowerCase().includes(searchTerm.toLowerCase());
 
       let matchesDay = true;
       if (selectedDayType === 'laborable') {
@@ -309,109 +314,130 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
       <div className="space-y-3">
         {filteredShifts.length === 0 ? (
           <div className="bg-white rounded-2xl p-8 text-center border border-slate-200 text-slate-500">
-            <Bus className="w-8 h-8 mx-auto text-slate-300 mb-2" />
+            <Clock className="w-8 h-8 mx-auto text-slate-300 mb-2" />
             <p className="text-sm font-semibold text-slate-700">No se encontraron turnos con ese criterio</p>
             <p className="text-xs text-slate-400 mt-1">Prueba con otro término de búsqueda o categoría.</p>
           </div>
         ) : (
-          filteredShifts.map((shift) => (
-            <div
-              key={shift.id}
-              className="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-xs hover:border-blue-300 transition-all group relative"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-start gap-3">
-                  {/* Code badge */}
-                  <div
-                    className="w-12 h-12 rounded-xl flex items-center justify-center font-bold text-sm tracking-tight shrink-0 shadow-xs"
-                    style={{
-                      backgroundColor: `${shift.color}15`,
-                      color: shift.color,
-                      border: `1.5px solid ${shift.color}35`,
-                    }}
-                  >
-                    {shift.code}
+          filteredShifts.map((shift) => {
+            const rateCalc = computeShiftRateFromConvenio(shift, activeYearRate);
+
+            return (
+              <div
+                key={shift.id}
+                className="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-xs hover:border-blue-300 transition-all group relative"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    {/* Code badge */}
+                    <div
+                      className="w-12 h-12 rounded-xl flex items-center justify-center font-bold text-sm tracking-tight shrink-0 shadow-xs"
+                      style={{
+                        backgroundColor: `${shift.color}15`,
+                        color: shift.color,
+                        border: `1.5px solid ${shift.color}35`,
+                      }}
+                    >
+                      {shift.code}
+                    </div>
+
+                    {/* Title & Classification */}
+                    <div className="space-y-0.5">
+                      <h3 className="text-sm font-bold text-slate-900 leading-snug">
+                        {shift.title}
+                      </h3>
+                      <p className="text-xs text-slate-500 flex items-center gap-1.5">
+                        <span className="capitalize font-medium text-slate-600">
+                          {shift.modality === 'partido' ? 'Turno Partido' : `Turno ${shift.category}`}
+                        </span>
+                        <span className="text-slate-300">•</span>
+                        <span>
+                          {shift.dayType === 'sabado'
+                            ? 'Sábado'
+                            : shift.dayType === 'festivo'
+                            ? 'Domingo / Festivo'
+                            : 'L-V Laborable'}
+                        </span>
+                      </p>
+                    </div>
                   </div>
 
-                  {/* Title & Terminal */}
+                  {/* Edit & delete buttons */}
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => onEditTurno(shift)}
+                      title="Editar ficha del turno"
+                      className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                    >
+                      <Edit2 className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShiftToDelete(shift);
+                      }}
+                      title={`Eliminar turno ${shift.code} de la base de datos`}
+                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 active:scale-90 rounded-lg transition-all"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Schedules & Duration details */}
+                <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-2 gap-2 text-xs">
                   <div className="space-y-0.5">
-                    <h3 className="text-sm font-bold text-slate-900 leading-snug">
-                      {shift.title}
-                    </h3>
-                    <p className="text-xs text-slate-500 flex items-center gap-1.5">
-                      <Bus className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                      <span className="truncate max-w-[220px] sm:max-w-md">{shift.terminal}</span>
+                    <span className="text-[11px] text-slate-400 flex items-center gap-1">
+                      <Clock className="w-3 h-3 text-slate-400" /> Horario de servicio
+                    </span>
+                    <p className="font-semibold text-slate-800">
+                      {shift.modality === 'partido' && shift.secondStartTime
+                        ? `${shift.startTime}-${shift.endTime} / ${shift.secondStartTime}-${shift.secondEndTime}`
+                        : `${shift.startTime} - ${shift.endTime}`}
+                    </p>
+                  </div>
+
+                  <div className="space-y-0.5">
+                    <span className="text-[11px] text-slate-400">Cómputo jornada</span>
+                    <p className="font-semibold text-slate-800 truncate" title={shift.computedDuration}>
+                      {shift.computedDuration}
                     </p>
                   </div>
                 </div>
 
-                {/* Edit & delete buttons */}
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => onEditTurno(shift)}
-                    title="Editar ficha del turno"
-                    className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                  >
-                    <Edit2 className="w-4 h-4" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setShiftToDelete(shift);
-                    }}
-                    title={`Eliminar turno ${shift.code} de la base de datos`}
-                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 active:scale-90 rounded-lg transition-all"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-
-              {/* Schedules & Duration details */}
-              <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-2 gap-2 text-xs">
-                <div className="space-y-0.5">
-                  <span className="text-[11px] text-slate-400 flex items-center gap-1">
-                    <Clock className="w-3 h-3 text-slate-400" /> Horario de servicio
-                  </span>
-                  <p className="font-semibold text-slate-800">
-                    {shift.modality === 'partido' && shift.secondStartTime
-                      ? `${shift.startTime}-${shift.endTime} / ${shift.secondStartTime}-${shift.secondEndTime}`
-                      : `${shift.startTime} - ${shift.endTime}`}
-                  </p>
-                </div>
-
-                <div className="space-y-0.5">
-                  <span className="text-[11px] text-slate-400">Cómputo jornada</span>
-                  <p className="font-semibold text-slate-800 truncate" title={shift.computedDuration}>
-                    {shift.computedDuration}
-                  </p>
-                </div>
-              </div>
-
-              {/* Bottom footer with Tag & Tarifa Fija */}
-              <div className="mt-3 pt-2.5 flex items-center justify-between gap-2 border-t border-slate-100">
-                <div className="flex items-center gap-1.5">
-                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/60">
-                    <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                    {shift.badges[0] || (shift.category === 'mañana' ? 'Turno Mañana' : shift.category === 'tarde' ? 'Turno Tarde' : shift.category === 'noche' ? 'Turno Noche' : 'Servicio Oficial')}
-                  </span>
-                  {shift.dayType !== 'laborable' && shift.dayType !== 'todos' && (
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-medium">
-                      {shift.dayType === 'festivo' ? 'Festivo' : 'Sábado'}
+                {/* Bottom footer with Tag & Tarifa / Retribución Convenio */}
+                <div className="mt-3 pt-2.5 flex items-center justify-between gap-2 border-t border-slate-100">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/60">
+                      <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                      {shift.badges[0] || (shift.category === 'mañana' ? 'Turno Mañana' : shift.category === 'tarde' ? 'Turno Tarde' : shift.category === 'noche' ? 'Turno Noche' : 'Servicio Oficial')}
                     </span>
-                  )}
-                </div>
+                    {rateCalc.nightHours > 0 && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
+                        <Moon className="w-3 h-3 text-purple-600" />
+                        {rateCalc.nightHours}h noct. (+{formatCurrency(rateCalc.nightAmount)})
+                      </span>
+                    )}
+                    {shift.dayType !== 'laborable' && shift.dayType !== 'todos' && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-medium">
+                        {shift.dayType === 'festivo' ? 'Festivo' : 'Sábado'}
+                      </span>
+                    )}
+                  </div>
 
-                <div className="text-right">
-                  <span className="text-[10px] text-slate-400 block -mb-0.5">Tarifa fija</span>
-                  <span className="text-base sm:text-lg font-extrabold text-emerald-700 font-mono tabular-nums">
-                    {formatCurrency(shift.fixedRate || 0)}
-                  </span>
+                  <div className="text-right shrink-0">
+                    <span className="text-[10px] text-slate-400 block -mb-0.5">
+                      {shift.isCustom && shift.fixedRate ? 'Tarifa fijada' : `Retribución ${currentYear}`}
+                    </span>
+                    <span className="text-base sm:text-lg font-extrabold text-emerald-700 font-mono tabular-nums">
+                      {formatCurrency(rateCalc.totalRate)}
+                    </span>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
 
