@@ -59,7 +59,6 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
       festivo: 0,
     };
     shifts.forEach((s) => {
-      if (s.code === 'D') return;
       counts.todos++;
       if (s.dayType === 'laborable') {
         counts.laborable++;
@@ -76,6 +75,11 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
         (s.badges && s.badges.some((b) => b.toLowerCase().includes('festivo') || b.toLowerCase().includes('domingo')))
       ) {
         counts.festivo++;
+      } else if (s.dayType === 'todos') {
+        // 'D' (Descanso/Fiesta) counts for all day types
+        counts.laborable++;
+        counts.sabado++;
+        counts.festivo++;
       }
     });
     return counts;
@@ -90,19 +94,19 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
       noche: 0,
     };
     shifts.forEach((s) => {
-      if (s.code === 'D') return;
-
       let matchesDay = true;
       if (selectedDayType === 'laborable') {
-        matchesDay = s.dayType === 'laborable';
+        matchesDay = s.dayType === 'laborable' || s.dayType === 'todos';
       } else if (selectedDayType === 'sabado') {
         matchesDay =
           s.dayType === 'sabado' ||
+          s.dayType === 'todos' ||
           s.title.toLowerCase().includes('sábado') ||
           (s.badges && s.badges.some((b) => b.toLowerCase().includes('sábado')));
       } else if (selectedDayType === 'festivo') {
         matchesDay =
           s.dayType === 'festivo' ||
+          s.dayType === 'todos' ||
           s.title.toLowerCase().includes('festivo') ||
           s.title.toLowerCase().includes('domingo') ||
           (s.badges && s.badges.some((b) => b.toLowerCase().includes('festivo') || b.toLowerCase().includes('domingo')));
@@ -121,9 +125,6 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
   // Filter shifts
   const filteredShifts = useMemo(() => {
     return shifts.filter((s) => {
-      // Exclude generic 'D' from general turnos list or keep it
-      if (s.code === 'D') return false;
-
       const matchesSearch =
         !searchTerm.trim() ||
         s.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -131,15 +132,17 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
 
       let matchesDay = true;
       if (selectedDayType === 'laborable') {
-        matchesDay = s.dayType === 'laborable';
+        matchesDay = s.dayType === 'laborable' || s.dayType === 'todos';
       } else if (selectedDayType === 'sabado') {
         matchesDay =
           s.dayType === 'sabado' ||
+          s.dayType === 'todos' ||
           s.title.toLowerCase().includes('sábado') ||
           (s.badges && s.badges.some((b) => b.toLowerCase().includes('sábado')));
       } else if (selectedDayType === 'festivo') {
         matchesDay =
           s.dayType === 'festivo' ||
+          s.dayType === 'todos' ||
           s.title.toLowerCase().includes('festivo') ||
           s.title.toLowerCase().includes('domingo') ||
           (s.badges && s.badges.some((b) => b.toLowerCase().includes('festivo') || b.toLowerCase().includes('domingo')));
@@ -167,7 +170,7 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
               Base de Datos & Tarifas de Turno
             </h2>
             <p className="text-xs text-slate-600 leading-relaxed">
-              Tarifario de Turnos de <strong>DIREXIS ZARAGOZA</strong> y servicios personalizados.
+              Tarifario de Turnos oficial de <strong>DIREXIS ZARAGOZA</strong> (98 partes de trabajo) más turno de fiesta o descanso.
               Cada turno refleja el cómputo íntegro de la jornada y retribución fijada según convenio.
             </p>
             <div className="flex flex-wrap items-center gap-3 pt-2 text-[11px] font-medium text-slate-500">
@@ -175,7 +178,7 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
                 <Clock className="w-3.5 h-3.5" /> Convenio Transporte {currentYear}
               </span>
               <span>·</span>
-              <span>{shifts.filter((s) => s.code !== 'D').length} turnos en base de datos</span>
+              <span>{shifts.length} turnos en base de datos</span>
             </div>
           </div>
         </div>
@@ -348,11 +351,17 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
                       </h3>
                       <p className="text-xs text-slate-500 flex items-center gap-1.5">
                         <span className="capitalize font-medium text-slate-600">
-                          {shift.modality === 'partido' ? 'Turno Partido' : `Turno ${shift.category}`}
+                          {shift.code === 'D'
+                            ? 'Descanso / Fiesta'
+                            : shift.modality === 'partido'
+                            ? 'Turno Partido'
+                            : `Turno ${shift.category}`}
                         </span>
                         <span className="text-slate-300">•</span>
                         <span>
-                          {shift.dayType === 'sabado'
+                          {shift.dayType === 'todos'
+                            ? 'Cualquier día (L-D)'
+                            : shift.dayType === 'sabado'
                             ? 'Sábado'
                             : shift.dayType === 'festivo'
                             ? 'Domingo / Festivo'
@@ -392,7 +401,9 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
                       <Clock className="w-3 h-3 text-slate-400" /> Horario de servicio
                     </span>
                     <p className="font-semibold text-slate-800">
-                      {shift.modality === 'partido' && shift.secondStartTime
+                      {shift.code === 'D'
+                        ? '00:00 - 00:00 (Libre)'
+                        : shift.modality === 'partido' && shift.secondStartTime
                         ? `${shift.startTime}-${shift.endTime} / ${shift.secondStartTime}-${shift.secondEndTime}`
                         : `${shift.startTime} - ${shift.endTime}`}
                     </p>
@@ -428,10 +439,10 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
 
                   <div className="text-right shrink-0">
                     <span className="text-[10px] text-slate-400 block -mb-0.5">
-                      {shift.isCustom && shift.fixedRate ? 'Tarifa fijada' : `Retribución ${currentYear}`}
+                      {shift.code === 'D' ? 'No laborable' : shift.isCustom && shift.fixedRate ? 'Tarifa fijada' : `Retribución ${currentYear}`}
                     </span>
                     <span className="text-base sm:text-lg font-extrabold text-emerald-700 font-mono tabular-nums">
-                      {formatCurrency(rateCalc.totalRate)}
+                      {shift.code === 'D' ? '0,00 € (Libre)' : formatCurrency(rateCalc.totalRate)}
                     </span>
                   </div>
                 </div>

@@ -37,6 +37,19 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const isExpiringSoon = selectedYear >= 2026;
 
+  // Dynamic available years starting strictly at 2026 (excluding 2024 and 2025)
+  const availableYears = React.useMemo(() => {
+    const yearsSet = new Set<number>([2026, 2027]);
+    if (convenio?.ratesByYear) {
+      Object.keys(convenio.ratesByYear).forEach((y) => {
+        const yNum = Number(y);
+        if (yNum >= 2026) yearsSet.add(yNum);
+      });
+    }
+    if (selectedYear >= 2026) yearsSet.add(selectedYear);
+    return Array.from(yearsSet).sort((a, b) => a - b);
+  }, [convenio, selectedYear]);
+
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200">
       <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
@@ -75,7 +88,7 @@ export const Header: React.FC<HeaderProps> = ({
               }}
               className="appearance-none bg-slate-100 hover:bg-slate-200/80 text-slate-800 text-xs sm:text-sm font-semibold pl-3 pr-8 py-1.5 rounded-lg border border-slate-200/80 cursor-pointer transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/30"
             >
-              {[2024, 2025, 2026, 2027].map((y) =>
+              {availableYears.map((y) =>
                 MONTH_NAMES.map((name, idx) => (
                   <option key={`${y}-${idx + 1}`} value={`${y}-${idx + 1}`}>
                     {name} {y}
@@ -90,13 +103,13 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             onClick={onOpenConvenioModal}
             title="Ver o actualizar tablas del Convenio Colectivo"
-            className={`hidden md:flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg transition-colors border ${
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg transition-colors border ${
               isExpiringSoon
                 ? 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
-                : 'bg-blue-50 text-blue-700 border-blue-200/70 hover:bg-blue-100/70'
+                : 'bg-blue-50 text-blue-700 border-blue-200/70 hover:bg-blue-100'
             }`}
           >
-            <ShieldAlert className={`w-3.5 h-3.5 ${isExpiringSoon ? 'text-amber-600' : 'text-blue-600'}`} />
+            <ShieldAlert className={`w-3.5 h-3.5 shrink-0 ${isExpiringSoon ? 'text-amber-600' : 'text-blue-600'}`} />
             <span>Convenio {selectedYear}</span>
             {isExpiringSoon && <span className="text-[10px] font-semibold text-amber-600">(Vence)</span>}
           </button>

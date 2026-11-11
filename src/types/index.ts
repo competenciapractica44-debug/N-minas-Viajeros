@@ -83,10 +83,13 @@ export interface ConvenioYearRate {
   plusFestivoMenor4h: number;
   plus24y31Diciembre: number;
   dietaComidaCenaRegular: number;
-  dietaComidaCenaDiscrecional: number;
+  dietaComidaCenaDiscrecional?: number;
   dietaPernoctaRegular: number;
   dietaPernoctaDiscrecional: number;
   plusVacacionesDia: number;
+  salarioBaseDiaMasats?: number;
+  plusRetenDia?: number;
+  prorrataPagaDia?: number;
   horasJornadaAnual: number;
 }
 
@@ -123,8 +126,22 @@ export interface WorkerProfile {
   hasMonetaryQuebranto: boolean; // cobra billetes en efectivo
   hasConductorPerceptorPlus: boolean;
   hasVacationPlus100Percent?: boolean; // Activar automáticamente el plus de vacaciones (10 €/día) en días 'V' sólo si la jornada está al 100%
+  salaryBaseRateMode?: 'convenio_53_18' | 'masats_39_89'; // 53.18 € Convenio Zaragoza o 39.89 € Recibo Masats
   unionFeeDeduction: number; // e.g. 0.00
   advancePayment: number; // anticipos
+}
+
+export interface PayrollLineItem {
+  id: string;
+  code?: string;
+  name: string;
+  quantity: number;
+  quantityLabel: string;
+  unit: string;
+  unitPrice: number;
+  amount: number;
+  category: 'base' | 'plus' | 'horas' | 'prorrata' | 'extra';
+  isOfficial?: boolean;
 }
 
 export interface PayrollExtraItemDetail {
@@ -135,7 +152,7 @@ export interface PayrollExtraItemDetail {
 }
 
 export interface PayrollBreakdown {
-  monthKey: string; // "2024-10"
+  monthKey: string; // "2026-10"
   year: number;
   month: number;
   totalDays: number;
@@ -156,6 +173,19 @@ export interface PayrollBreakdown {
   extrasItemsList: PayrollExtraItemDetail[];
   pendingNextMonthExtrasCount?: number; // Extras after cutoff in the current month
   pendingNextMonthExtrasTotal?: number;
+
+  // Lista detallada de conceptos con Cuantía (Nº de veces), Precio Unitario e Importe
+  lines: PayrollLineItem[];
+  salarioBaseDays: number;
+  salarioBaseUnitPrice: number;
+  plusFestivoCount: number;
+  quebrantoCount: number;
+  horasComplementarias: number;
+  horasFestivas: number;
+  plusRetenCount: number;
+  plusConductorCount: number;
+  medioPlusConductorCount: number;
+  prorrataDays: number;
 
   // Devengos
   salarioBase: number;

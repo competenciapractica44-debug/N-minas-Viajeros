@@ -197,7 +197,7 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
 
     const savedShift: ShiftDefinition = {
       id: shiftToEdit ? shiftToEdit.id : `custom-${Date.now()}`,
-      code: code.trim().toUpperCase() || 'M1',
+      code: code.trim().toUpperCase() || '6V.L01',
       title: title.trim() || `Servicio ${code}`,
       category: cat,
       dayType: isHolidayRate ? 'festivo' : 'laborable',

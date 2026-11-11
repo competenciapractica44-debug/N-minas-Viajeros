@@ -89,59 +89,27 @@ export function exportToPDF(
     startY + 7.5
   );
 
-  const devengosRows = [
-    [
-      'Salario Base Jornadas (Convenio)',
-      payroll.vacationDays > 0 ? `${payroll.workedDays} trab + ${payroll.vacationDays} vac` : `${payroll.workedDays} días`,
-      formatCurrency(payroll.salarioBase),
-    ],
-  ];
-
-  if (payroll.plusVacaciones > 0) {
-    devengosRows.push(['Plus de Vacaciones (Art. 9 Convenio)', `${payroll.vacationDays} días`, formatCurrency(payroll.plusVacaciones)]);
-  }
-  if (payroll.plusConductorPerceptor > 0) {
-    devengosRows.push(['Plus Conductor-Perceptor (Art. 19)', `${payroll.workedDays} días`, formatCurrency(payroll.plusConductorPerceptor)]);
-  }
-  if (payroll.plusQuebrantoMoneda > 0) {
-    devengosRows.push(['Quebranto de Moneda (Art. 20)', `${payroll.workedDays} días`, formatCurrency(payroll.plusQuebrantoMoneda)]);
-  }
-  if (payroll.plusNocturnidad > 0) {
-    devengosRows.push(['Plus de Nocturnidad (Art. 18, 22:00 a 06:00)', `${payroll.nightHours} horas`, formatCurrency(payroll.plusNocturnidad)]);
-  }
-  if (payroll.plusFestivos > 0) {
-    devengosRows.push(['Plus Festivos y Domingos (Art. 17)', `${payroll.holidayDays} festivos/dom`, formatCurrency(payroll.plusFestivos)]);
-  }
-  if (payroll.prorrataPagasExtra > 0) {
-    const extraLabel = profile.prorrateoPagasExtra === 'una_paga'
-      ? 'Prorrata Paga Extraordinaria Marzo (Art. 11)'
-      : 'Prorrata Pagas Extraordinarias (Art. 11, 3 pagas)';
-    devengosRows.push([extraLabel, profile.prorrateoPagasExtra === 'una_paga' ? '1/12 (2,5 d/mes)' : '1/12 (7,5 d/mes)', formatCurrency(payroll.prorrataPagasExtra)]);
-  }
-  if (payroll.pagaExtraIntegraMes > 0) {
-    devengosRows.push([payroll.pagaExtraIntegraNombre || 'Paga Extraordinaria Íntegra', '30 días salario base', formatCurrency(payroll.pagaExtraIntegraMes)]);
-  }
-  if (payroll.totalExtrasFueraConvenio > 0) {
-    const cutoffText = payroll.extrasCutoffPeriod ? `Corte ${payroll.extrasCutoffPeriod}` : 'Asignados en cuadrante';
-    devengosRows.push(['Complementos y Extras Fuera de Convenio', cutoffText, formatCurrency(payroll.totalExtrasFueraConvenio)]);
-  }
-  if (payroll.importeHorasExtra > 0) {
-    devengosRows.push(['Horas Extraordinarias / Exceso Horario', `${payroll.horasExtra} horas`, formatCurrency(payroll.importeHorasExtra)]);
-  }
+  const devengosRows = payroll.lines.map((line) => [
+    `${line.quantityLabel} ${line.unit}`,
+    formatCurrency(line.unitPrice),
+    line.name,
+    formatCurrency(line.amount),
+  ]);
 
   autoTable(doc, {
     startY: startY + 16,
-    head: [['I. DEVENGOS (CONCEPTOS RETRIBUTIVOS)', 'UNIDADES', 'IMPORTE']],
+    head: [['CUANTÍA (Nº VECES)', 'PRECIO', 'CONCEPTO RETRIBUTIVO', 'DEVENGOS (€)']],
     body: devengosRows,
-    foot: [['TOTAL DEVENGADO (TOTAL BRUTO)', '', formatCurrency(payroll.totalDevengado)]],
+    foot: [['TOTAL DEVENGADO (TOTAL BRUTO)', '', '', formatCurrency(payroll.totalDevengado)]],
     theme: 'striped',
     headStyles: { fillColor: [37, 99, 235], textColor: 255, fontStyle: 'bold', fontSize: 8.5 },
     footStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 9 },
     bodyStyles: { fontSize: 8, textColor: [30, 41, 59] },
     columnStyles: {
-      0: { cellWidth: 110 },
-      1: { cellWidth: 36, halign: 'center' },
-      2: { cellWidth: 36, halign: 'right' },
+      0: { cellWidth: 34, halign: 'center' },
+      1: { cellWidth: 26, halign: 'right' },
+      2: { cellWidth: 88 },
+      3: { cellWidth: 34, halign: 'right' },
     },
     margin: { left: 14, right: 14 },
   });
@@ -234,7 +202,7 @@ export function exportToPDF(
           shift ? `${shift.startTime} - ${shift.endTime}` : '-',
           shift?.computedDuration || '-',
           extrasStr,
-          shift?.fixedRate ? formatCurrency(shift.fixedRate) : formatCurrency(convenio.ratesByYear[payroll.year]?.salarioBaseDia || 50.37),
+          shift?.fixedRate ? formatCurrency(shift.fixedRate) : formatCurrency(convenio.ratesByYear[payroll.year]?.salarioBaseDia || 53.18),
         ];
       });
 
@@ -295,18 +263,14 @@ export function exportToExcel(
     ['Horas Totales Trabajadas', payroll.totalWorkedHours, 'horas'],
     ['Horas Nocturnas (22:00 a 06:00)', payroll.nightHours, 'horas'],
     [],
-    ['II. DEVENGOS (BRUTO)', 'CANTIDAD / BASE', 'IMPORTE (€)'],
-    ['Salario Base Convenio', `${payroll.workedDays} días`, payroll.salarioBase],
-    ...(payroll.plusVacaciones > 0 ? [['Plus de Vacaciones (Art. 9 Convenio)', `${payroll.vacationDays} días`, payroll.plusVacaciones]] : []),
-    ['Plus Conductor-Perceptor (Art. 19)', `${payroll.workedDays} días`, payroll.plusConductorPerceptor],
-    ['Quebranto de Moneda (Art. 20)', `${payroll.workedDays} días`, payroll.plusQuebrantoMoneda],
-    ['Plus Nocturnidad (Art. 18)', `${payroll.nightHours} horas`, payroll.plusNocturnidad],
-    ['Plus Festivos y Domingos (Art. 17)', `${payroll.holidayDays} días`, payroll.plusFestivos],
-    ['Prorrata Pagas Extras (Art. 11)', profile.prorrateoPagasExtra === 'una_paga' ? '1 paga (Marzo)' : '3 pagas', payroll.prorrataPagasExtra],
-    ...(payroll.pagaExtraIntegraMes > 0 ? [[payroll.pagaExtraIntegraNombre || 'Paga Extraordinaria Íntegra', '30 días salario base', payroll.pagaExtraIntegraMes]] : []),
-    ['Complementos y Extras Fuera de Convenio', payroll.extrasCutoffPeriod ? `Corte ${payroll.extrasCutoffPeriod}` : 'Cuadrante', payroll.totalExtrasFueraConvenio],
-    ...(payroll.importeHorasExtra > 0 ? [['Horas Extraordinarias / Exceso Horario', `${payroll.horasExtra} horas`, payroll.importeHorasExtra]] : []),
-    ['TOTAL DEVENGADO (BRUTO TOTAL)', '', payroll.totalDevengado],
+    ['II. DEVENGOS (BRUTO)', 'CUANTÍA (Nº VECES)', 'PRECIO (€)', 'IMPORTE DEVENGADO (€)'],
+    ...payroll.lines.map((line) => [
+      line.name,
+      `${line.quantityLabel} ${line.unit}`,
+      line.unitPrice,
+      line.amount,
+    ]),
+    ['TOTAL DEVENGADO (BRUTO TOTAL)', '', '', payroll.totalDevengado],
     [],
     ['III. DEDUCCIONES TRABAJADOR', 'TIPO / PORCENTAJE', 'IMPORTE (€)'],
     ['Contingencias Comunes (4.70%)', '4.70%', payroll.contingenciasComunes],
@@ -349,7 +313,7 @@ export function exportToExcel(
         shift?.endTime || '-',
         shift?.computedDuration || (item.shiftCode === 'V' ? 'Jornada vacaciones retribuida' : '-'),
         extrasStr,
-        shift?.fixedRate || (item.shiftCode === 'D' ? 0 : item.shiftCode === 'V' ? (convenio.ratesByYear[payroll.year]?.salarioBaseDia || 50.37) + (convenio.ratesByYear[payroll.year]?.plusVacacionesDia || 10.00) : convenio.ratesByYear[payroll.year]?.salarioBaseDia || 50.37),
+        shift?.fixedRate || (item.shiftCode === 'D' ? 0 : item.shiftCode === 'V' ? (convenio.ratesByYear[payroll.year]?.salarioBaseDia || 53.18) + (convenio.ratesByYear[payroll.year]?.plusVacacionesDia || 10.00) : convenio.ratesByYear[payroll.year]?.salarioBaseDia || 53.18),
       ];
     });
 

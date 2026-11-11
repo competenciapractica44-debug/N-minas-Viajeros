@@ -1,6 +1,68 @@
 import { ExtraConcept } from '../types';
 
 export const DEFAULT_EXTRAS: ExtraConcept[] = [
+  // Conceptos oficiales homologados con la Nómina Real de Transporte
+  {
+    id: 'extra-reten',
+    name: 'Plus retén',
+    amount: 8.25,
+    unit: 'dia',
+    description: 'Plus por jornada de retén o guardia de disponibilidad.',
+    tags: ['Convenio', 'Nómina oficial'],
+    active: true,
+    isTaxable: true,
+  },
+  {
+    id: 'extra-conductor',
+    name: 'Plus conductor',
+    amount: 6.27,
+    unit: 'dia',
+    description: 'Plus conductor-perceptor por venta/cobro de billetes en jornada completa.',
+    tags: ['Convenio', 'Nómina oficial'],
+    active: true,
+    isTaxable: true,
+  },
+  {
+    id: 'extra-medio-conductor',
+    name: '1/2 Plus conductor',
+    amount: 3.14,
+    unit: 'servicio',
+    description: 'Medio plus conductor-perceptor para servicios o líneas con cobro inferiores a 4h.',
+    tags: ['Convenio', 'Nómina oficial'],
+    active: true,
+    isTaxable: true,
+  },
+  {
+    id: 'extra-quebranto',
+    name: 'Quebranto de moneda',
+    amount: 1.89,
+    unit: 'dia',
+    description: 'Compensación por manejo y custodia de dinero en efectivo.',
+    tags: ['Convenio', 'Nómina oficial'],
+    active: true,
+    isTaxable: true,
+  },
+  {
+    id: 'extra-festivas',
+    name: 'Festivas (horas)',
+    amount: 13.62,
+    unit: 'hora',
+    description: 'Horas festivas de servicio abonadas a valor de hora ordinaria de convenio.',
+    tags: ['Convenio', 'Nómina oficial'],
+    active: true,
+    isTaxable: true,
+  },
+  {
+    id: 'extra-complementarias',
+    name: 'Hores Complementarias',
+    amount: 13.62,
+    unit: 'hora',
+    description: 'Horas complementarias o de exceso retribuidas a precio de hora de convenio.',
+    tags: ['Convenio', 'Nómina oficial'],
+    active: true,
+    isTaxable: true,
+  },
+  // Extras complementarios y fuera de convenio
   {
     id: 'extra-1',
     name: 'Limpieza profunda de cabina y maleteros',
@@ -49,6 +111,6 @@ export const DEFAULT_EXTRAS: ExtraConcept[] = [
     description: 'Dieta fija suplementaria para servicios transfronterizos o internacionales.',
     tags: ['Internacional', 'Dietas'],
     active: true,
-    isTaxable: false, // Dieta exenta de IRPF/SS dentro de límites reglamentarios
+    isTaxable: false,
   },
 ];

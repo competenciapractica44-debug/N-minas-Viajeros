@@ -236,7 +236,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
         base = 0;
       } else if (currentShift.code === 'V') {
         const factor = (!isJornada100 && profile?.partTimePercentage) ? profile.partTimePercentage / 100 : 1;
-        const baseDia = (yearRate.salarioBaseDia || 50.37) * factor;
+        const baseDia = (yearRate.salarioBaseDia || 53.18) * factor;
         const plusVac = appliesVacationPlus ? (yearRate.plusVacacionesDia || 10.00) : 0;
         base = baseDia + plusVac;
       } else {
@@ -543,22 +543,22 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                 </span>
                 <span className="text-sm font-bold font-mono text-cyan-800">
                   {formatCurrency(
-                    ((convenio.ratesByYear[selectedYear]?.salarioBaseDia || 50.37) * (!isJornada100 && profile?.partTimePercentage ? profile.partTimePercentage / 100 : 1)) +
+                    ((convenio.ratesByYear[selectedYear]?.salarioBaseDia || 53.18) * (!isJornada100 && profile?.partTimePercentage ? profile.partTimePercentage / 100 : 1)) +
                     (appliesVacationPlus ? (convenio.ratesByYear[selectedYear]?.plusVacacionesDia || 10.00) : 0)
                   )}
                 </span>
               </div>
               {appliesVacationPlus ? (
                 <p className="text-[11px] text-cyan-800 leading-relaxed">
-                  Jornada retribuida completa (100%): Salario Base diario ({formatCurrency(convenio.ratesByYear[selectedYear]?.salarioBaseDia || 50.37)}) + <strong>Plus de Vacaciones de {formatCurrency(convenio.ratesByYear[selectedYear]?.plusVacacionesDia || 10.00)}/día</strong> según el Art. 9 del Convenio Colectivo de Zaragoza.
+                  Jornada retribuida completa (100%): Salario Base diario ({formatCurrency(convenio.ratesByYear[selectedYear]?.salarioBaseDia || 53.18)}) + <strong>Plus de Vacaciones de {formatCurrency(convenio.ratesByYear[selectedYear]?.plusVacacionesDia || 10.00)}/día</strong> según el Art. 9 del Convenio Colectivo de Zaragoza.
                 </p>
               ) : !isJornada100 ? (
                 <p className="text-[11px] text-cyan-900 leading-relaxed">
-                  Jornada de vacaciones retribuida con Salario Base proporcional ({formatCurrency((convenio.ratesByYear[selectedYear]?.salarioBaseDia || 50.37) * ((profile?.partTimePercentage || 50) / 100))}). El <strong>Plus de Vacaciones (10 €/día)</strong> no se devenga al estar contratado al {profile?.partTimePercentage || 50}% (la opción configurada en el perfil requiere contrato al 100%).
+                  Jornada de vacaciones retribuida con Salario Base proporcional ({formatCurrency((convenio.ratesByYear[selectedYear]?.salarioBaseDia || 53.18) * ((profile?.partTimePercentage || 50) / 100))}). El <strong>Plus de Vacaciones (10 €/día)</strong> no se devenga al estar contratado al {profile?.partTimePercentage || 50}% (la opción configurada en el perfil requiere contrato al 100%).
                 </p>
               ) : (
                 <p className="text-[11px] text-cyan-900 leading-relaxed">
-                  Jornada de vacaciones retribuida con Salario Base diario ({formatCurrency(convenio.ratesByYear[selectedYear]?.salarioBaseDia || 50.37)}). El <strong>Plus de Vacaciones (10 €/día)</strong> se encuentra desactivado en tu Perfil de trabajador.
+                  Jornada de vacaciones retribuida con Salario Base diario ({formatCurrency(convenio.ratesByYear[selectedYear]?.salarioBaseDia || 53.18)}). El <strong>Plus de Vacaciones (10 €/día)</strong> se encuentra desactivado en tu Perfil de trabajador.
                 </p>
               )}
               <div className="flex items-center justify-between text-[11px] text-cyan-700 pt-1 border-t border-cyan-200/60">
@@ -938,57 +938,94 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
         </div>
 
         {/* Quick buttons strip */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
           {[
-            { code: 'M1', label: 'Mañana', rate: 82.00, color: '#eab308' },
-            { code: 'T1', label: 'Tarde', rate: 82.00, color: '#0284c7' },
-            { code: 'S1', label: 'Sábado', rate: 82.00, color: '#0284c7' },
-            { code: 'N1', label: 'Nocturno', rate: 104.50, color: '#7c3aed' },
-            { code: 'D', label: 'Descanso', rate: 0, color: '#10b981' },
+            {
+              code: 'D',
+              label: 'Fiesta / Descanso',
+              rate: 0,
+              color: '#10b981',
+              subtitle: 'Libre',
+            },
             {
               code: 'V',
               label: 'Vacaciones',
               rate: appliesVacationPlus
-                ? 60.37
-                : Math.round(((convenio.ratesByYear[selectedYear]?.salarioBaseDia || 50.37) * (!isJornada100 && profile?.partTimePercentage ? profile.partTimePercentage / 100 : 1)) * 100) / 100,
+                ? 63.18
+                : Math.round(((convenio.ratesByYear[selectedYear]?.salarioBaseDia || 53.18) * (!isJornada100 && profile?.partTimePercentage ? profile.partTimePercentage / 100 : 1)) * 100) / 100,
               color: '#06b6d4',
               subtitle: appliesVacationPlus ? '+10€' : 'Base',
             },
-            { code: 'R', label: 'Reserva', rate: 78.50, color: '#eab308' },
-          ].map((item) => (
-            <button
-              key={item.code}
-              type="button"
-              onClick={() => handleAssignShift(item.code)}
-              className={`p-2.5 rounded-xl border text-left transition-all flex flex-col justify-between ${
-                currentAssignment.shiftCode === item.code
-                  ? 'border-blue-600 bg-blue-50/70 shadow-xs ring-1 ring-blue-600'
-                  : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
-              }`}
-            >
-              <div className="flex items-center justify-between w-full">
-                <span
-                  className="font-bold text-xs px-1.5 py-0.5 rounded"
-                  style={{ backgroundColor: `${item.color}20`, color: item.color }}
-                >
-                  {item.code}
-                </span>
-                {item.subtitle && (
-                  <span className="text-[9px] font-bold text-cyan-800 bg-cyan-100 px-1 py-0.5 rounded">
-                    {item.subtitle}
+            {
+              code: '6V.L01',
+              label: 'Parte L01 · Mañana',
+              rate: 113.50,
+              color: '#eab308',
+              subtitle: '06:30',
+            },
+            {
+              code: '6V.L02',
+              label: 'Parte L02 · Tarde',
+              rate: 115.77,
+              color: '#0284c7',
+              subtitle: '14:40',
+            },
+            {
+              code: '6.S02',
+              label: 'Parte S02 · Sábado',
+              rate: 124.85,
+              color: '#eab308',
+              subtitle: '05:30',
+            },
+            {
+              code: '6.D03/L',
+              label: 'Parte D03 · Festivo',
+              rate: 160.07,
+              color: '#eab308',
+              subtitle: '06:30',
+            },
+          ].map((item) => {
+            const shiftDef = shiftsMap.get(item.code);
+            const activeRateObj = convenio.ratesByYear[selectedYear] || convenio.ratesByYear[2026];
+            const computedRate = shiftDef && item.code !== 'D' && item.code !== 'V'
+              ? computeShiftRateFromConvenio(shiftDef, activeRateObj).totalRate
+              : item.rate;
+
+            return (
+              <button
+                key={item.code}
+                type="button"
+                onClick={() => handleAssignShift(item.code)}
+                className={`p-2.5 rounded-xl border text-left transition-all flex flex-col justify-between ${
+                  currentAssignment.shiftCode === item.code
+                    ? 'border-blue-600 bg-blue-50/70 shadow-xs ring-1 ring-blue-600'
+                    : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
+                }`}
+              >
+                <div className="flex items-center justify-between w-full">
+                  <span
+                    className="font-bold text-xs px-1.5 py-0.5 rounded truncate max-w-[80px]"
+                    style={{ backgroundColor: `${item.color}20`, color: item.color }}
+                  >
+                    {item.code}
                   </span>
-                )}
-              </div>
-              <div className="mt-1">
-                <span className="text-[11px] font-semibold text-slate-700 block truncate">
-                  {item.label}
-                </span>
-                <span className="text-[10px] text-slate-500 font-mono">
-                  {item.rate > 0 ? formatCurrency(item.rate) : 'Libre'}
-                </span>
-              </div>
-            </button>
-          ))}
+                  {item.subtitle && (
+                    <span className="text-[9px] font-bold text-slate-600 bg-slate-100 px-1 py-0.5 rounded">
+                      {item.subtitle}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-1">
+                  <span className="text-[11px] font-semibold text-slate-700 block truncate">
+                    {item.label}
+                  </span>
+                  <span className="text-[10px] text-slate-500 font-mono">
+                    {computedRate > 0 ? formatCurrency(computedRate) : 'Libre (0€)'}
+                  </span>
+                </div>
+              </button>
+            );
+          })}
         </div>
 
         {/* Dropdown to pick from all other official DIREXIS parts */}
@@ -1000,14 +1037,17 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
             }}
             className="w-full text-xs py-2 px-3 rounded-xl border border-slate-200 bg-white text-slate-700 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20"
           >
-            <option value="">Seleccionar entre todos los partes Direxis Zaragoza (98 turnos)...</option>
+            <option value="">Seleccionar entre todos los partes oficiales Direxis Zaragoza (98 partes)...</option>
             {shifts
-              .filter((s) => !['M1', 'T1', 'S1', 'N1', 'D', 'R', 'V'].includes(s.code))
-              .map((s) => (
-                <option key={s.id} value={s.code}>
-                  {s.code} · {s.title} ({s.startTime}-{s.endTime}) - {formatCurrency(computeShiftRateFromConvenio(s, convenio.ratesByYear[selectedYear] || convenio.ratesByYear[2026]).totalRate)}
-                </option>
-              ))}
+              .filter((s) => s.code !== 'D' && s.code !== 'V')
+              .map((s) => {
+                const rateCalc = computeShiftRateFromConvenio(s, convenio.ratesByYear[selectedYear] || convenio.ratesByYear[2026]);
+                return (
+                  <option key={s.id} value={s.code}>
+                    {s.code} · {s.title} ({s.startTime}-{s.endTime}) - {formatCurrency(rateCalc.totalRate)}
+                  </option>
+                );
+              })}
           </select>
         </div>
       </div>
