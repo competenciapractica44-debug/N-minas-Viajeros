@@ -82,11 +82,25 @@ function createDirexisPart(
   const totalHours = totalMins / 60;
   const nightHours = Math.round((nightMins / 60) * 100) / 100;
 
+  const isReten =
+    code === '6V.LR1' ||
+    code === '6V.LR3' ||
+    code === '6.R01S' ||
+    code === '6.R03S' ||
+    code === '6.R01F' ||
+    code === '6.R03F' ||
+    code === '6.R01F/L' ||
+    code === '6.R03F/L' ||
+    code.includes('.LR') ||
+    code.includes('.R0');
+
   // 2026 Convenio Zaragoza: 13.62 €/h ordinaria, 2.48 €/h nocturna
+  // El plus de festivo no se incluye en los turnos (se devenga en festivos nacionales, autonómicos o locales y se añade manualmente)
   const baseAmt = totalHours * 13.62;
   const nightAmt = nightHours * 2.48;
-  const festivoAmt = dayType === 'festivo' ? (totalHours > 4 ? 40.80 : 30.60) : 0;
-  const rate = Math.round((baseAmt + nightAmt + festivoAmt) * 100) / 100;
+  // Si es retén, incluye plus de retén (+8,25 €) y excluye quebranto y plus conductor
+  const retenAmt = isReten ? 8.25 : 0;
+  const rate = Math.round((baseAmt + nightAmt + retenAmt) * 100) / 100;
 
   // Colors requested by user:
   // Mañana = Amarillo (#eab308)
@@ -101,26 +115,46 @@ function createDirexisPart(
 
   const dayLabel = dayType === 'festivo' ? 'Domingos y Festivos' : dayType === 'sabado' ? 'Sábados' : 'L-V Laborable';
 
+  const badges = isReten
+    ? [
+        'Direxis Oficial',
+        'Plus Retén (+8,25 €)',
+        'Sin Quebranto',
+        'Sin Plus Conductor',
+      ]
+    : [
+        'Direxis Oficial',
+        dayType === 'sabado' ? 'Servicio Sábado' : dayType === 'festivo' ? 'Domingos y Festivos' : 'Laborable',
+        category === 'tarde' ? 'Turno Tarde' : category === 'mañana' ? 'Turno Mañana' : 'Turno Noche',
+      ];
+
+  const shiftTitle = isReten
+    ? `Parte ${code} · Retén Disponibilidad (${dayLabel})`
+    : `Parte ${code} · Direxis Zaragoza (${dayLabel})`;
+
+  const shiftNotes = isReten
+    ? `Parte de trabajo oficial de retén y disponibilidad para ${dayLabel} con duración total de ${durationStr}. Incluye plus de retén (+8,25 €) y excluye quebranto de moneda y plus conductor-perceptor al no realizar venta de billetes.`
+    : `Parte de trabajo oficial de Direxis Zaragoza para ${dayLabel} con duración total de ${durationStr}.`;
+
   return {
     id: `direxis-${code.replace(/[^a-zA-Z0-9]/g, '_')}`,
     code,
-    title: `Parte ${code} · Direxis Zaragoza (${dayLabel})`,
+    title: shiftTitle,
     category,
     dayType,
     modality: category === 'noche' ? 'nocturno' : 'continuado',
-    terminal: `Direxis Terminal Central (${code})`,
+    terminal: isReten ? `Cochera / Guardia Retén (${code})` : `Direxis Terminal Central (${code})`,
     startTime: start,
     endTime: end,
     drivingDuration: durationStr,
-    computedDuration: `${durationStr} (Jornada completa)`,
+    computedDuration: isReten ? `${durationStr} (Retén disponibilidad)` : `${durationStr} (Jornada completa)`,
     fixedRate: rate,
     color,
-    badges: [
-      'Direxis Oficial',
-      dayType === 'sabado' ? 'Servicio Sábado' : dayType === 'festivo' ? 'Domingos y Festivos' : 'Laborable',
-      category === 'tarde' ? 'Turno Tarde' : category === 'mañana' ? 'Turno Mañana' : 'Turno Noche'
-    ],
-    notes: `Parte de trabajo oficial de Direxis Zaragoza para ${dayLabel} con duración total de ${durationStr}.`,
+    badges,
+    notes: shiftNotes,
+    hasPlusReten: isReten,
+    hasConductorPerceptor: !isReten,
+    hasQuebrantoMoneda: !isReten,
   };
 }
 
@@ -209,29 +243,29 @@ const DIREXIS_SABADOS: [string, string, string, string][] = [
   ['6.S30', '06:30', '14:15', '07:45'],
 ];
 
-// 21 Partes Domingos y Festivos from PDF
+// 21 Partes Domingos y Festivos sin sufijo /L
 const DIREXIS_DOMINGOS: [string, string, string, string][] = [
-  ['6.D01/L', '00:01', '06:20', '06:19'],
-  ['6.D02/L', '00:01', '07:50', '07:49'],
-  ['6.D03/L', '06:30', '15:15', '08:45'],
-  ['6.D04/L', '03:01', '10:51', '07:50'],
-  ['6.D05/L', '01:30', '08:45', '07:15'],
-  ['6.D06/L', '08:30', '16:14', '07:44'],
-  ['6.D07/L', '08:00', '15:45', '07:45'],
-  ['6.D08/L', '08:00', '15:45', '07:45'],
-  ['6.D09/L', '13:30', '23:45', '10:15'],
-  ['6.D10/L', '07:00', '15:35', '08:35'],
-  ['6.D11/L', '07:30', '15:30', '08:00'],
-  ['6.D12/L', '15:00', '23:48', '08:48'],
-  ['6.D13/L', '15:00', '23:03', '08:03'],
-  ['6.D14/L', '14:45', '23:25', '08:40'],
-  ['6.D15/L', '15:30', '23:28', '07:58'],
-  ['6.D16/L', '14:00', '22:45', '08:45'],
-  ['6.D17/L', '15:35', '00:35', '09:00'],
-  ['6.D18/L', '08:00', '14:45', '06:45'],
-  ['6.R01F/L', '06:00', '15:00', '09:00'],
-  ['6.R03F/L', '15:00', '23:59', '08:59'],
-  ['6CARFES/L', '00:01', '08:00', '07:59'],
+  ['6.D01', '00:01', '06:20', '06:19'],
+  ['6.D02', '00:01', '07:50', '07:49'],
+  ['6.D03', '06:30', '15:15', '08:45'],
+  ['6.D04', '03:01', '10:51', '07:50'],
+  ['6.D05', '01:30', '08:45', '07:15'],
+  ['6.D06', '08:30', '16:14', '07:44'],
+  ['6.D07', '08:00', '15:45', '07:45'],
+  ['6.D08', '08:00', '15:45', '07:45'],
+  ['6.D09', '13:30', '23:45', '10:15'],
+  ['6.D10', '07:00', '15:35', '08:35'],
+  ['6.D11', '07:30', '15:30', '08:00'],
+  ['6.D12', '15:00', '23:48', '08:48'],
+  ['6.D13', '15:00', '23:03', '08:03'],
+  ['6.D14', '14:45', '23:25', '08:40'],
+  ['6.D15', '15:30', '23:28', '07:58'],
+  ['6.D16', '14:00', '22:45', '08:45'],
+  ['6.D17', '15:35', '00:35', '09:00'],
+  ['6.D18', '08:00', '14:45', '06:45'],
+  ['6.R01F', '06:00', '15:00', '09:00'],
+  ['6.R03F', '15:00', '23:59', '08:59'],
+  ['6CARFES', '00:01', '08:00', '07:59'],
 ];
 
 export const ALL_INITIAL_SHIFTS: ShiftDefinition[] = [

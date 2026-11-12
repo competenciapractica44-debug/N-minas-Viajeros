@@ -1,6 +1,8 @@
 import React from 'react';
-import { FileText, Table, Calendar, ShieldAlert, User, Download } from 'lucide-react';
+import { FileText, Table, Calendar, ShieldAlert, User as UserIcon, Download } from 'lucide-react';
 import { ConvenioInfo, WorkerProfile, PayrollBreakdown } from '../types';
+import { User as FirebaseUser } from 'firebase/auth';
+import { DriveSyncBadge } from './DriveSyncBadge';
 
 interface HeaderProps {
   currentTab: string;
@@ -15,6 +17,12 @@ interface HeaderProps {
   onOpenProfileModal: () => void;
   onExportPDF: () => void;
   onExportExcel: () => void;
+  user: FirebaseUser | null;
+  isSyncing: boolean;
+  lastSyncTime: Date | null;
+  onManualSync: () => void;
+  onOpenLogin: () => void;
+  onLogout: () => void;
 }
 
 const MONTH_NAMES = [
@@ -34,6 +42,12 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenProfileModal,
   onExportPDF,
   onExportExcel,
+  user,
+  isSyncing,
+  lastSyncTime,
+  onManualSync,
+  onOpenLogin,
+  onLogout,
 }) => {
   const isExpiringSoon = selectedYear >= 2026;
 
@@ -117,6 +131,16 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Action Controls & Profile */}
         <div className="flex items-center gap-2">
+          {/* Google Drive Status & User Badge */}
+          <DriveSyncBadge
+            user={user}
+            isSyncing={isSyncing}
+            lastSyncTime={lastSyncTime}
+            onManualSync={onManualSync}
+            onOpenLogin={onOpenLogin}
+            onLogout={onLogout}
+          />
+
           <button
             onClick={onExportPDF}
             title="Exportar nómina y partes a PDF oficial"

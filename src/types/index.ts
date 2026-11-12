@@ -23,6 +23,9 @@ export interface ShiftDefinition {
   badges: string[]; // e.g. ["Servicio Ordinario"]
   notes?: string;
   isCustom?: boolean;
+  hasPlusReten?: boolean; // Turno de retén (+8,25 €)
+  hasConductorPerceptor?: boolean; // Plus conductor perceptor (false si es retén)
+  hasQuebrantoMoneda?: boolean; // Quebranto de moneda (false si es retén)
 }
 
 export type ExtraUnit = 'fijo' | 'hora' | 'dia' | 'servicio';

@@ -22,16 +22,16 @@ export function formatCurrency(amount: number): string {
 }
 
 /**
- * Generates and downloads an official-grade PDF payslip report
+ * Builds the official-grade PDF payslip report document
  */
-export function exportToPDF(
+export function buildPDFDoc(
   payroll: PayrollBreakdown,
   profile: WorkerProfile,
   assignments: DayAssignment[],
   shiftsMap: Map<string, ShiftDefinition>,
   convenio: ConvenioInfo,
   monthName: string
-) {
+): jsPDF {
   const doc = new jsPDF({
     orientation: 'portrait',
     unit: 'mm',
@@ -226,7 +226,37 @@ export function exportToPDF(
     });
   }
 
+  return doc;
+}
+
+/**
+  * Generates and downloads the PDF payslip to local disk
+  */
+export function exportToPDF(
+  payroll: PayrollBreakdown,
+  profile: WorkerProfile,
+  assignments: DayAssignment[],
+  shiftsMap: Map<string, ShiftDefinition>,
+  convenio: ConvenioInfo,
+  monthName: string
+) {
+  const doc = buildPDFDoc(payroll, profile, assignments, shiftsMap, convenio, monthName);
   doc.save(`Nomina_${profile.name.replace(/\s+/g, '_') || 'Conductor'}_${monthName}_${payroll.year}.pdf`);
+}
+
+/**
+  * Generates the PDF as a Blob for uploading to Google Drive
+  */
+export function exportToPDFBlob(
+  payroll: PayrollBreakdown,
+  profile: WorkerProfile,
+  assignments: DayAssignment[],
+  shiftsMap: Map<string, ShiftDefinition>,
+  convenio: ConvenioInfo,
+  monthName: string
+): Blob {
+  const doc = buildPDFDoc(payroll, profile, assignments, shiftsMap, convenio, monthName);
+  return doc.output('blob');
 }
 
 /**

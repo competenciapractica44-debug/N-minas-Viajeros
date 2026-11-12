@@ -424,6 +424,20 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
                       <CheckCircle2 className="w-3 h-3 text-emerald-600" />
                       {shift.badges[0] || (shift.category === 'mañana' ? 'Turno Mañana' : shift.category === 'tarde' ? 'Turno Tarde' : shift.category === 'noche' ? 'Turno Noche' : 'Servicio Oficial')}
                     </span>
+                    {rateCalc.hasReten && (
+                      <>
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                          <ShieldCheck className="w-3 h-3 text-amber-600" />
+                          Plus Retén (+{formatCurrency(rateCalc.retenAmount || 8.25)})
+                        </span>
+                        <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-medium bg-rose-50 text-rose-700 border border-rose-200">
+                          ✕ Sin Quebranto
+                        </span>
+                        <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-medium bg-rose-50 text-rose-700 border border-rose-200">
+                          ✕ Sin Plus Conductor
+                        </span>
+                      </>
+                    )}
                     {rateCalc.nightHours > 0 && (
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
                         <Moon className="w-3 h-3 text-purple-600" />
@@ -458,9 +472,9 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
           i
         </div>
         <div>
-          <h4 className="font-bold text-slate-900 mb-0.5">Regla de Liquidación Automática</h4>
+          <h4 className="font-bold text-slate-900 mb-0.5">Regla de Turnos de Retén y Disponibilidad</h4>
           <p className="text-slate-600 leading-relaxed">
-            Al asignar estos códigos en tu calendario, el importe consolidado se sumará directamente a tu nómina sin necesidad de calcular horas de relevo por separado.
+            En los turnos que incluyan el <strong>Plus de Retén (+8,25 €)</strong> (como partes LR1, LR3, R01S, etc.), quedan <strong>automáticamente excluidos el Quebranto de Moneda (-1,89 €) y el Plus Conductor-Perceptor (-6,27 €)</strong> al no realizarse venta de billetes.
           </p>
         </div>
       </div>

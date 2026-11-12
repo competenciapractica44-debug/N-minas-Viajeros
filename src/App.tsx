@@ -21,8 +21,23 @@ import { ALL_INITIAL_SHIFTS } from './data/defaultTurnos';
 import { DEFAULT_EXTRAS } from './data/defaultExtras';
 import { DEFAULT_CONVENIO_ZARAGOZA } from './data/convenioZaragoza';
 import { calculateMonthlyPayroll, calculateYearlySalaryEvolution } from './utils/calculator';
-import { exportToPDF, exportToExcel } from './utils/exporter';
+import { exportToPDF, exportToPDFBlob, exportToExcel } from './utils/exporter';
 import { getExactOctoberAssignments } from './data/realOctoberPayslip';
+
+import { User as FirebaseUser } from 'firebase/auth';
+import { initAuth, logout, getCachedAccessToken } from './services/authService';
+import {
+  ensureDirexisHierarchy,
+  findFileInFolder,
+  readDriveJsonFile,
+  saveOrUpdateDriveJsonFile,
+  uploadPdfToDrive,
+  listArchivedFilesInNominas,
+  DriveFolderInfo,
+  DriveFileInfo,
+} from './services/googleDriveService';
+import { GoogleLoginModal } from './components/GoogleLoginModal';
+import { DriveNominasModal } from './components/DriveNominasModal';
 
 const MONTH_NAMES = [
   'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
@@ -40,8 +55,8 @@ function mapLegacyShiftCode(code?: string): string | undefined {
   if (code === 'T1' || code === 'T2' || code === 'T3' || code === 'T4' || code === 'T5') return '6V.L02';
   if (code === 'N1') return '6V.LCC';
   if (code === 'R') return '6V.LR1';
-  if (code === 'S1' || code === 'S2') return '6.S02';
-  if (code === 'F1' || code === 'F2') return '6.D03/L';
+  if (code.includes('/L')) return code.replace(/\/L/g, '');
+  if (code === 'F1' || code === 'F2') return '6.D03';
   if (code === 'DISC' || code === 'SP1') return '6V.L01';
   return code;
 }
@@ -61,7 +76,7 @@ function getInitial2026Assignments(): DayAssignment[] {
     9: '6V.LR1',
     10: '6.S05',
     11: 'D',
-    12: 'D', // Fiesta Nacional / Descanso
+    12: '6V.L01', // 12 de Octubre: Fiesta Nacional trabajada (Plus Festivo +40,80 €)
     13: '6V.L01',
     14: '6V.L01',
     15: '6V.L02',
@@ -113,6 +128,7 @@ function getInitial2026Assignments(): DayAssignment[] {
       shiftCode: code,
       isRest,
       isSunday: [4, 11, 18, 25].includes(d),
+      isHoliday: d === 12,
       customLine: d === 24 ? 'Línea Interurbana 421 · Coche 304' : undefined,
       extras,
     });
@@ -147,15 +163,26 @@ export default function App() {
   const [selectedYear, setSelectedYear] = useState(2026);
   const [selectedMonth, setSelectedMonth] = useState(10); // Octubre 2026
 
-  // Persistent Shifts (Exclusively official Direxis parts + Fiesta/Descanso)
+  // Persistent Shifts (Exclusively official Direxis parts without /L + Retén configurations)
   const [shifts, setShifts] = useState<ShiftDefinition[]>(() => {
     try {
-      const saved = localStorage.getItem('rutanomina_shifts_v7');
+      const saved = localStorage.getItem('rutanomina_shifts_v10') || localStorage.getItem('rutanomina_shifts_v9');
       if (saved) {
         const parsed: ShiftDefinition[] = JSON.parse(saved);
-        const cleaned = parsed.filter(
-          (s) => !DELETED_MOCK_CODES.has(s.code) && s.category !== 'partido' && s.modality !== 'partido'
-        );
+        const cleaned = parsed
+          .filter((s) => !DELETED_MOCK_CODES.has(s.code) && s.category !== 'partido' && s.modality !== 'partido')
+          .map((s) => {
+            // Eliminar automáticamente cualquier "/L" de códigos y títulos
+            if (s.code.includes('/L')) {
+              const cleanCode = s.code.replace(/\/L/g, '');
+              return {
+                ...s,
+                code: cleanCode,
+                title: s.title ? s.title.replace(/\/L/g, '') : `Servicio ${cleanCode}`,
+              };
+            }
+            return s;
+          });
         const hasDescanso = cleaned.some((s) => s.code === 'D');
         if (!hasDescanso) {
           const dDef = ALL_INITIAL_SHIFTS.find((s) => s.code === 'D');
@@ -171,17 +198,32 @@ export default function App() {
 
   useEffect(() => {
     try {
-      localStorage.setItem('rutanomina_shifts_v7', JSON.stringify(shifts));
+      localStorage.setItem('rutanomina_shifts_v10', JSON.stringify(shifts));
     } catch (e) {
       console.error(e);
     }
   }, [shifts]);
 
-  // Persistent Extras (Fuera de Convenio)
+  // Persistent Extras (Fuera de Convenio y Conceptos Oficiales)
   const [extras, setExtras] = useState<ExtraConcept[]>(() => {
     try {
-      const saved = localStorage.getItem('rutanomina_extras_v1');
-      if (saved) return JSON.parse(saved);
+      const saved = localStorage.getItem('rutanomina_extras_v2') || localStorage.getItem('rutanomina_extras_v1');
+      if (saved) {
+        const parsed: ExtraConcept[] = JSON.parse(saved);
+        // Garantizar que 'Plus retén' siempre tiene exactamente 8.25€
+        const synced = parsed.map((e) => {
+          if (e.id === 'extra-reten' || e.name.toLowerCase().includes('reten') || e.name.toLowerCase().includes('retén')) {
+            return { ...e, amount: 8.25, unit: 'dia' as const };
+          }
+          return e;
+        });
+        const hasReten = synced.some((e) => e.id === 'extra-reten' || e.name.toLowerCase().includes('reten'));
+        if (!hasReten) {
+          const defaultReten = DEFAULT_EXTRAS.find((e) => e.id === 'extra-reten');
+          if (defaultReten) synced.unshift(defaultReten);
+        }
+        return synced;
+      }
     } catch (e) {
       console.error(e);
     }
@@ -190,7 +232,7 @@ export default function App() {
 
   useEffect(() => {
     try {
-      localStorage.setItem('rutanomina_extras_v1', JSON.stringify(extras));
+      localStorage.setItem('rutanomina_extras_v2', JSON.stringify(extras));
     } catch (e) {
       console.error(e);
     }
@@ -199,7 +241,7 @@ export default function App() {
   // Persistent Calendar Assignments (starting in 2026, mapping legacy mock codes)
   const [assignments, setAssignments] = useState<DayAssignment[]>(() => {
     try {
-      const saved = localStorage.getItem('rutanomina_assignments_v4') || localStorage.getItem('rutanomina_assignments_v3');
+      const saved = localStorage.getItem('rutanomina_assignments_v5');
       if (saved) {
         const parsed: DayAssignment[] = JSON.parse(saved);
         const cleaned = parsed
@@ -210,6 +252,12 @@ export default function App() {
           .map((a) => ({
             ...a,
             shiftCode: mapLegacyShiftCode(a.shiftCode),
+            extras: (a.extras || []).map((e) => {
+              if (e.name.toLowerCase().includes('reten') || e.name.toLowerCase().includes('retén')) {
+                return { ...e, amount: 8.25 };
+              }
+              return e;
+            }),
           }));
         if (cleaned.length > 0) return cleaned;
       }
@@ -221,7 +269,7 @@ export default function App() {
 
   useEffect(() => {
     try {
-      localStorage.setItem('rutanomina_assignments_v4', JSON.stringify(assignments));
+      localStorage.setItem('rutanomina_assignments_v5', JSON.stringify(assignments));
     } catch (e) {
       console.error(e);
     }
@@ -345,6 +393,183 @@ export default function App() {
   const [isConvenioModalOpen, setIsConvenioModalOpen] = useState(false);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
 
+  // Google Drive & Auth State
+  const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
+  const [accessToken, setAccessToken] = useState<string | null>(() => getCachedAccessToken());
+  const [isDriveSyncing, setIsDriveSyncing] = useState(false);
+  const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
+  const [driveFolders, setDriveFolders] = useState<DriveFolderInfo | null>(null);
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+  const [isDriveNominasModalOpen, setIsDriveNominasModalOpen] = useState(false);
+  const [archivedNominas, setArchivedNominas] = useState<DriveFileInfo[]>([]);
+  const [isLoadingArchived, setIsLoadingArchived] = useState(false);
+  const [isSavingCurrentNomina, setIsSavingCurrentNomina] = useState(false);
+  const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
+  const hasInitialDriveSyncDoneRef = React.useRef(false);
+
+  // Inicializar estado de autenticación al arrancar la app
+  useEffect(() => {
+    const unsubscribe = initAuth((user, token) => {
+      setCurrentUser(user);
+      if (token) {
+        setAccessToken(token);
+        syncWithDrive(token);
+      } else if (!user) {
+        // Como pide el usuario: pedir al principio que se logueen con una cuenta de Gmail
+        setIsLoginModalOpen(true);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Función principal de sincronización con Google Drive (Direxis / Nóminas)
+  const syncWithDrive = async (token: string, isManual = false) => {
+    setIsDriveSyncing(true);
+    try {
+      const folders = await ensureDirexisHierarchy(token);
+      setDriveFolders(folders);
+
+      // 1. Turnos base
+      // Regla: "si ya hay turnos guardados, se trabajara sobre los guardados en drive"
+      const turnosFile = await findFileInFolder(token, 'turnos_base.json', folders.nominasFolderId);
+      if (turnosFile) {
+        const driveShifts = await readDriveJsonFile<ShiftDefinition[]>(token, turnosFile.id);
+        if (driveShifts && Array.isArray(driveShifts) && driveShifts.length > 0) {
+          // Limpiar cualquier posible '/L' residual en turnos cargados
+          const cleaned = driveShifts.map((s) => {
+            if (s.code.includes('/L')) {
+              const cleanCode = s.code.replace(/\/L/g, '');
+              return {
+                ...s,
+                code: cleanCode,
+                title: s.title ? s.title.replace(/\/L/g, '') : `Servicio ${cleanCode}`,
+              };
+            }
+            return s;
+          });
+          setShifts(cleaned);
+        }
+      } else {
+        // Si no existen todavía, guardar los turnos actuales como base inicial
+        await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'turnos_base.json', shifts);
+      }
+
+      // 2. Configuración de chófer
+      const choferFile = await findFileInFolder(token, 'chofer_config.json', folders.nominasFolderId);
+      if (choferFile) {
+        const driveProfile = await readDriveJsonFile<WorkerProfile>(token, choferFile.id);
+        if (driveProfile && driveProfile.name) {
+          setProfile(driveProfile);
+        }
+      } else {
+        await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'chofer_config.json', profile);
+      }
+
+      // 3. Valores del Convenio de 2026
+      const convenioFile = await findFileInFolder(token, 'convenio_2026.json', folders.nominasFolderId);
+      if (convenioFile) {
+        const driveConvenio = await readDriveJsonFile<ConvenioInfo>(token, convenioFile.id);
+        if (driveConvenio && driveConvenio.ratesByYear) {
+          setConvenio(driveConvenio);
+        }
+      } else {
+        await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'convenio_2026.json', convenio);
+      }
+
+      // 4. Asignaciones de Cuadrante
+      const asignacionesFile = await findFileInFolder(token, 'cuadrante_asignaciones.json', folders.nominasFolderId);
+      if (asignacionesFile) {
+        const driveAsignaciones = await readDriveJsonFile<DayAssignment[]>(token, asignacionesFile.id);
+        if (driveAsignaciones && Array.isArray(driveAsignaciones) && driveAsignaciones.length > 0) {
+          setAssignments(driveAsignaciones);
+        }
+      } else {
+        await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'cuadrante_asignaciones.json', assignments);
+      }
+
+      // 5. Catálogo de Extras
+      const extrasFile = await findFileInFolder(token, 'catalogo_extras.json', folders.nominasFolderId);
+      if (extrasFile) {
+        const driveExtras = await readDriveJsonFile<ExtraConcept[]>(token, extrasFile.id);
+        if (driveExtras && Array.isArray(driveExtras) && driveExtras.length > 0) {
+          setExtras(driveExtras);
+        }
+      } else {
+        await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'catalogo_extras.json', extras);
+      }
+
+      // Consultar nóminas archivadas en la subcarpeta
+      const archived = await listArchivedFilesInNominas(token, folders.nominasFolderId);
+      setArchivedNominas(archived);
+
+      setLastSyncTime(new Date());
+      hasInitialDriveSyncDoneRef.current = true;
+    } catch (err) {
+      console.error('Error sincronizando con Google Drive:', err);
+    } finally {
+      setIsDriveSyncing(false);
+    }
+  };
+
+  // Auto-guardado en Drive ante cualquier variación tras sincronización inicial
+  useEffect(() => {
+    if (!currentUser || !accessToken || !driveFolders || !hasInitialDriveSyncDoneRef.current) {
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        await Promise.all([
+          saveOrUpdateDriveJsonFile(accessToken, driveFolders.nominasFolderId, 'turnos_base.json', shifts),
+          saveOrUpdateDriveJsonFile(accessToken, driveFolders.nominasFolderId, 'chofer_config.json', profile),
+          saveOrUpdateDriveJsonFile(accessToken, driveFolders.nominasFolderId, 'convenio_2026.json', convenio),
+          saveOrUpdateDriveJsonFile(accessToken, driveFolders.nominasFolderId, 'cuadrante_asignaciones.json', assignments),
+          saveOrUpdateDriveJsonFile(accessToken, driveFolders.nominasFolderId, 'catalogo_extras.json', extras),
+        ]);
+        setLastSyncTime(new Date());
+      } catch (err) {
+        console.error('Error auto-guardando en Google Drive:', err);
+      }
+    }, 1500);
+
+    return () => clearTimeout(timer);
+  }, [currentUser, accessToken, driveFolders, shifts, profile, convenio, assignments, extras]);
+
+  // Cierre de sesión
+  const handleLogout = async () => {
+    await logout();
+    setCurrentUser(null);
+    setAccessToken(null);
+    setDriveFolders(null);
+    setArchivedNominas([]);
+    hasInitialDriveSyncDoneRef.current = false;
+  };
+
+  // Sincronización manual bajo demanda
+  const handleManualSync = () => {
+    const token = accessToken || getCachedAccessToken();
+    if (token) {
+      syncWithDrive(token, true);
+    } else {
+      setIsLoginModalOpen(true);
+    }
+  };
+
+  // Actualizar lista de nóminas archivadas
+  const handleRefreshArchived = async () => {
+    const token = accessToken || getCachedAccessToken();
+    if (!token || !driveFolders) return;
+    setIsLoadingArchived(true);
+    try {
+      const updated = await listArchivedFilesInNominas(token, driveFolders.nominasFolderId);
+      setArchivedNominas(updated);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsLoadingArchived(false);
+    }
+  };
+
   // Map of shifts for fast lookup
   const shiftsMap = useMemo(() => {
     const map = new Map<string, ShiftDefinition>();
@@ -396,14 +621,28 @@ export default function App() {
 
   const handleSaveTurno = (newOrUpdated: ShiftDefinition) => {
     setShifts((prev) => {
-      const idx = prev.findIndex((s) => s.id === newOrUpdated.id || s.code === newOrUpdated.code);
+      const idx = prev.findIndex(
+        (s) => s.id === newOrUpdated.id || (editingShift && s.code === editingShift.code) || s.code === newOrUpdated.code
+      );
       if (idx >= 0) {
+        const oldShift = prev[idx];
         const copy = [...prev];
         copy[idx] = newOrUpdated;
+
+        // Si se ha cambiado el código, propagar el nuevo código a todos los días del calendario
+        if (oldShift.code !== newOrUpdated.code) {
+          setAssignments((asgs) =>
+            asgs.map((a) =>
+              a.shiftCode === oldShift.code ? { ...a, shiftCode: newOrUpdated.code } : a
+            )
+          );
+        }
         return copy;
       }
       return [newOrUpdated, ...prev];
     });
+    setEditingShift(null);
+    setIsTurnoModalOpen(false);
   };
 
   const handleDeleteTurno = (id: string) => {
@@ -487,6 +726,62 @@ export default function App() {
     );
   };
 
+  // Archivar nómina del mes seleccionado en Google Drive (Direxis / Nóminas)
+  const handleSaveCurrentNominaToDrive = async () => {
+    const token = accessToken || getCachedAccessToken();
+    if (!currentUser || !token || !driveFolders) {
+      setIsLoginModalOpen(true);
+      return;
+    }
+
+    setIsSavingCurrentNomina(true);
+    setSaveSuccessMessage(null);
+    try {
+      const monthName = MONTH_NAMES[selectedMonth - 1];
+      const pdfBlob = exportToPDFBlob(
+        monthlyPayroll,
+        profile,
+        assignments,
+        shiftsMap,
+        convenio,
+        monthName
+      );
+
+      const sanitizedProfileName = (profile.name || 'Conductor').replace(/[^a-zA-Z0-9]/g, '_');
+      const pdfFileName = `Nomina_${monthName}_${selectedYear}_${sanitizedProfileName}.pdf`;
+      const jsonFileName = `Nomina_${monthName}_${selectedYear}_${sanitizedProfileName}.json`;
+
+      await uploadPdfToDrive(token, driveFolders.nominasFolderId, pdfFileName, pdfBlob);
+      await saveOrUpdateDriveJsonFile(
+        token,
+        driveFolders.nominasFolderId,
+        jsonFileName,
+        {
+          mes: monthName,
+          ano: selectedYear,
+          fechaGeneracion: new Date().toISOString(),
+          perfil: profile,
+          resumen: {
+            liquidoPercibir: monthlyPayroll.liquidoPercibir,
+            totalDevengado: monthlyPayroll.totalDevengado,
+            totalDeducido: monthlyPayroll.totalDeducido,
+            baseCotizacionSS: monthlyPayroll.baseCotizacionSS,
+            lineas: monthlyPayroll.lines,
+          },
+        }
+      );
+
+      const updatedFiles = await listArchivedFilesInNominas(token, driveFolders.nominasFolderId);
+      setArchivedNominas(updatedFiles);
+      setSaveSuccessMessage(`¡Nómina de ${monthName} ${selectedYear} guardada en tu Google Drive (Direxis / Nóminas)!`);
+      setTimeout(() => setSaveSuccessMessage(null), 6000);
+    } catch (err) {
+      console.error('Error archivando nómina en Drive:', err);
+    } finally {
+      setIsSavingCurrentNomina(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans">
       {/* Top Header */}
@@ -506,6 +801,12 @@ export default function App() {
         onOpenProfileModal={() => setIsProfileModalOpen(true)}
         onExportPDF={handleExportPDF}
         onExportExcel={handleExportExcel}
+        user={currentUser}
+        isSyncing={isDriveSyncing}
+        lastSyncTime={lastSyncTime}
+        onManualSync={handleManualSync}
+        onOpenLogin={() => setIsLoginModalOpen(true)}
+        onLogout={handleLogout}
       />
 
       {/* Main View Area */}
@@ -553,6 +854,8 @@ export default function App() {
             onExportPDF={handleExportPDF}
             onExportExcel={handleExportExcel}
             onSyncRealPayslip={handleSyncRealPayslip}
+            isDriveConnected={!!currentUser}
+            onOpenDriveNominasModal={() => setIsDriveNominasModalOpen(true)}
           />
         )}
 
@@ -576,7 +879,10 @@ export default function App() {
       {/* Modals */}
       <TurnoEditModal
         isOpen={isTurnoModalOpen}
-        onClose={() => setIsTurnoModalOpen(false)}
+        onClose={() => {
+          setIsTurnoModalOpen(false);
+          setEditingShift(null);
+        }}
         onSave={handleSaveTurno}
         onDelete={handleDeleteTurno}
         shiftToEdit={editingShift}
@@ -596,6 +902,32 @@ export default function App() {
         onClose={() => setIsProfileModalOpen(false)}
         profile={profile}
         onSaveProfile={(newProf) => setProfile(newProf)}
+      />
+
+      {/* Modal de Inicio de Sesión con Cuenta de Gmail / Google Drive */}
+      <GoogleLoginModal
+        isOpen={isLoginModalOpen}
+        onClose={() => setIsLoginModalOpen(false)}
+        onLoginSuccess={(user, token) => {
+          setCurrentUser(user);
+          setAccessToken(token);
+          syncWithDrive(token);
+        }}
+        allowDismiss={true}
+      />
+
+      {/* Modal de Nóminas Guardadas en Drive */}
+      <DriveNominasModal
+        isOpen={isDriveNominasModalOpen}
+        onClose={() => setIsDriveNominasModalOpen(false)}
+        files={archivedNominas}
+        isLoading={isLoadingArchived}
+        onRefresh={handleRefreshArchived}
+        currentMonthName={MONTH_NAMES[selectedMonth - 1]}
+        currentYear={selectedYear}
+        onSaveCurrentNomina={handleSaveCurrentNominaToDrive}
+        isSavingCurrent={isSavingCurrentNomina}
+        saveSuccessMessage={saveSuccessMessage}
       />
     </div>
   );

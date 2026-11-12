@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { X, Clock, Plus, Minus, Check, Sparkles, ArrowLeft, Trash2, Moon } from 'lucide-react';
+import { X, Clock, Plus, Minus, Check, Sparkles, ArrowLeft, Trash2, Moon, AlertCircle, ShieldCheck } from 'lucide-react';
 import { ShiftDefinition, ShiftModality, ConvenioYearRate } from '../types';
 import { calculateNightHours, calculateTotalHours } from '../utils/calculator';
 import { formatCurrency } from '../utils/exporter';
@@ -50,6 +50,7 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
   const [plusPuntualidadVal, setPlusPuntualidadVal] = useState(12.00);
   const [includePlusNocturnidad, setIncludePlusNocturnidad] = useState(false);
   const [isHolidayRate, setIsHolidayRate] = useState(false);
+  const [hasPlusReten, setHasPlusReten] = useState(false);
 
   // Effective year rates from Convenio (defaults to 2026: 13.62 €/h, nocturnidad 2.48 €/h)
   const effectiveYearRate: ConvenioYearRate = useMemo(() => {
@@ -62,6 +63,7 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
       plusConductorPerceptorDia: 6.27,
       plusConductorPerceptorDiaReducido: 3.14,
       quebrantoMonedaDia: 1.89,
+      plusRetenDia: 8.25,
       plusFestivoMayor4h: 40.80,
       plusFestivoMenor4h: 30.60,
       plus24y31Diciembre: 30.60,
@@ -90,6 +92,13 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
       setEndTime(shiftToEdit.endTime);
       setSecondStartTime(shiftToEdit.secondStartTime || '15:00');
       setSecondEndTime(shiftToEdit.secondEndTime || '19:00');
+      setHasPlusReten(Boolean(
+        shiftToEdit.hasPlusReten ||
+        shiftToEdit.code.includes('.LR') ||
+        shiftToEdit.code.includes('.R0') ||
+        shiftToEdit.title.toLowerCase().includes('retén') ||
+        shiftToEdit.title.toLowerCase().includes('reten')
+      ));
       if (shiftToEdit.dayType === 'festivo') {
         setIsHolidayRate(true);
       }
@@ -106,6 +115,7 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
       setIsPartida(false);
       setStartTime('06:30');
       setEndTime('14:45');
+      setHasPlusReten(false);
       setCustomGrossRate(null);
     }
   }, [shiftToEdit, isOpen]);
@@ -159,9 +169,11 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
       total += plusPuntualidadVal;
     }
 
-    if (isHolidayRate) {
-      // Plus festivo Art. 17 Convenio
-      total += totalHours > 4 ? effectiveYearRate.plusFestivoMayor4h : effectiveYearRate.plusFestivoMenor4h;
+    // El Plus de Festivo no se incluye en la tarifa del turno (se cobra en festivos oficiales y se marca manualmente)
+
+    // Plus de retén (8,25 €): se añade si el turno es de retén y excluye quebranto y plus conductor
+    if (hasPlusReten) {
+      total += effectiveYearRate.plusRetenDia || 8.25;
     }
 
     return Math.round(total * 100) / 100;
@@ -173,6 +185,7 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
     includePlusPuntualidad,
     plusPuntualidadVal,
     isHolidayRate,
+    hasPlusReten,
   ]);
 
   const effectiveGrossRate = customGrossRate !== null ? customGrossRate : calculatedGross;
@@ -195,6 +208,15 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
       else if (cat === 'noche') finalColor = '#7c3aed';
     }
 
+    const badges = [
+      isPartida ? 'Servicio Partido' : modality === 'nocturno' ? 'Nocturnidad fija' : 'Servicio Ordinario',
+    ];
+    if (hasPlusReten) {
+      badges.push('Plus Retén (+8,25 €)');
+      badges.push('Sin Quebranto');
+      badges.push('Sin Plus Conductor');
+    }
+
     const savedShift: ShiftDefinition = {
       id: shiftToEdit ? shiftToEdit.id : `custom-${Date.now()}`,
       code: code.trim().toUpperCase() || '6V.L01',
@@ -202,19 +224,23 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
       category: cat,
       dayType: isHolidayRate ? 'festivo' : 'laborable',
       modality: isPartida ? 'partido' : modality,
-      terminal: terminal.trim() || 'Cochera Central',
+      terminal: terminal.trim() || (hasPlusReten ? 'Cochera / Guardia Retén' : 'Cochera Central'),
       startTime,
       endTime,
       secondStartTime: isPartida ? secondStartTime : undefined,
       secondEndTime: isPartida ? secondEndTime : undefined,
       drivingDuration: drivingHoursStr,
-      computedDuration: `${drivingHoursStr} (Jornada completa)`,
+      computedDuration: hasPlusReten ? `${drivingHoursStr} (Retén disponibilidad)` : `${drivingHoursStr} (Jornada completa)`,
       fixedRate: effectiveGrossRate,
       color: finalColor,
-      badges: [
-        isPartida ? 'Servicio Partido' : modality === 'nocturno' ? 'Nocturnidad fija' : 'Servicio Ordinario',
-      ],
+      badges,
       isCustom: true,
+      hasPlusReten,
+      hasConductorPerceptor: !hasPlusReten,
+      hasQuebrantoMoneda: !hasPlusReten,
+      notes: hasPlusReten
+        ? 'Turno configurado con Plus de Retén (+8,25 €). No aplica Quebranto de moneda ni Plus Conductor-Perceptor al tratarse de un servicio de disponibilidad o guardia.'
+        : shiftToEdit?.notes,
     };
 
     onSave(savedShift);
@@ -294,8 +320,8 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
                     type="text"
                     value={code}
                     onChange={(e) => setCode(e.target.value.toUpperCase())}
-                    maxLength={7}
-                    placeholder="M3"
+                    maxLength={15}
+                    placeholder="6.D01"
                     className="w-full text-center font-bold text-base py-2 px-3 rounded-xl bg-blue-50/60 border border-blue-200 text-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
                   />
                   <span className="text-[10px] text-slate-400 mt-1 block text-center">
@@ -609,33 +635,94 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
                 </div>
                 <span className="font-semibold text-emerald-600 font-mono">+{formatCurrency(plusPuntualidadVal)}</span>
               </label>
+
+              {/* Plus Retén (8,25 €) - Excluye Quebranto y Plus Conductor */}
+              <div className={`p-3 rounded-xl border transition-all ${
+                hasPlusReten
+                  ? 'bg-amber-50/80 border-amber-300 ring-1 ring-amber-300 text-amber-950'
+                  : 'bg-white/70 border-slate-200 text-slate-700'
+              }`}>
+                <div className="flex items-start justify-between gap-2">
+                  <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={hasPlusReten}
+                      onChange={(e) => setHasPlusReten(e.target.checked)}
+                      className="mt-0.5 rounded text-amber-600 focus:ring-amber-500 w-4 h-4 cursor-pointer"
+                    />
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-xs text-slate-900">
+                          Plus de Retén / Disponibilidad (Art. 13)
+                        </span>
+                        {hasPlusReten && (
+                          <span className="px-1.5 py-0.2 rounded bg-amber-200 text-amber-900 text-[10px] font-bold">
+                            Retén Activo
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        Jornada o servicio de guardia/retén (+{formatCurrency(effectiveYearRate.plusRetenDia || 8.25)}/día).
+                      </p>
+                    </div>
+                  </label>
+                  <span className={`font-mono font-bold text-xs shrink-0 ${hasPlusReten ? 'text-amber-800' : 'text-slate-400'}`}>
+                    +{formatCurrency(effectiveYearRate.plusRetenDia || 8.25)}
+                  </span>
+                </div>
+
+                {hasPlusReten && (
+                  <div className="mt-2.5 pt-2.5 border-t border-amber-200/80 text-[11px] text-amber-900 space-y-1 animate-fadeIn">
+                    <div className="flex items-center gap-1.5 font-bold text-amber-800">
+                      <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                      <span>Exclusión automática de Quebranto y Plus Conductor:</span>
+                    </div>
+                    <p className="text-[10.5px] leading-relaxed text-amber-800/90">
+                      Al tener activo el <strong>Plus de Retén</strong>, se <strong>quitan automáticamente</strong> de este turno el <strong>Quebranto de Moneda (-1,89 €)</strong> y el <strong>Plus Conductor-Perceptor (-6,27 €)</strong> al no realizarse venta de billetes.
+                    </p>
+                    <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                      <span className="px-2 py-0.5 rounded-md bg-rose-100 text-rose-800 font-semibold text-[10px] border border-rose-200">
+                        ✕ Sin Quebranto de moneda (0,00 €)
+                      </span>
+                      <span className="px-2 py-0.5 rounded-md bg-rose-100 text-rose-800 font-semibold text-[10px] border border-rose-200">
+                        ✕ Sin Plus Conductor-Perceptor (0,00 €)
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* Aplicación tarifaria automática */}
-            <div className="flex items-center justify-between p-2.5 bg-slate-100 rounded-xl text-xs">
-              <span className="font-semibold text-slate-700">Tipo de jornada:</span>
-              <div className="flex items-center gap-3">
-                <label className="flex items-center gap-1.5 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="rateType"
-                    checked={!isHolidayRate}
-                    onChange={() => setIsHolidayRate(false)}
-                    className="text-blue-600"
-                  />
-                  <span>Laborable</span>
-                </label>
-                <label className="flex items-center gap-1.5 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="rateType"
-                    checked={isHolidayRate}
-                    onChange={() => setIsHolidayRate(true)}
-                    className="text-blue-600"
-                  />
-                  <span>Festivo / Domingo (+{formatCurrency(drivingMinutes / 60 > 4 ? effectiveYearRate.plusFestivoMayor4h : effectiveYearRate.plusFestivoMenor4h)})</span>
-                </label>
+            {/* Tipo de jornada del servicio */}
+            <div className="p-3 bg-slate-100 rounded-2xl text-xs space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-slate-700">Tipo de jornada:</span>
+                <div className="flex items-center gap-3">
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="rateType"
+                      checked={!isHolidayRate}
+                      onChange={() => setIsHolidayRate(false)}
+                      className="text-blue-600"
+                    />
+                    <span>Laborable / Sábado</span>
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="rateType"
+                      checked={isHolidayRate}
+                      onChange={() => setIsHolidayRate(true)}
+                      className="text-blue-600"
+                    />
+                    <span>Domingos y Festivos</span>
+                  </label>
+                </div>
               </div>
+              <p className="text-[10.5px] text-slate-500 leading-tight">
+                * El Plus de Festivo (+40,80 €) no se incluye en el turno: según convenio se percibe en festivos oficiales (nacionales, regionales y locales) y se marca manualmente en el calendario.
+              </p>
             </div>
           </div>
         </div>

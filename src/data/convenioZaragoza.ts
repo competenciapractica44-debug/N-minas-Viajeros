@@ -58,6 +58,8 @@ export function generateProrrogaYearRate(baseRate: ConvenioYearRate, newYear: nu
     dietaPernoctaRegular: parseFloat((baseRate.dietaPernoctaRegular * factor).toFixed(2)),
     dietaPernoctaDiscrecional: parseFloat((baseRate.dietaPernoctaDiscrecional * factor).toFixed(2)),
     plusVacacionesDia: parseFloat((baseRate.plusVacacionesDia * factor).toFixed(2)),
+    plusRetenDia: parseFloat(((baseRate.plusRetenDia || 8.25) * factor).toFixed(2)),
+    prorrataPagaDia: parseFloat(((baseRate.prorrataPagaDia || 3.28) * factor).toFixed(2)),
     horasJornadaAnual: baseRate.horasJornadaAnual,
   };
 }

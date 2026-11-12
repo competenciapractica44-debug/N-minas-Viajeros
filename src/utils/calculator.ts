@@ -135,7 +135,9 @@ export interface ShiftRateCalculation {
   baseAmount: number; // totalHours * hourlyRate
   nightAmount: number; // nightHours * 2.48
   holidayAmount: number; // If Sunday / Festivo, Art. 17 plus (40.80 €)
-  totalRate: number;  // baseAmount + nightAmount + holidayAmount
+  retenAmount?: number; // Plus de retén (+8.25 €) si aplica
+  hasReten?: boolean;   // Si es turno de retén
+  totalRate: number;  // baseAmount + nightAmount + holidayAmount (+ retenAmount)
   hasNight: boolean;  // nightHours > 0
 }
 
@@ -203,14 +205,24 @@ export function computeShiftRateFromConvenio(
   // Plus nocturnidad (Art. 18: 2,48 €/h en tramo 22:00 a 06:00)
   const nightAmount = parseFloat((nightHours * nightRate).toFixed(2));
 
-  // Plus Festivos y Domingos (Art. 17)
-  const isFestivo = Boolean(options?.isHoliday || options?.isSunday || shift.dayType === 'festivo');
+  // Plus Festivo (Art. 17): Se cobra en festivos oficiales (nacionales, regionales y locales) y se marca manualmente
+  const isFestivo = Boolean(options?.isHoliday);
   const holidayAmount = isFestivo
     ? (totalHours > 4 ? yearRate.plusFestivoMayor4h : yearRate.plusFestivoMenor4h)
     : 0;
 
+  // Plus retén (8,25 €): si el turno es de retén o reserva, incluye el plus y excluye quebranto y plus conductor
+  const isRetenShift = Boolean(
+    shift.hasPlusReten ||
+    shift.code.includes('.LR') ||
+    shift.code.includes('.R0') ||
+    shift.title.toLowerCase().includes('retén') ||
+    shift.title.toLowerCase().includes('reten')
+  );
+  const retenAmount = isRetenShift ? (yearRate.plusRetenDia || 8.25) : 0;
+
   // Total rate: if custom shift has an explicit override, respect it; otherwise compute exact Convenio sum
-  const computedTotal = parseFloat((baseAmount + nightAmount + holidayAmount).toFixed(2));
+  const computedTotal = parseFloat((baseAmount + nightAmount + holidayAmount + retenAmount).toFixed(2));
   const totalRate = (shift.isCustom && shift.fixedRate !== undefined && shift.fixedRate > 0)
     ? shift.fixedRate
     : computedTotal;
@@ -224,6 +236,8 @@ export function computeShiftRateFromConvenio(
     baseAmount,
     nightAmount,
     holidayAmount,
+    retenAmount,
+    hasReten: isRetenShift,
     totalRate,
     hasNight: nightHours > 0,
   };
@@ -263,6 +277,9 @@ export function calculateMonthlyPayroll(
     : 100;
   const partTimeFactor = partTimePercent / 100;
 
+  // Días con turno o extra de retén (el retén excluye quebranto de moneda y plus conductor)
+  const retenDaysSet = new Set<string>();
+
   // Process calendar month days (Salario base, regular shifts, hours, holiday pluses)
   for (let d = 1; d <= daysInMonth; d++) {
     const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
@@ -273,8 +290,8 @@ export function calculateMonthlyPayroll(
     const assignment = assignments.find((a) => a.date === dateStr);
     const shiftCode = assignment?.shiftCode;
 
-    // Check holiday
-    const isHoliday = assignment?.isHoliday || isSunday;
+    // Check holiday: Solo festivos oficiales (nacionales, regionales, locales) indicados manualmente
+    const isHoliday = Boolean(assignment?.isHoliday);
 
     if (assignment?.isRest || shiftCode === 'D') {
       restDays++;
@@ -299,6 +316,10 @@ export function calculateMonthlyPayroll(
         const calc = computeShiftRateFromConvenio(shiftDef, yearRate, { isHoliday, isSunday });
         totalWorkedHours += calc.totalHours;
         totalNightHours += calc.nightHours;
+
+        if (calc.hasReten) {
+          retenDaysSet.add(dateStr);
+        }
 
         // If a custom shift has a specific fixed tariff override that exceeds standard daily rate
         if (shiftDef.isCustom && shiftDef.fixedRate && shiftDef.fixedRate > calc.totalRate) {
@@ -347,6 +368,16 @@ export function calculateMonthlyPayroll(
   const generalExtrasItems: PayrollLineItem[] = [];
 
   assignments.forEach((assignment) => {
+    // Si la jornada tiene asignado el extra de plus de retén, registrarla como jornada de retén
+    const hasRetenExtra = assignment.extras && assignment.extras.some((e) => {
+      const l = e.name.toLowerCase();
+      return l.includes('reten') || l.includes('retén');
+    });
+    if (hasRetenExtra) {
+      retenDaysSet.add(assignment.date);
+    }
+    const isRetenOnThisDay = retenDaysSet.has(assignment.date) || hasRetenExtra;
+
     if (assignment.date >= cutoffRange.startDateStr && assignment.date <= cutoffRange.endDateStr) {
       if (assignment.extras && assignment.extras.length > 0) {
         for (const extra of assignment.extras) {
@@ -356,7 +387,10 @@ export function calculateMonthlyPayroll(
           if (lower.includes('reten') || lower.includes('retén')) {
             explicitRetenCount += qty;
           } else if (lower.includes('1/2') || lower.includes('medio plus')) {
-            explicitMedioPlusCount += qty;
+            // En un turno con plus de retén, se quita el plus conductor perceptor
+            if (!isRetenOnThisDay) {
+              explicitMedioPlusCount += qty;
+            }
           } else if (lower.includes('festiva')) {
             const h = extra.quantity !== undefined && extra.quantity > 0
               ? extra.quantity
@@ -368,9 +402,15 @@ export function calculateMonthlyPayroll(
               : (extra.amount > 0 ? parseFloat((extra.amount / (yearRate.horaOrdinaria || 13.62)).toFixed(2)) : 1);
             explicitComplementariasHours += h;
           } else if (lower.includes('quebranto')) {
-            explicitQuebrantoCount += qty;
+            // En un turno con plus de retén, se quita el quebranto de moneda
+            if (!isRetenOnThisDay) {
+              explicitQuebrantoCount += qty;
+            }
           } else if (lower.includes('plus conductor')) {
-            explicitPlusConductorCount += qty;
+            // En un turno con plus de retén, se quita el plus conductor perceptor
+            if (!isRetenOnThisDay) {
+              explicitPlusConductorCount += qty;
+            }
           } else {
             generalExtrasTotal += extra.amount;
             generalExtrasItems.push({
@@ -443,10 +483,14 @@ export function calculateMonthlyPayroll(
     });
   }
 
+  // Días laborables en que SÍ se realiza cobro y conducción ordinaria (se quitan los turnos/días con retén)
+  const nonRetenWorkedDays = Math.max(0, workedDays - retenDaysSet.size);
+
   // 1. Plus conductor perceptor jornada completa (6,27 €)
+  // En los turnos con plus de retén, queda excluido este plus
   const finalPlusConductorCount = explicitPlusConductorCount > 0
     ? explicitPlusConductorCount
-    : (profile.hasConductorPerceptorPlus ? workedDays : 0);
+    : (profile.hasConductorPerceptorPlus ? nonRetenWorkedDays : 0);
   const plusConductorPerceptor = parseFloat(
     (finalPlusConductorCount * yearRate.plusConductorPerceptorDia * (isPartTime ? partTimeFactor : 1)).toFixed(2)
   );
@@ -458,15 +502,18 @@ export function calculateMonthlyPayroll(
   );
 
   // 3. Quebranto de moneda (1,89 €)
+  // En los turnos con plus de retén, queda excluido el quebranto de moneda
   const finalQuebrantoCount = explicitQuebrantoCount > 0
     ? explicitQuebrantoCount
-    : (profile.hasMonetaryQuebranto ? workedDays : 0);
+    : (profile.hasMonetaryQuebranto ? nonRetenWorkedDays : 0);
   const plusQuebrantoMoneda = parseFloat(
     (finalQuebrantoCount * yearRate.quebrantoMonedaDia).toFixed(2)
   );
 
-  // 4. Plus retén (8,25 €)
-  const finalRetenCount = explicitRetenCount;
+  // 4. Plus retén (8,25 €): toma los explícitos o los turnos de retén contabilizados
+  const finalRetenCount = explicitRetenCount > 0
+    ? explicitRetenCount
+    : retenDaysSet.size;
   const plusRetenAmount = parseFloat(
     (finalRetenCount * (yearRate.plusRetenDia || 8.25)).toFixed(2)
   );

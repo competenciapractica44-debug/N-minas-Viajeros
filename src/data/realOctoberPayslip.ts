@@ -260,7 +260,7 @@ export function getExactOctoberAssignments(): DayAssignment[] {
 
     // 12 de Octubre: Fiesta Nacional con Plus Festivo
     if (d === 12) {
-      shiftCode = '6.D03/L';
+      shiftCode = '6.D03';
       extras.push({
         id: 'pf-12',
         name: 'Plus Festivo',

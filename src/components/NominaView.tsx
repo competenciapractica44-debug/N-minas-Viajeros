@@ -16,6 +16,7 @@ import {
   Layers,
   ArrowRightLeft,
   X,
+  Cloud,
 } from 'lucide-react';
 import {
   PayrollBreakdown,
@@ -40,6 +41,8 @@ interface NominaViewProps {
   onExportPDF: () => void;
   onExportExcel: () => void;
   onSyncRealPayslip?: () => void;
+  isDriveConnected?: boolean;
+  onOpenDriveNominasModal?: () => void;
 }
 
 export const NominaView: React.FC<NominaViewProps> = ({
@@ -55,6 +58,8 @@ export const NominaView: React.FC<NominaViewProps> = ({
   onExportPDF,
   onExportExcel,
   onSyncRealPayslip,
+  isDriveConnected,
+  onOpenDriveNominasModal,
 }) => {
   const [showExtrasDetails, setShowExtrasDetails] = useState(false);
   const [showRealPayslipModal, setShowRealPayslipModal] = useState(false);
@@ -130,7 +135,17 @@ export const NominaView: React.FC<NominaViewProps> = ({
           </div>
 
           {/* Quick Export Action Buttons */}
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {onOpenDriveNominasModal && (
+              <button
+                onClick={onOpenDriveNominasModal}
+                className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-3.5 py-2.5 bg-white/15 hover:bg-white/25 text-white text-xs font-bold rounded-xl border border-white/20 shadow-xs transition-colors cursor-pointer"
+                title="Archivar o ver nóminas en tu carpeta de Google Drive (Direxis / Nóminas)"
+              >
+                <Cloud className="w-4 h-4 text-sky-300" />
+                <span>Drive Nóminas</span>
+              </button>
+            )}
             <button
               onClick={onExportPDF}
               className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl shadow-xs transition-colors"

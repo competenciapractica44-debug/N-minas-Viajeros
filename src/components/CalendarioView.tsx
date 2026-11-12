@@ -16,6 +16,8 @@ import {
   RotateCcw,
   AlertCircle,
   Moon,
+  ShieldCheck,
+  Check,
 } from 'lucide-react';
 import {
   DayAssignment,
@@ -191,12 +193,16 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
     let turnosCount = 0;
     let descansosCount = 0;
     let vacacionesCount = 0;
+    let festivosCount = 0;
     let extrasTotal = 0;
 
     for (let d = 1; d <= daysInMonth; d++) {
       const dStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
       const asg = assignments.find((a) => a.date === dStr);
       if (asg) {
+        if (asg.isHoliday) {
+          festivosCount++;
+        }
         if (asg.shiftCode === 'D' || asg.isRest) {
           descansosCount++;
         } else if (asg.shiftCode === 'V' || asg.isVacation) {
@@ -217,7 +223,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
         }
       }
     }
-    return { turnosCount, descansosCount, vacacionesCount, extrasTotal };
+    return { turnosCount, descansosCount, vacacionesCount, festivosCount, extrasTotal };
   }, [assignments, daysInMonth, selectedYear, selectedMonth, horaOrdinariaRate]);
 
   // Helper: check if vacation plus (10€/day) applies based on profile 100% contract condition
@@ -229,7 +235,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
   const selectedDayTotal = useMemo(() => {
     let base = 0;
     const yearRate = convenio.ratesByYear[selectedYear] || convenio.ratesByYear[2026];
-    const isSunday = new Date(selectedYear, selectedMonth - 1, selectedDayNumber).getDay() === 0;
+    const isHoliday = Boolean(currentAssignment.isHoliday);
 
     if (currentShift) {
       if (currentShift.code === 'D') {
@@ -240,7 +246,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
         const plusVac = appliesVacationPlus ? (yearRate.plusVacacionesDia || 10.00) : 0;
         base = baseDia + plusVac;
       } else {
-        const shiftCalc = computeShiftRateFromConvenio(currentShift, yearRate, { isSunday });
+        const shiftCalc = computeShiftRateFromConvenio(currentShift, yearRate, { isHoliday });
         base = shiftCalc.totalRate;
       }
     }
@@ -277,10 +283,29 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
 
   // Assign shift quickly
   const handleAssignShift = (code: string) => {
+    const shift = shiftsMap.get(code) || shifts.find((s) => s.code === code);
+    const isReten = Boolean(
+      shift?.hasPlusReten ||
+      code.includes('.LR') ||
+      code.includes('.R0') ||
+      shift?.title.toLowerCase().includes('retén') ||
+      shift?.title.toLowerCase().includes('reten')
+    );
+
+    let updatedExtras = currentAssignment.extras || [];
+    // Si el turno asignado es de retén, quitar el quebranto de moneda y el plus conductor perceptor
+    if (isReten) {
+      updatedExtras = updatedExtras.filter((e) => {
+        const l = e.name.toLowerCase();
+        return !l.includes('quebranto') && !l.includes('plus conductor') && !l.includes('medio plus');
+      });
+    }
+
     onUpdateAssignment(selectedDateStr, {
       shiftCode: code,
       isRest: code === 'D',
       isVacation: code === 'V',
+      extras: updatedExtras,
     });
   };
 
@@ -299,15 +324,54 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
 
     if (!name) return;
 
+    const isAddingReten = name.toLowerCase().includes('reten') || name.toLowerCase().includes('retén');
+    const isAddingQuebrantoOrConductor =
+      name.toLowerCase().includes('quebranto') ||
+      name.toLowerCase().includes('plus conductor') ||
+      name.toLowerCase().includes('medio plus');
+
+    const currentExtras = currentAssignment.extras || [];
+    const dayHasRetenShift = Boolean(
+      currentShift?.hasPlusReten ||
+      currentShift?.code.includes('.LR') ||
+      currentShift?.code.includes('.R0') ||
+      currentShift?.title.toLowerCase().includes('retén') ||
+      currentShift?.title.toLowerCase().includes('reten')
+    );
+    const dayHasRetenExtra = currentExtras.some(
+      (e) => e.name.toLowerCase().includes('reten') || e.name.toLowerCase().includes('retén')
+    );
+
+    // En turnos con retén no aplica quebranto ni conductor perceptor
+    if ((dayHasRetenShift || dayHasRetenExtra) && isAddingQuebrantoOrConductor) {
+      alert(
+        'En los turnos con Plus de Retén no aplica el Quebranto de moneda ni el Plus Conductor-Perceptor al tratarse de un servicio de disponibilidad sin venta de billetes.'
+      );
+      return;
+    }
+
+    let updatedExtras = [...currentExtras];
+
+    // Si se añade como extra el plus de retén, la cuantía siempre debe ser exactamente 8.25€
+    // y hay que quitar de ese turno el quebranto de moneda y el plus de conductor perceptor
+    if (isAddingReten) {
+      amount = 8.25;
+      updatedExtras = updatedExtras.filter((e) => {
+        const l = e.name.toLowerCase();
+        return !l.includes('quebranto') && !l.includes('plus conductor') && !l.includes('medio plus');
+      });
+    }
+
     const newExtra = {
       id: `dayextra-${Date.now()}`,
       name,
-      amount,
+      amount: isAddingReten ? 8.25 : amount,
     };
 
-    const currentExtras = currentAssignment.extras || [];
+    updatedExtras.push(newExtra);
+
     onUpdateAssignment(selectedDateStr, {
-      extras: [...currentExtras, newExtra],
+      extras: updatedExtras,
     });
 
     setIsAddingExtraModal(false);
@@ -367,6 +431,15 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
             <span className="flex items-center gap-1.5 text-cyan-800">
               <span className="w-2 h-2 rounded-full bg-cyan-500"></span>
               <strong>{counters.vacacionesCount}</strong> Vacaciones
+            </span>
+          </>
+        )}
+        {counters.festivosCount > 0 && (
+          <>
+            <span className="text-slate-300">·</span>
+            <span className="flex items-center gap-1.5 text-amber-900 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
+              <span className="text-xs">🎉</span>
+              <strong>{counters.festivosCount}</strong> Festivo{counters.festivosCount > 1 ? 's' : ''}
             </span>
           </>
         )}
@@ -441,9 +514,16 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                   <span className={`text-[11px] font-bold ${isSelected ? 'text-blue-700' : 'text-slate-700'}`}>
                     {dayNum}
                   </span>
-                  {hasExtras && (
-                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500" title="Contiene extras"></span>
-                  )}
+                  <div className="flex items-center gap-0.5">
+                    {asg?.isHoliday && (
+                      <span className="text-[10px] leading-none" title="Festivo Oficial (Nacional / Regional / Local)">
+                        🎉
+                      </span>
+                    )}
+                    {hasExtras && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500" title="Contiene extras"></span>
+                    )}
+                  </div>
                 </div>
 
                 {/* Shift badge */}
@@ -572,8 +652,8 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
           ) : (
             (() => {
               const activeRate = convenio.ratesByYear[selectedYear] || convenio.ratesByYear[2026];
-              const isSunday = new Date(selectedYear, selectedMonth - 1, selectedDayNumber).getDay() === 0;
-              const shiftRateCalc = computeShiftRateFromConvenio(currentShift, activeRate, { isSunday });
+              const isHoliday = Boolean(currentAssignment.isHoliday);
+              const shiftRateCalc = computeShiftRateFromConvenio(currentShift, activeRate, { isHoliday });
 
               return (
                 <div className="bg-slate-50/80 rounded-2xl p-3.5 border border-slate-200/70 space-y-2">
@@ -595,6 +675,12 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                         <CheckCircle2 className="w-3 h-3 text-emerald-600" />
                         {shiftRateCalc.totalHours}h ({formatCurrency(shiftRateCalc.hourlyRate)}/h)
                       </span>
+                      {shiftRateCalc.hasReten && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 font-bold text-[10px]">
+                          <ShieldCheck className="w-3 h-3 text-amber-600" />
+                          Plus Retén (+{formatCurrency(shiftRateCalc.retenAmount || 8.25)}) · Sin Quebranto / Sin Plus Conductor
+                        </span>
+                      )}
                       {shiftRateCalc.hasNight && (
                         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-purple-100 text-purple-800 font-bold text-[10px]">
                           <Moon className="w-3 h-3 text-purple-600" />
@@ -627,7 +713,77 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
             <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
               Particularidades / Extras del Día
             </span>
-            <div className="flex items-center gap-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
+              {/* Botón manual para marcar Festivo Oficial (Nacional, Autonómico o Local) */}
+              <button
+                type="button"
+                onClick={() => {
+                  onUpdateAssignment(selectedDateStr, {
+                    isHoliday: !currentAssignment.isHoliday,
+                  });
+                }}
+                className={`text-xs font-bold px-2.5 py-1 rounded-lg border flex items-center gap-1.5 transition-all ${
+                  currentAssignment.isHoliday
+                    ? 'bg-amber-100 border-amber-400 text-amber-900 ring-1 ring-amber-300 shadow-2xs'
+                    : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-amber-50 hover:border-amber-200 hover:text-amber-800'
+                }`}
+                title="Marcar o desmarcar manualmente si este día es festivo nacional, autonómico o local para cobrar el Plus Festivo (+40,80 €)"
+              >
+                <span>🎉</span>
+                <span>{currentAssignment.isHoliday ? 'Festivo (+40,80 €)' : 'Festivo oficial'}</span>
+                {currentAssignment.isHoliday && (
+                  <Check className="w-3 h-3 text-amber-800 stroke-[3]" />
+                )}
+              </button>
+
+              {/* Botón manual para añadir o quitar Plus de Retén (8,25 €) */}
+              <button
+                type="button"
+                onClick={() => {
+                  const currentExtras = currentAssignment.extras || [];
+                  const hasRetenExtra = currentExtras.some(
+                    (e) => e.name.toLowerCase().includes('reten') || e.name.toLowerCase().includes('retén')
+                  );
+                  if (hasRetenExtra) {
+                    const filtered = currentExtras.filter(
+                      (e) => !e.name.toLowerCase().includes('reten') && !e.name.toLowerCase().includes('retén')
+                    );
+                    onUpdateAssignment(selectedDateStr, { extras: filtered });
+                  } else {
+                    // Quitar quebranto y plus conductor al añadir retén
+                    const filtered = currentExtras.filter((e) => {
+                      const l = e.name.toLowerCase();
+                      return !l.includes('quebranto') && !l.includes('plus conductor') && !l.includes('medio plus');
+                    });
+                    filtered.push({
+                      id: `dayextra-reten-${Date.now()}`,
+                      name: 'Plus retén',
+                      amount: 8.25,
+                    });
+                    onUpdateAssignment(selectedDateStr, { extras: filtered });
+                  }
+                }}
+                className={`text-xs font-bold px-2.5 py-1 rounded-lg border flex items-center gap-1.5 transition-all ${
+                  (currentAssignment.extras || []).some((e) => e.name.toLowerCase().includes('reten') || e.name.toLowerCase().includes('retén')) ||
+                  Boolean(currentShift?.hasPlusReten || currentShift?.code.includes('.LR') || currentShift?.code.includes('.R0'))
+                    ? 'bg-amber-100 border-amber-400 text-amber-900 ring-1 ring-amber-300 shadow-2xs'
+                    : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-amber-50 hover:border-amber-200 hover:text-amber-800'
+                }`}
+                title="Añadir Plus de Retén (8,25 €). Quita automáticamente quebranto de moneda y plus conductor"
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-amber-700" />
+                <span>
+                  {(currentAssignment.extras || []).some((e) => e.name.toLowerCase().includes('reten') || e.name.toLowerCase().includes('retén')) ||
+                  Boolean(currentShift?.hasPlusReten || currentShift?.code.includes('.LR') || currentShift?.code.includes('.R0'))
+                    ? 'Retén (+8,25 €)'
+                    : 'Plus Retén (+8,25 €)'}
+                </span>
+                {((currentAssignment.extras || []).some((e) => e.name.toLowerCase().includes('reten') || e.name.toLowerCase().includes('retén')) ||
+                  Boolean(currentShift?.hasPlusReten || currentShift?.code.includes('.LR') || currentShift?.code.includes('.R0'))) && (
+                  <Check className="w-3 h-3 text-amber-800 stroke-[3]" />
+                )}
+              </button>
+
               <button
                 type="button"
                 onClick={() => setIsLateSectionOpen(!isLateSectionOpen)}
@@ -978,7 +1134,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
               subtitle: '05:30',
             },
             {
-              code: '6.D03/L',
+              code: '6.D03',
               label: 'Parte D03 · Festivo',
               rate: 160.07,
               color: '#eab308',
@@ -1114,7 +1270,8 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                       const found = extrasList.find((x) => x.id === e.target.value);
                       if (found) {
                         setCustomExtraName(found.name);
-                        setCustomExtraAmount(found.amount);
+                        const isReten = found.id === 'extra-reten' || found.name.toLowerCase().includes('reten') || found.name.toLowerCase().includes('retén');
+                        setCustomExtraAmount(isReten ? 8.25 : found.amount);
                       }
                     }}
                     className="w-full text-xs py-2 px-3 rounded-xl border border-slate-200 bg-white"
@@ -1123,7 +1280,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                     <option value="__late_finish__">⏱️ Terminado más tarde del turno (Horas y minutos)</option>
                     {extrasList.map((e) => (
                       <option key={e.id} value={e.id}>
-                        {e.name} (+{formatCurrency(e.amount)})
+                        {e.name} (+{formatCurrency(e.name.toLowerCase().includes('reten') ? 8.25 : e.amount)})
                       </option>
                     ))}
                   </select>
@@ -1136,8 +1293,14 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                   <input
                     type="text"
                     value={customExtraName}
-                    onChange={(e) => setCustomExtraName(e.target.value)}
-                    placeholder="ej. Limpieza interior autocar"
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setCustomExtraName(val);
+                      if (val.toLowerCase().includes('reten') || val.toLowerCase().includes('retén')) {
+                        setCustomExtraAmount(8.25);
+                      }
+                    }}
+                    placeholder="ej. Plus retén o Limpieza interior autocar"
                     className="w-full text-xs py-2 px-3 rounded-xl border border-slate-200"
                   />
                 </div>
@@ -1148,11 +1311,17 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                   </label>
                   <input
                     type="number"
-                    step="0.5"
+                    step="0.05"
                     value={customExtraAmount}
                     onChange={(e) => setCustomExtraAmount(parseFloat(e.target.value) || 0)}
                     className="w-full text-xs py-2 px-3 rounded-xl border border-slate-200 font-mono font-bold"
                   />
+                  {(customExtraName.toLowerCase().includes('reten') || customExtraName.toLowerCase().includes('retén')) && (
+                    <p className="text-[10.5px] text-amber-700 mt-1 font-semibold flex items-center gap-1">
+                      <ShieldCheck className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                      <span>Cuantía estipulada de Plus de Retén según convenio: <strong>8,25 €/día</strong>. Al añadirlo se quitan el Quebranto de moneda y el Plus conductor.</span>
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-2 pt-2">

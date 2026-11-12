@@ -61,10 +61,13 @@ export const ExtrasView: React.FC<ExtrasViewProps> = ({
       .map((t) => t.trim())
       .filter(Boolean);
 
+    const isReten = name.toLowerCase().includes('reten') || name.toLowerCase().includes('retén');
+    const finalAmount = isReten ? 8.25 : (Number(amount) || 0);
+
     const updated: ExtraConcept = {
       id: editingExtra ? editingExtra.id : `extra-${Date.now()}`,
       name: name.trim(),
-      amount: Number(amount) || 0,
+      amount: finalAmount,
       unit,
       description: description.trim(),
       tags: tags.length > 0 ? tags : ['Fuera de convenio'],
@@ -267,7 +270,14 @@ export const ExtrasView: React.FC<ExtrasViewProps> = ({
                 <input
                   type="text"
                   value={name}
-                  onChange={(e) => setName(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setName(val);
+                    if (val.toLowerCase().includes('reten') || val.toLowerCase().includes('retén')) {
+                      setAmount(8.25);
+                      setUnit('dia');
+                    }
+                  }}
                   placeholder="ej. Limpieza profunda o Espera en hotel"
                   className="w-full text-xs sm:text-sm py-2 px-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                 />
