@@ -414,8 +414,9 @@ export default function App() {
       if (token) {
         setAccessToken(token);
         syncWithDrive(token);
-      } else if (!user) {
-        // Como pide el usuario: pedir al principio que se logueen con una cuenta de Gmail
+      } else {
+        // Al entrar en la página, pedir identificarse con la cuenta de Google Drive
+        setAccessToken(null);
         setIsLoginModalOpen(true);
       }
     });

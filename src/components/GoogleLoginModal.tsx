@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Cloud, ShieldCheck, FolderSync, Users, AlertCircle, Loader2, ArrowRight } from 'lucide-react';
+import { Cloud, ShieldCheck, FolderSync, Users, AlertCircle, Loader2, ArrowRight, ExternalLink, Copy, Check } from 'lucide-react';
 import { googleSignIn } from '../services/authService';
 import { User } from 'firebase/auth';
 
@@ -18,12 +18,25 @@ export const GoogleLoginModal: React.FC<GoogleLoginModalProps> = ({
 }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isUnauthorizedDomain, setIsUnauthorizedDomain] = useState(false);
+  const [copiedDomain, setCopiedDomain] = useState(false);
 
   if (!isOpen) return null;
+
+  const currentHost = typeof window !== 'undefined' ? window.location.hostname : '';
+
+  const handleCopyDomain = () => {
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(currentHost);
+      setCopiedDomain(true);
+      setTimeout(() => setCopiedDomain(false), 3000);
+    }
+  };
 
   const handleSignIn = async () => {
     setIsLoading(true);
     setErrorMessage(null);
+    setIsUnauthorizedDomain(false);
     try {
       const result = await googleSignIn();
       if (result) {
@@ -34,6 +47,9 @@ export const GoogleLoginModal: React.FC<GoogleLoginModalProps> = ({
       console.error('Error durante el inicio de sesión:', err);
       if (err.code === 'auth/popup-closed-by-user') {
         setErrorMessage('Has cerrado la ventana de inicio de sesión de Google. Inténtalo de nuevo.');
+      } else if (err.code === 'auth/unauthorized-domain' || err.message?.includes('unauthorized-domain')) {
+        setIsUnauthorizedDomain(true);
+        setErrorMessage('Dominio web no autorizado en Firebase Authentication.');
       } else {
         setErrorMessage(
           err.message || 'No se pudo completar el inicio de sesión. Comprueba tu conexión a internet.'
@@ -94,9 +110,76 @@ export const GoogleLoginModal: React.FC<GoogleLoginModalProps> = ({
           </div>
 
           {errorMessage && (
-            <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
-              <span>{errorMessage}</span>
+            <div className="space-y-2.5 animate-fadeIn">
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                <span className="font-semibold">{errorMessage}</span>
+              </div>
+
+              {isUnauthorizedDomain && (
+                <div className="p-3.5 bg-amber-50/90 border border-amber-200 rounded-2xl text-xs space-y-2 text-slate-700">
+                  <div className="font-bold text-amber-900 flex items-center gap-1.5 text-xs">
+                    <span>Cómo autorizar tu dominio en Firebase (1 minuto):</span>
+                  </div>
+                  <p className="text-[11px] leading-relaxed text-slate-600">
+                    Estás ejecutando la web desde <code className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 font-mono text-[10px]">{currentHost || 'tu dominio web'}</code>. Para permitir el acceso seguro con Google desde este dominio:
+                  </p>
+
+                  <ol className="list-decimal pl-4 space-y-1 text-[11px] text-slate-700">
+                    <li>
+                      Abre la configuración de Firebase:
+                      <a
+                        href="https://console.firebase.google.com/project/gen-lang-client-0594243376/authentication/settings"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="ml-1 inline-flex items-center gap-0.5 text-blue-600 hover:text-blue-800 font-bold underline"
+                      >
+                        <span>Consola Firebase (Settings)</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </li>
+                    <li>
+                      Baja hasta la sección <strong>"Dominios autorizados"</strong> (Authorized domains) y pulsa <strong>"Añadir dominio"</strong>.
+                    </li>
+                    <li>
+                      Pega tu dominio: <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-amber-200 text-amber-900 text-[10px] font-bold">{currentHost}</code>
+                    </li>
+                    <li>
+                      Pulsa <strong>Guardar</strong> y luego vuelve a pulsar el botón de Google abajo.
+                    </li>
+                  </ol>
+
+                  <div className="pt-1 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleCopyDomain}
+                      className="px-2.5 py-1.5 bg-white hover:bg-slate-50 text-slate-800 rounded-xl border border-amber-300 font-semibold text-[11px] flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      {copiedDomain ? (
+                        <>
+                          <Check className="w-3.5 h-3.5 text-emerald-600" />
+                          <span className="text-emerald-700 font-bold">¡Copiado!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3.5 h-3.5 text-slate-600" />
+                          <span>Copiar dominio ({currentHost})</span>
+                        </>
+                      )}
+                    </button>
+
+                    <a
+                      href="https://console.firebase.google.com/project/gen-lang-client-0594243376/authentication/settings"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-semibold text-[11px] flex items-center gap-1 transition-colors"
+                    >
+                      <span>Abrir Firebase</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
