@@ -20,6 +20,7 @@ interface HeaderProps {
   user: FirebaseUser | null;
   isSyncing: boolean;
   lastSyncTime: Date | null;
+  nominasFolderUrl?: string;
   onManualSync: () => void;
   onOpenLogin: () => void;
   onLogout: () => void;
@@ -45,6 +46,7 @@ export const Header: React.FC<HeaderProps> = ({
   user,
   isSyncing,
   lastSyncTime,
+  nominasFolderUrl,
   onManualSync,
   onOpenLogin,
   onLogout,
@@ -136,6 +138,7 @@ export const Header: React.FC<HeaderProps> = ({
             user={user}
             isSyncing={isSyncing}
             lastSyncTime={lastSyncTime}
+            nominasFolderUrl={nominasFolderUrl}
             onManualSync={onManualSync}
             onOpenLogin={onOpenLogin}
             onLogout={onLogout}

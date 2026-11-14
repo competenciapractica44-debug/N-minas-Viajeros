@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { Cloud, CloudCheck, RefreshCw, LogOut, Check, Folder, ChevronDown } from 'lucide-react';
+import { Cloud, CloudCheck, RefreshCw, LogOut, Check, Folder, ChevronDown, ExternalLink } from 'lucide-react';
 import { User } from 'firebase/auth';
 
 interface DriveSyncBadgeProps {
   user: User | null;
   isSyncing: boolean;
   lastSyncTime: Date | null;
+  nominasFolderUrl?: string;
   onManualSync: () => void;
   onOpenLogin: () => void;
   onLogout: () => void;
@@ -15,6 +16,7 @@ export const DriveSyncBadge: React.FC<DriveSyncBadgeProps> = ({
   user,
   isSyncing,
   lastSyncTime,
+  nominasFolderUrl,
   onManualSync,
   onOpenLogin,
   onLogout,
@@ -120,6 +122,22 @@ export const DriveSyncBadge: React.FC<DriveSyncBadgeProps> = ({
             </div>
 
             <div className="space-y-1 pt-1">
+              {nominasFolderUrl && (
+                <a
+                  href={nominasFolderUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => setIsMenuOpen(false)}
+                  className="w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl text-blue-700 hover:bg-blue-50 font-semibold transition-colors"
+                >
+                  <span className="flex items-center gap-2">
+                    <Folder className="w-3.5 h-3.5 text-blue-600" />
+                    <span>Abrir carpeta en Drive</span>
+                  </span>
+                  <ExternalLink className="w-3 h-3 text-blue-500" />
+                </a>
+              )}
+
               <button
                 type="button"
                 onClick={() => {

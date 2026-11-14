@@ -10,6 +10,7 @@ interface DriveNominasModalProps {
   onRefresh: () => void;
   currentMonthName: string;
   currentYear: number;
+  nominasFolderUrl?: string;
   onSaveCurrentNomina: () => void;
   isSavingCurrent: boolean;
   saveSuccessMessage: string | null;
@@ -23,6 +24,7 @@ export const DriveNominasModal: React.FC<DriveNominasModalProps> = ({
   onRefresh,
   currentMonthName,
   currentYear,
+  nominasFolderUrl,
   onSaveCurrentNomina,
   isSavingCurrent,
   saveSuccessMessage,
@@ -41,7 +43,7 @@ export const DriveNominasModal: React.FC<DriveNominasModalProps> = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fadeIn">
       <div className="w-full max-w-lg bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col max-h-[90vh]">
         {/* Header */}
-        <div className="bg-gradient-to-r from-blue-700 to-indigo-800 p-5 text-white flex items-center justify-between">
+        <div className="bg-gradient-to-r from-blue-700 to-indigo-800 p-5 text-white flex items-center justify-between gap-2">
           <div className="flex items-center gap-3">
             <div className="p-2.5 bg-white/15 backdrop-blur-md rounded-2xl">
               <Folder className="w-6 h-6 text-white" />
@@ -51,13 +53,27 @@ export const DriveNominasModal: React.FC<DriveNominasModalProps> = ({
               <p className="text-xs text-blue-100">Carpeta: <strong>Direxis / Nóminas</strong></p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-1.5 rounded-full hover:bg-white/20 text-white transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-1.5">
+            {nominasFolderUrl && (
+              <a
+                href={nominasFolderUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-2.5 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 text-white text-[11px] font-semibold inline-flex items-center gap-1 transition-colors"
+                title="Abrir carpeta Direxis / Nóminas en Google Drive"
+              >
+                <span>Abrir carpeta</span>
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-1.5 rounded-full hover:bg-white/20 text-white transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Content */}

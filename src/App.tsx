@@ -419,6 +419,7 @@ export default function App() {
   const [isSavingCurrentNomina, setIsSavingCurrentNomina] = useState(false);
   const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
   const hasInitialDriveSyncDoneRef = React.useRef(false);
+  const syncPromiseRef = React.useRef<Promise<void> | null>(null);
 
   // Sincronizar navegación URL (?page=privacidad / ?page=terminos)
   useEffect(() => {
@@ -460,92 +461,105 @@ export default function App() {
   }, []);
 
   // Función principal de sincronización con Google Drive (Direxis / Nóminas)
-  const syncWithDrive = async (token: string, isManual = false) => {
-    setIsDriveSyncing(true);
-    try {
-      const folders = await ensureDirexisHierarchy(token);
-      setDriveFolders(folders);
-
-      // 1. Turnos base
-      // Regla: "si ya hay turnos guardados, se trabajara sobre los guardados en drive"
-      const turnosFile = await findFileInFolder(token, 'turnos_base.json', folders.nominasFolderId);
-      if (turnosFile) {
-        const driveShifts = await readDriveJsonFile<ShiftDefinition[]>(token, turnosFile.id);
-        if (driveShifts && Array.isArray(driveShifts) && driveShifts.length > 0) {
-          // Limpiar cualquier posible '/L' residual en turnos cargados
-          const cleaned = driveShifts.map((s) => {
-            if (s.code.includes('/L')) {
-              const cleanCode = s.code.replace(/\/L/g, '');
-              return {
-                ...s,
-                code: cleanCode,
-                title: s.title ? s.title.replace(/\/L/g, '') : `Servicio ${cleanCode}`,
-              };
-            }
-            return s;
-          });
-          setShifts(cleaned);
-        }
-      } else {
-        // Si no existen todavía, guardar los turnos actuales como base inicial
-        await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'turnos_base.json', shifts);
-      }
-
-      // 2. Configuración de chófer
-      const choferFile = await findFileInFolder(token, 'chofer_config.json', folders.nominasFolderId);
-      if (choferFile) {
-        const driveProfile = await readDriveJsonFile<WorkerProfile>(token, choferFile.id);
-        if (driveProfile && driveProfile.name) {
-          setProfile(driveProfile);
-        }
-      } else {
-        await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'chofer_config.json', profile);
-      }
-
-      // 3. Valores del Convenio de 2026
-      const convenioFile = await findFileInFolder(token, 'convenio_2026.json', folders.nominasFolderId);
-      if (convenioFile) {
-        const driveConvenio = await readDriveJsonFile<ConvenioInfo>(token, convenioFile.id);
-        if (driveConvenio && driveConvenio.ratesByYear) {
-          setConvenio(driveConvenio);
-        }
-      } else {
-        await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'convenio_2026.json', convenio);
-      }
-
-      // 4. Asignaciones de Cuadrante
-      const asignacionesFile = await findFileInFolder(token, 'cuadrante_asignaciones.json', folders.nominasFolderId);
-      if (asignacionesFile) {
-        const driveAsignaciones = await readDriveJsonFile<DayAssignment[]>(token, asignacionesFile.id);
-        if (driveAsignaciones && Array.isArray(driveAsignaciones) && driveAsignaciones.length > 0) {
-          setAssignments(driveAsignaciones);
-        }
-      } else {
-        await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'cuadrante_asignaciones.json', assignments);
-      }
-
-      // 5. Catálogo de Extras
-      const extrasFile = await findFileInFolder(token, 'catalogo_extras.json', folders.nominasFolderId);
-      if (extrasFile) {
-        const driveExtras = await readDriveJsonFile<ExtraConcept[]>(token, extrasFile.id);
-        if (driveExtras && Array.isArray(driveExtras) && driveExtras.length > 0) {
-          setExtras(driveExtras);
-        }
-      } else {
-        await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'catalogo_extras.json', extras);
-      }
-
-      // Consultar nóminas archivadas en la subcarpeta
-      const archived = await listArchivedFilesInNominas(token, folders.nominasFolderId);
-      setArchivedNominas(archived);
-
-      setLastSyncTime(new Date());
-      hasInitialDriveSyncDoneRef.current = true;
-    } catch (err) {
-      console.error('Error sincronizando con Google Drive:', err);
-    } finally {
-      setIsDriveSyncing(false);
+  const syncWithDrive = async (token: string, isManual = false): Promise<void> => {
+    if (syncPromiseRef.current && !isManual) {
+      return syncPromiseRef.current;
     }
+    if (syncPromiseRef.current) {
+      await syncPromiseRef.current;
+    }
+
+    const run = (async () => {
+      setIsDriveSyncing(true);
+      try {
+        const folders = await ensureDirexisHierarchy(token);
+        setDriveFolders(folders);
+
+        // 1. Turnos base
+        // Regla: "si ya hay turnos guardados, se trabajara sobre los guardados en drive"
+        const turnosFile = await findFileInFolder(token, 'turnos_base.json', folders.nominasFolderId);
+        if (turnosFile) {
+          const driveShifts = await readDriveJsonFile<ShiftDefinition[]>(token, turnosFile.id);
+          if (driveShifts && Array.isArray(driveShifts) && driveShifts.length > 0) {
+            // Limpiar cualquier posible '/L' residual en turnos cargados
+            const cleaned = driveShifts.map((s) => {
+              if (s.code.includes('/L')) {
+                const cleanCode = s.code.replace(/\/L/g, '');
+                return {
+                  ...s,
+                  code: cleanCode,
+                  title: s.title ? s.title.replace(/\/L/g, '') : `Servicio ${cleanCode}`,
+                };
+              }
+              return s;
+            });
+            setShifts(cleaned);
+          }
+        } else {
+          // Si no existen todavía, guardar los turnos actuales como base inicial dentro de Direxis / Nóminas
+          await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'turnos_base.json', shifts);
+        }
+
+        // 2. Configuración de chófer
+        const choferFile = await findFileInFolder(token, 'chofer_config.json', folders.nominasFolderId);
+        if (choferFile) {
+          const driveProfile = await readDriveJsonFile<WorkerProfile>(token, choferFile.id);
+          if (driveProfile && driveProfile.name) {
+            setProfile(driveProfile);
+          }
+        } else {
+          await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'chofer_config.json', profile);
+        }
+
+        // 3. Valores del Convenio de 2026
+        const convenioFile = await findFileInFolder(token, 'convenio_2026.json', folders.nominasFolderId);
+        if (convenioFile) {
+          const driveConvenio = await readDriveJsonFile<ConvenioInfo>(token, convenioFile.id);
+          if (driveConvenio && driveConvenio.ratesByYear) {
+            setConvenio(driveConvenio);
+          }
+        } else {
+          await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'convenio_2026.json', convenio);
+        }
+
+        // 4. Asignaciones de Cuadrante
+        const asignacionesFile = await findFileInFolder(token, 'cuadrante_asignaciones.json', folders.nominasFolderId);
+        if (asignacionesFile) {
+          const driveAsignaciones = await readDriveJsonFile<DayAssignment[]>(token, asignacionesFile.id);
+          if (driveAsignaciones && Array.isArray(driveAsignaciones) && driveAsignaciones.length > 0) {
+            setAssignments(driveAsignaciones);
+          }
+        } else {
+          await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'cuadrante_asignaciones.json', assignments);
+        }
+
+        // 5. Catálogo de Extras
+        const extrasFile = await findFileInFolder(token, 'catalogo_extras.json', folders.nominasFolderId);
+        if (extrasFile) {
+          const driveExtras = await readDriveJsonFile<ExtraConcept[]>(token, extrasFile.id);
+          if (driveExtras && Array.isArray(driveExtras) && driveExtras.length > 0) {
+            setExtras(driveExtras);
+          }
+        } else {
+          await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'catalogo_extras.json', extras);
+        }
+
+        // Consultar nóminas archivadas en la subcarpeta
+        const archived = await listArchivedFilesInNominas(token, folders.nominasFolderId);
+        setArchivedNominas(archived);
+
+        setLastSyncTime(new Date());
+        hasInitialDriveSyncDoneRef.current = true;
+      } catch (err) {
+        console.error('Error sincronizando con Google Drive:', err);
+      } finally {
+        setIsDriveSyncing(false);
+        syncPromiseRef.current = null;
+      }
+    })();
+
+    syncPromiseRef.current = run;
+    return run;
   };
 
   // Auto-guardado en Drive ante cualquier variación tras sincronización inicial
@@ -851,6 +865,7 @@ export default function App() {
         user={currentUser}
         isSyncing={isDriveSyncing}
         lastSyncTime={lastSyncTime}
+        nominasFolderUrl={driveFolders?.nominasWebViewLink}
         onManualSync={handleManualSync}
         onOpenLogin={() => setIsLoginModalOpen(true)}
         onLogout={handleLogout}
@@ -994,6 +1009,7 @@ export default function App() {
         onRefresh={handleRefreshArchived}
         currentMonthName={MONTH_NAMES[selectedMonth - 1]}
         currentYear={selectedYear}
+        nominasFolderUrl={driveFolders?.nominasWebViewLink}
         onSaveCurrentNomina={handleSaveCurrentNominaToDrive}
         isSavingCurrent={isSavingCurrentNomina}
         saveSuccessMessage={saveSuccessMessage}
