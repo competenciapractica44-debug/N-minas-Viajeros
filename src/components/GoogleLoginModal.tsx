@@ -2,11 +2,13 @@ import React, { useState } from 'react';
 import { Cloud, ShieldCheck, FolderSync, Users, AlertCircle, Loader2, ArrowRight, ExternalLink, Copy, Check } from 'lucide-react';
 import { googleSignIn } from '../services/authService';
 import { User } from 'firebase/auth';
+import { PublicFooter, PublicLegalPage } from './PublicFooter';
 
 interface GoogleLoginModalProps {
   isOpen: boolean;
   onClose: () => void;
   onLoginSuccess: (user: User, token: string) => void;
+  onNavigateLegal?: (page: PublicLegalPage) => void;
   allowDismiss?: boolean;
 }
 
@@ -14,11 +16,13 @@ export const GoogleLoginModal: React.FC<GoogleLoginModalProps> = ({
   isOpen,
   onClose,
   onLoginSuccess,
+  onNavigateLegal,
   allowDismiss = true,
 }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isUnauthorizedDomain, setIsUnauthorizedDomain] = useState(false);
+  const [showTestingHelp, setShowTestingHelp] = useState(false);
   const [copiedDomain, setCopiedDomain] = useState(false);
 
   if (!isOpen) return null;
@@ -37,6 +41,7 @@ export const GoogleLoginModal: React.FC<GoogleLoginModalProps> = ({
     setIsLoading(true);
     setErrorMessage(null);
     setIsUnauthorizedDomain(false);
+    setShowTestingHelp(false);
     try {
       const result = await googleSignIn();
       if (result) {
@@ -45,14 +50,23 @@ export const GoogleLoginModal: React.FC<GoogleLoginModalProps> = ({
       }
     } catch (err: any) {
       console.error('Error durante el inicio de sesión:', err);
-      if (err.code === 'auth/popup-closed-by-user') {
-        setErrorMessage('Has cerrado la ventana de inicio de sesión de Google. Inténtalo de nuevo.');
-      } else if (err.code === 'auth/unauthorized-domain' || err.message?.includes('unauthorized-domain')) {
+      const errMsg = String(err?.message || '');
+      const errCode = String(err?.code || '');
+      if (
+        errCode === 'auth/popup-closed-by-user' ||
+        errMsg.includes('access_denied') ||
+        errMsg.includes('403')
+      ) {
+        setShowTestingHelp(true);
+        setErrorMessage(
+          'Ventana cerrada o acceso bloqueado por Google (Error 403: app en fase de pruebas).'
+        );
+      } else if (errCode === 'auth/unauthorized-domain' || errMsg.includes('unauthorized-domain')) {
         setIsUnauthorizedDomain(true);
         setErrorMessage('Dominio web no autorizado en Firebase Authentication.');
       } else {
         setErrorMessage(
-          err.message || 'No se pudo completar el inicio de sesión. Comprueba tu conexión a internet.'
+          errMsg || 'No se pudo completar el inicio de sesión. Comprueba tu conexión a internet.'
         );
       }
     } finally {
@@ -62,16 +76,16 @@ export const GoogleLoginModal: React.FC<GoogleLoginModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm animate-fadeIn">
-      <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden text-slate-800">
+      <div className="w-full max-w-md max-h-[92vh] overflow-y-auto bg-white rounded-3xl shadow-2xl border border-slate-100 text-slate-800">
         {/* Header Decorativo con temática Direxis & Google Drive */}
         <div className="bg-gradient-to-br from-blue-700 via-blue-600 to-indigo-800 p-6 text-white text-center relative overflow-hidden">
           <div className="absolute -top-12 -right-12 w-36 h-36 bg-white/10 rounded-full blur-xl pointer-events-none"></div>
           <div className="inline-flex p-3 bg-white/15 backdrop-blur-md rounded-2xl mb-3 shadow-inner">
             <Cloud className="w-8 h-8 text-white stroke-[2]" />
           </div>
-          <h2 className="text-xl font-black tracking-tight">Acceso Privado con Google</h2>
-          <p className="text-xs text-blue-100 mt-1 max-w-xs mx-auto leading-relaxed">
-            Sincroniza tus turnos y nóminas en tu carpeta personal de <strong>Google Drive</strong>
+          <h2 className="text-xl font-black tracking-tight">RutaNómina - Transporte de Viajeros</h2>
+          <p className="text-xs text-blue-50 mt-1.5 max-w-sm mx-auto leading-relaxed">
+            <strong>RutaNómina</strong> es una herramienta para gestionar rutas, jornadas y nóminas de conductores de transporte de viajeros. Inicia sesión con Google para sincronizar tus datos en Drive.
           </p>
         </div>
 
@@ -115,6 +129,37 @@ export const GoogleLoginModal: React.FC<GoogleLoginModalProps> = ({
                 <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
                 <span className="font-semibold">{errorMessage}</span>
               </div>
+
+              {showTestingHelp && (
+                <div className="p-3.5 bg-amber-50/90 border border-amber-200 rounded-2xl text-xs space-y-2 text-slate-700">
+                  <div className="font-bold text-amber-900 text-xs">
+                    ¿Te sale «Acceso bloqueado / Error 403: access_denied»?
+                  </div>
+                  <p className="text-[11px] leading-relaxed text-slate-600">
+                    La pantalla OAuth de Google está en estado <strong>En pruebas (Testing)</strong> y solo permite entrar al propietario del proyecto o a cuentas autorizadas como testers. Para permitir otros correos de Gmail:
+                  </p>
+                  <ol className="list-decimal pl-4 space-y-1 text-[11px] text-slate-700">
+                    <li>
+                      Abre{' '}
+                      <a
+                        href="https://console.cloud.google.com/auth/audience?project=gen-lang-client-0594243376"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-0.5 text-blue-600 hover:text-blue-800 font-bold underline"
+                      >
+                        <span>Google Auth Platform · Audience</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </li>
+                    <li>
+                      <strong>Opción rápida:</strong> en <em>Usuarios de prueba (Test users)</em>, añade el correo de cada conductor que vaya a usarla.
+                    </li>
+                    <li>
+                      <strong>Opción abierta:</strong> pulsa <strong>Publicar aplicación (Publish App)</strong> para que cualquier compañero con Gmail pueda acceder.
+                    </li>
+                  </ol>
+                </div>
+              )}
 
               {isUnauthorizedDomain && (
                 <div className="p-3.5 bg-amber-50/90 border border-amber-200 rounded-2xl text-xs space-y-2 text-slate-700">
@@ -235,6 +280,16 @@ export const GoogleLoginModal: React.FC<GoogleLoginModalProps> = ({
                 <ArrowRight className="w-3 h-3" />
               </button>
             </div>
+          )}
+
+          {onNavigateLegal && (
+            <PublicFooter
+              compact
+              onNavigateLegal={(page) => {
+                onClose();
+                onNavigateLegal(page);
+              }}
+            />
           )}
         </div>
       </div>

@@ -115,6 +115,8 @@ function createDirexisPart(
 
   const dayLabel = dayType === 'festivo' ? 'Domingos y Festivos' : dayType === 'sabado' ? 'Sábados' : 'L-V Laborable';
 
+  const isUnder4Hours = !isReten && totalHours > 0 && totalHours < 4;
+
   const badges = isReten
     ? [
         'Direxis Oficial',
@@ -126,6 +128,7 @@ function createDirexisPart(
         'Direxis Oficial',
         dayType === 'sabado' ? 'Servicio Sábado' : dayType === 'festivo' ? 'Domingos y Festivos' : 'Laborable',
         category === 'tarde' ? 'Turno Tarde' : category === 'mañana' ? 'Turno Mañana' : 'Turno Noche',
+        ...(isUnder4Hours ? ['1/2 Plus Conductor (<4h · 3,14 €)'] : []),
       ];
 
   const shiftTitle = isReten
@@ -134,6 +137,8 @@ function createDirexisPart(
 
   const shiftNotes = isReten
     ? `Parte de trabajo oficial de retén y disponibilidad para ${dayLabel} con duración total de ${durationStr}. Incluye plus de retén (+8,25 €) y excluye quebranto de moneda y plus conductor-perceptor al no realizar venta de billetes.`
+    : isUnder4Hours
+    ? `Parte de trabajo oficial de Direxis Zaragoza para ${dayLabel} con duración reducida (${durationStr} < 4h). Aplica 1/2 Plus Conductor-Perceptor (3,14 € en lugar de 6,27 €).`
     : `Parte de trabajo oficial de Direxis Zaragoza para ${dayLabel} con duración total de ${durationStr}.`;
 
   return {
@@ -147,7 +152,11 @@ function createDirexisPart(
     startTime: start,
     endTime: end,
     drivingDuration: durationStr,
-    computedDuration: isReten ? `${durationStr} (Retén disponibilidad)` : `${durationStr} (Jornada completa)`,
+    computedDuration: isReten
+      ? `${durationStr} (Retén disponibilidad)`
+      : isUnder4Hours
+      ? `${durationStr} (< 4h · 1/2 Plus)`
+      : `${durationStr} (Jornada completa)`,
     fixedRate: rate,
     color,
     badges,

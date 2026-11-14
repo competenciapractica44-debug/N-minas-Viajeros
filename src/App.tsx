@@ -38,6 +38,18 @@ import {
 } from './services/googleDriveService';
 import { GoogleLoginModal } from './components/GoogleLoginModal';
 import { DriveNominasModal } from './components/DriveNominasModal';
+import { PublicFooter, PublicLegalPage } from './components/PublicFooter';
+import { LegalPageView } from './components/LegalPageView';
+
+function getPublicPageFromUrl(): PublicLegalPage | null {
+  if (typeof window === 'undefined') return null;
+  const params = new URLSearchParams(window.location.search);
+  const page = params.get('page');
+  if (page === 'privacidad' || page === 'terminos') {
+    return page;
+  }
+  return null;
+}
 
 const MONTH_NAMES = [
   'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
@@ -159,6 +171,7 @@ function getInitial2026Assignments(): DayAssignment[] {
 }
 
 export default function App() {
+  const [publicPage, setPublicPage] = useState<PublicLegalPage | null>(() => getPublicPageFromUrl());
   const [currentTab, setCurrentTab] = useState<'turnos' | 'calendario' | 'nomina' | 'extras'>('calendario');
   const [selectedYear, setSelectedYear] = useState(2026);
   const [selectedMonth, setSelectedMonth] = useState(10); // Octubre 2026
@@ -407,6 +420,27 @@ export default function App() {
   const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
   const hasInitialDriveSyncDoneRef = React.useRef(false);
 
+  // Sincronizar navegación URL (?page=privacidad / ?page=terminos)
+  useEffect(() => {
+    const handlePopState = () => {
+      setPublicPage(getPublicPageFromUrl());
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  const navigateToPublicPage = (page: PublicLegalPage | null) => {
+    setPublicPage(page);
+    if (page) {
+      setIsLoginModalOpen(false);
+    }
+    if (typeof window !== 'undefined') {
+      const url = page ? `/?page=${page}` : '/';
+      window.history.pushState({}, '', url);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+
   // Inicializar estado de autenticación al arrancar la app
   useEffect(() => {
     const unsubscribe = initAuth((user, token) => {
@@ -415,9 +449,11 @@ export default function App() {
         setAccessToken(token);
         syncWithDrive(token);
       } else {
-        // Al entrar en la página, pedir identificarse con la cuenta de Google Drive
+        // Al entrar en la página principal (salvo páginas legales públicas), pedir identificarse con Google Drive
         setAccessToken(null);
-        setIsLoginModalOpen(true);
+        if (!getPublicPageFromUrl()) {
+          setIsLoginModalOpen(true);
+        }
       }
     });
     return () => unsubscribe();
@@ -783,6 +819,16 @@ export default function App() {
     }
   };
 
+  if (publicPage) {
+    return (
+      <LegalPageView
+        page={publicPage}
+        onBackToHome={() => navigateToPublicPage(null)}
+        onNavigateLegal={(page) => navigateToPublicPage(page)}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans">
       {/* Top Header */}
@@ -809,6 +855,24 @@ export default function App() {
         onOpenLogin={() => setIsLoginModalOpen(true)}
         onLogout={handleLogout}
       />
+
+      {/* Breve descripción pública de la aplicación visible en la pantalla principal */}
+      <div className="bg-blue-50/70 border-b border-blue-100">
+        <div className="max-w-5xl mx-auto px-4 py-2 flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-[11px] sm:text-xs text-slate-700">
+          <p>
+            <strong className="text-blue-900">RutaNómina - Transporte de Viajeros:</strong> herramienta para gestionar rutas, jornadas, turnos y nóminas de conductores de transporte de viajeros.
+          </p>
+          {!currentUser && (
+            <button
+              type="button"
+              onClick={() => setIsLoginModalOpen(true)}
+              className="text-blue-700 hover:text-blue-900 font-bold underline text-left sm:text-right shrink-0 cursor-pointer"
+            >
+              Conectar Google Drive
+            </button>
+          )}
+        </div>
+      </div>
 
       {/* Main View Area */}
       <main className="flex-1">
@@ -870,6 +934,9 @@ export default function App() {
         )}
       </main>
 
+      {/* Public Footer with Privacy Policy and Terms of Service links */}
+      <PublicFooter onNavigateLegal={navigateToPublicPage} />
+
       {/* Fixed Bottom Navigation matching screenshot */}
       <BottomNav
         currentTab={currentTab}
@@ -914,6 +981,7 @@ export default function App() {
           setAccessToken(token);
           syncWithDrive(token);
         }}
+        onNavigateLegal={navigateToPublicPage}
         allowDismiss={true}
       />
 

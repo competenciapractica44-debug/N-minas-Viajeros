@@ -412,7 +412,9 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
                   <div className="space-y-0.5">
                     <span className="text-[11px] text-slate-400">Cómputo jornada</span>
                     <p className="font-semibold text-slate-800 truncate" title={shift.computedDuration}>
-                      {shift.computedDuration}
+                      {rateCalc.isReducedConductorPlus
+                        ? `${shift.drivingDuration || `${rateCalc.totalHours}h`} (< 4h · 1/2 Plus 3,14 €)`
+                        : shift.computedDuration}
                     </p>
                   </div>
                 </div>
@@ -437,6 +439,11 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
                           ✕ Sin Plus Conductor
                         </span>
                       </>
+                    )}
+                    {rateCalc.isReducedConductorPlus && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                        1/2 Plus Conductor (&lt;4h · {formatCurrency(rateCalc.conductorPlusAmount || 3.14)})
+                      </span>
                     )}
                     {rateCalc.nightHours > 0 && (
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
@@ -471,10 +478,13 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
         <div className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center shrink-0 mt-0.5 font-bold">
           i
         </div>
-        <div>
-          <h4 className="font-bold text-slate-900 mb-0.5">Regla de Turnos de Retén y Disponibilidad</h4>
+        <div className="space-y-1">
+          <h4 className="font-bold text-slate-900">Reglas de Retén y Turnos Menores de 4 Horas</h4>
           <p className="text-slate-600 leading-relaxed">
-            En los turnos que incluyan el <strong>Plus de Retén (+8,25 €)</strong> (como partes LR1, LR3, R01S, etc.), quedan <strong>automáticamente excluidos el Quebranto de Moneda (-1,89 €) y el Plus Conductor-Perceptor (-6,27 €)</strong> al no realizarse venta de billetes.
+            • <strong>Turnos de Retén (+8,25 €)</strong> (LR1, LR3, R01S, etc.): quedan <strong>automáticamente excluidos el Quebranto de Moneda (-1,89 €) y el Plus Conductor-Perceptor (-6,27 €)</strong>.
+          </p>
+          <p className="text-slate-600 leading-relaxed">
+            • <strong>Turnos de menos de 4 horas</strong> (ej. 6V.L40 de 02:45h): el Plus Conductor-Perceptor se computa al <strong>50% (1/2 Plus Conductor: 3,14 €)</strong> en lugar de 6,27 €.
           </p>
         </div>
       </div>

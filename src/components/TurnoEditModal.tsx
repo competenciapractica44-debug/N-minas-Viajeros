@@ -208,6 +208,8 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
       else if (cat === 'noche') finalColor = '#7c3aed';
     }
 
+    const isUnder4Hours = !hasPlusReten && drivingMinutes > 0 && drivingMinutes < 240;
+
     const badges = [
       isPartida ? 'Servicio Partido' : modality === 'nocturno' ? 'Nocturnidad fija' : 'Servicio Ordinario',
     ];
@@ -215,6 +217,8 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
       badges.push('Plus Retén (+8,25 €)');
       badges.push('Sin Quebranto');
       badges.push('Sin Plus Conductor');
+    } else if (isUnder4Hours) {
+      badges.push(`1/2 Plus Conductor (<4h · ${formatCurrency(effectiveYearRate.plusConductorPerceptorDiaReducido || 3.14)})`);
     }
 
     const savedShift: ShiftDefinition = {
@@ -230,7 +234,11 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
       secondStartTime: isPartida ? secondStartTime : undefined,
       secondEndTime: isPartida ? secondEndTime : undefined,
       drivingDuration: drivingHoursStr,
-      computedDuration: hasPlusReten ? `${drivingHoursStr} (Retén disponibilidad)` : `${drivingHoursStr} (Jornada completa)`,
+      computedDuration: hasPlusReten
+        ? `${drivingHoursStr} (Retén disponibilidad)`
+        : isUnder4Hours
+        ? `${drivingHoursStr} (< 4h · 1/2 Plus)`
+        : `${drivingHoursStr} (Jornada completa)`,
       fixedRate: effectiveGrossRate,
       color: finalColor,
       badges,
@@ -240,6 +248,8 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
       hasQuebrantoMoneda: !hasPlusReten,
       notes: hasPlusReten
         ? 'Turno configurado con Plus de Retén (+8,25 €). No aplica Quebranto de moneda ni Plus Conductor-Perceptor al tratarse de un servicio de disponibilidad o guardia.'
+        : isUnder4Hours
+        ? `Turno de duración inferior a 4 horas (${drivingHoursStr}). El Plus Conductor-Perceptor se abona al 50% (1/2 Plus Conductor: ${formatCurrency(effectiveYearRate.plusConductorPerceptorDiaReducido || 3.14)}).`
         : shiftToEdit?.notes,
     };
 
@@ -691,6 +701,23 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
                   </div>
                 )}
               </div>
+
+              {/* Aviso automático para turnos < 4 horas: 1/2 Plus Conductor */}
+              {!hasPlusReten && drivingMinutes > 0 && drivingMinutes < 240 && (
+                <div className="p-3 rounded-xl border border-indigo-200 bg-indigo-50/80 text-indigo-950 space-y-1 animate-fadeIn">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-xs text-indigo-900">
+                      Duración menor de 4 horas ({drivingHoursStr})
+                    </span>
+                    <span className="font-mono font-bold text-xs text-indigo-800">
+                      {formatCurrency(effectiveYearRate.plusConductorPerceptorDiaReducido || 3.14)}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-indigo-800 leading-relaxed">
+                    Al durar menos de 4 horas, en la nómina se computará automáticamente <strong>1/2 Plus Conductor ({formatCurrency(effectiveYearRate.plusConductorPerceptorDiaReducido || 3.14)})</strong> en lugar del plus completo ({formatCurrency(effectiveYearRate.plusConductorPerceptorDia)}).
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Tipo de jornada del servicio */}

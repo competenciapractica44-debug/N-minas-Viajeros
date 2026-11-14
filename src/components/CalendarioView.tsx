@@ -681,6 +681,11 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                           Plus Retén (+{formatCurrency(shiftRateCalc.retenAmount || 8.25)}) · Sin Quebranto / Sin Plus Conductor
                         </span>
                       )}
+                      {shiftRateCalc.isReducedConductorPlus && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-900 font-bold text-[10px]">
+                          1/2 Plus Conductor (&lt;4h · {formatCurrency(shiftRateCalc.conductorPlusAmount || 3.14)} en vez de {formatCurrency(activeRate.plusConductorPerceptorDia || 6.27)})
+                        </span>
+                      )}
                       {shiftRateCalc.hasNight && (
                         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-purple-100 text-purple-800 font-bold text-[10px]">
                           <Moon className="w-3 h-3 text-purple-600" />
