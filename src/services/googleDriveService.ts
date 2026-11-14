@@ -6,8 +6,8 @@
 export interface DriveFolderInfo {
   direxisFolderId: string;
   nominasFolderId: string;
-  direxisWebViewLink?: string;
-  nominasWebViewLink?: string;
+  direxisWebViewLink: string;
+  nominasWebViewLink: string;
 }
 
 export interface DriveFileInfo {
@@ -17,6 +17,7 @@ export interface DriveFileInfo {
   modifiedTime?: string;
   size?: string;
   parents?: string[];
+  trashed?: boolean;
   webViewLink?: string;
 }
 
@@ -32,7 +33,7 @@ const BACKUP_FILE_NAMES = new Set([
 ]);
 
 /**
- * Searches for a folder by name inside a specific parent folder (defaults to 'root').
+ * Searches for a non-trashed folder by name inside a specific parent folder (defaults to 'root').
  */
 export async function findFolder(
   token: string,
@@ -42,7 +43,7 @@ export async function findFolder(
   const safeName = folderName.replace(/'/g, "\\'");
   const query = `mimeType = 'application/vnd.google-apps.folder' and name = '${safeName}' and '${parentFolderId}' in parents and trashed = false`;
 
-  const url = `${DRIVE_API_URL}?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,parents,modifiedTime,webViewLink)&pageSize=5`;
+  const url = `${DRIVE_API_URL}?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,parents,trashed,modifiedTime,webViewLink)&pageSize=5`;
   const response = await fetch(url, {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -53,7 +54,7 @@ export async function findFolder(
   if (!response.ok) {
     const errorText = await response.text();
     console.error('Error buscando carpeta en Drive:', response.status, errorText);
-    throw new Error(`Error en Google Drive al buscar "${folderName}": ${response.statusText}`);
+    throw new Error(`Error en Google Drive al buscar "${folderName}": ${response.status} ${response.statusText}`);
   }
 
   const data = await response.json();
@@ -77,7 +78,7 @@ export async function createFolder(
     parents: [parentFolderId],
   };
 
-  const response = await fetch(`${DRIVE_API_URL}?fields=id,name,mimeType,parents,webViewLink`, {
+  const response = await fetch(`${DRIVE_API_URL}?fields=id,name,mimeType,parents,trashed,webViewLink`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -89,7 +90,7 @@ export async function createFolder(
   if (!response.ok) {
     const errorText = await response.text();
     console.error('Error creando carpeta en Drive:', response.status, errorText);
-    throw new Error(`Error al crear la carpeta "${folderName}" en Google Drive`);
+    throw new Error(`Error al crear la carpeta "${folderName}" en Google Drive (${response.status})`);
   }
 
   return response.json();
@@ -108,8 +109,9 @@ async function moveFileToFolder(
     addParents: targetFolderId,
     fields: 'id,parents',
   });
-  if (previousParents.length > 0) {
-    params.set('removeParents', previousParents.join(','));
+  const toRemove = previousParents.filter((p) => p !== targetFolderId);
+  if (toRemove.length > 0) {
+    params.set('removeParents', toRemove.join(','));
   }
 
   const response = await fetch(`${DRIVE_API_URL}/${fileId}?${params.toString()}`, {
@@ -122,41 +124,37 @@ async function moveFileToFolder(
   });
 
   if (!response.ok) {
-    console.warn('No se pudo mover archivo a la carpeta Nóminas:', response.statusText);
+    console.warn('No se pudo mover archivo a la carpeta Nóminas:', response.status, await response.text());
   }
 }
 
 /**
- * Moves any stray app backup or payroll files created in 'root' or directly in 'Direxis'
- * into the 'Direxis / Nóminas' subfolder.
+ * Finds all non-folder files created by this app (drive.file scope) that are NOT
+ * inside nominasFolderId yet and moves them cleanly into Direxis / Nóminas.
  */
 async function relocateStrayBackupFiles(
   token: string,
-  direxisFolderId: string,
   nominasFolderId: string
 ): Promise<void> {
   try {
-    const parentsToScan = ['root', direxisFolderId];
-    for (const parentId of parentsToScan) {
-      const query = `'${parentId}' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed = false`;
-      const url = `${DRIVE_API_URL}?q=${encodeURIComponent(query)}&fields=files(id,name,parents)&pageSize=50`;
-      const response = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: 'application/json',
-        },
-      });
-      if (!response.ok) continue;
-      const data = await response.json();
-      const files: DriveFileInfo[] = data.files || [];
+    const query = `mimeType != 'application/vnd.google-apps.folder' and trashed = false`;
+    const url = `${DRIVE_API_URL}?q=${encodeURIComponent(query)}&fields=files(id,name,parents)&pageSize=100`;
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+      },
+    });
+    if (!response.ok) return;
 
-      for (const f of files) {
-        const isAppBackup =
-          BACKUP_FILE_NAMES.has(f.name) ||
-          f.name.startsWith('Nomina_');
-        if (isAppBackup && !(f.parents || []).includes(nominasFolderId)) {
-          await moveFileToFolder(token, f.id, nominasFolderId, f.parents || [parentId]);
-        }
+    const data = await response.json();
+    const files: DriveFileInfo[] = data.files || [];
+
+    for (const f of files) {
+      const isAppFile = BACKUP_FILE_NAMES.has(f.name) || f.name.startsWith('Nomina_');
+      const parents = f.parents || [];
+      if (isAppFile && (parents.length !== 1 || parents[0] !== nominasFolderId)) {
+        await moveFileToFolder(token, f.id, nominasFolderId, parents);
       }
     }
   } catch (err) {
@@ -176,7 +174,7 @@ export async function ensureDirexisHierarchy(token: string): Promise<DriveFolder
     direxisFolder = await createFolder(token, 'Direxis', 'root');
   }
 
-  // 2. Check or create 'Nóminas' folder inside 'Direxis' (also match 'Nominas' or 'nominas' if created before)
+  // 2. Check or create 'Nóminas' folder inside 'Direxis' (also match 'Nominas' / 'nominas')
   let nominasFolder =
     (await findFolder(token, 'Nóminas', direxisFolder.id)) ||
     (await findFolder(token, 'Nominas', direxisFolder.id)) ||
@@ -186,8 +184,8 @@ export async function ensureDirexisHierarchy(token: string): Promise<DriveFolder
     nominasFolder = await createFolder(token, 'Nóminas', direxisFolder.id);
   }
 
-  // 3. Ensure any previously saved loose backup files are moved into 'Direxis / Nóminas'
-  await relocateStrayBackupFiles(token, direxisFolder.id, nominasFolder.id);
+  // 3. Relocate any app backup/payroll files located outside Direxis / Nóminas into nominasFolder
+  await relocateStrayBackupFiles(token, nominasFolder.id);
 
   return {
     direxisFolderId: direxisFolder.id,
@@ -217,7 +215,7 @@ export async function findFileInFolder(
   });
 
   if (!response.ok) {
-    console.error('Error buscando archivo en Drive:', response.statusText);
+    console.error('Error buscando archivo en Drive:', response.status, response.statusText);
     return null;
   }
 
@@ -240,7 +238,7 @@ export async function readDriveJsonFile<T>(token: string, fileId: string): Promi
   });
 
   if (!response.ok) {
-    console.error('Error descargando archivo JSON de Drive:', response.statusText);
+    console.error('Error descargando archivo JSON de Drive:', response.status, response.statusText);
     return null;
   }
 
@@ -253,6 +251,71 @@ export async function readDriveJsonFile<T>(token: string, fileId: string): Promi
 }
 
 /**
+ * Saves or updates a file strictly inside parentFolderId using rock-solid 2-step Drive REST API
+ * (1. Create metadata with parents if needed, 2. PATCH uploadType=media with content).
+ */
+async function uploadFileTwoStep(
+  token: string,
+  parentFolderId: string,
+  fileName: string,
+  mimeType: string,
+  body: string | Blob
+): Promise<DriveFileInfo> {
+  if (!parentFolderId) {
+    throw new Error(`Falta la carpeta de destino en Google Drive para guardar "${fileName}".`);
+  }
+
+  let targetFile = await findFileInFolder(token, fileName, parentFolderId);
+
+  if (!targetFile) {
+    const createRes = await fetch(`${DRIVE_API_URL}?fields=id,name,mimeType,parents,modifiedTime,webViewLink`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: fileName,
+        mimeType,
+        parents: [parentFolderId],
+      }),
+    });
+
+    if (!createRes.ok) {
+      const err = await createRes.text();
+      console.error('Error creando entrada en Drive:', createRes.status, err);
+      throw new Error(`Error al crear "${fileName}" en Google Drive (${createRes.status})`);
+    }
+
+    targetFile = await createRes.json();
+  }
+
+  if (!targetFile?.id) {
+    throw new Error(`No se obtuvo ID de Drive para "${fileName}".`);
+  }
+
+  const uploadRes = await fetch(
+    `${DRIVE_UPLOAD_URL}/${targetFile.id}?uploadType=media&fields=id,name,mimeType,parents,modifiedTime,webViewLink`,
+    {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': mimeType === 'application/json' ? 'application/json; charset=UTF-8' : mimeType,
+      },
+      body,
+    }
+  );
+
+  if (!uploadRes.ok) {
+    const err = await uploadRes.text();
+    console.error('Error subiendo contenido a Drive:', uploadRes.status, err);
+    throw new Error(`Error al subir contenido de "${fileName}" a Google Drive (${uploadRes.status})`);
+  }
+
+  return uploadRes.json();
+}
+
+/**
  * Saves or updates a JSON file strictly inside parentFolderId in Google Drive.
  */
 export async function saveOrUpdateDriveJsonFile<T>(
@@ -261,64 +324,8 @@ export async function saveOrUpdateDriveJsonFile<T>(
   fileName: string,
   data: T
 ): Promise<DriveFileInfo> {
-  if (!parentFolderId) {
-    throw new Error(`Falta la carpeta de destino en Google Drive para guardar "${fileName}".`);
-  }
-
   const contentStr = JSON.stringify(data, null, 2);
-  const existingFile = await findFileInFolder(token, fileName, parentFolderId);
-
-  if (existingFile) {
-    const updateUrl = `${DRIVE_UPLOAD_URL}/${existingFile.id}?uploadType=media&fields=id,name,parents,modifiedTime,webViewLink`;
-    const response = await fetch(updateUrl, {
-      method: 'PATCH',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json; charset=UTF-8',
-      },
-      body: contentStr,
-    });
-
-    if (!response.ok) {
-      const err = await response.text();
-      console.error('Error actualizando archivo en Drive:', err);
-      throw new Error(`Error al actualizar "${fileName}" en Google Drive`);
-    }
-
-    return response.json();
-  } else {
-    const metadata = {
-      name: fileName,
-      mimeType: 'application/json',
-      parents: [parentFolderId],
-    };
-
-    const form = new FormData();
-    form.append(
-      'metadata',
-      new Blob([JSON.stringify(metadata)], { type: 'application/json; charset=UTF-8' })
-    );
-    form.append(
-      'file',
-      new Blob([contentStr], { type: 'application/json; charset=UTF-8' })
-    );
-
-    const response = await fetch(`${DRIVE_UPLOAD_URL}?uploadType=multipart&fields=id,name,parents,modifiedTime,webViewLink`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-      body: form,
-    });
-
-    if (!response.ok) {
-      const err = await response.text();
-      console.error('Error creando archivo en Drive:', err);
-      throw new Error(`Error al crear "${fileName}" en Google Drive`);
-    }
-
-    return response.json();
-  }
+  return uploadFileTwoStep(token, parentFolderId, fileName, 'application/json', contentStr);
 }
 
 /**
@@ -330,55 +337,7 @@ export async function uploadPdfToDrive(
   fileName: string,
   pdfBlob: Blob
 ): Promise<DriveFileInfo> {
-  if (!parentFolderId) {
-    throw new Error(`Falta la carpeta de destino en Google Drive para guardar "${fileName}".`);
-  }
-
-  const existingFile = await findFileInFolder(token, fileName, parentFolderId);
-
-  if (existingFile) {
-    const updateUrl = `${DRIVE_UPLOAD_URL}/${existingFile.id}?uploadType=media&fields=id,name,parents,modifiedTime,webViewLink`;
-    const response = await fetch(updateUrl, {
-      method: 'PATCH',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/pdf',
-      },
-      body: pdfBlob,
-    });
-
-    if (!response.ok) {
-      throw new Error('Error al actualizar nómina PDF en Google Drive');
-    }
-    return response.json();
-  }
-
-  const metadata = {
-    name: fileName,
-    mimeType: 'application/pdf',
-    parents: [parentFolderId],
-  };
-
-  const form = new FormData();
-  form.append(
-    'metadata',
-    new Blob([JSON.stringify(metadata)], { type: 'application/json; charset=UTF-8' })
-  );
-  form.append('file', pdfBlob);
-
-  const response = await fetch(`${DRIVE_UPLOAD_URL}?uploadType=multipart&fields=id,name,parents,webViewLink,modifiedTime`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-    body: form,
-  });
-
-  if (!response.ok) {
-    throw new Error('Error al subir el archivo PDF de la nómina a Google Drive');
-  }
-
-  return response.json();
+  return uploadFileTwoStep(token, parentFolderId, fileName, 'application/pdf', pdfBlob);
 }
 
 /**
@@ -399,7 +358,7 @@ export async function listArchivedFilesInNominas(
   });
 
   if (!response.ok) {
-    console.error('Error listando nóminas en Drive:', response.statusText);
+    console.error('Error listando nóminas en Drive:', response.status, response.statusText);
     return [];
   }
 

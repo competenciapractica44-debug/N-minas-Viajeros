@@ -418,6 +418,7 @@ export default function App() {
   const [isLoadingArchived, setIsLoadingArchived] = useState(false);
   const [isSavingCurrentNomina, setIsSavingCurrentNomina] = useState(false);
   const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
+  const [driveSyncError, setDriveSyncError] = useState<string | null>(null);
   const hasInitialDriveSyncDoneRef = React.useRef(false);
   const syncPromiseRef = React.useRef<Promise<void> | null>(null);
 
@@ -471,6 +472,7 @@ export default function App() {
 
     const run = (async () => {
       setIsDriveSyncing(true);
+      setDriveSyncError(null);
       try {
         const folders = await ensureDirexisHierarchy(token);
         setDriveFolders(folders);
@@ -550,8 +552,9 @@ export default function App() {
 
         setLastSyncTime(new Date());
         hasInitialDriveSyncDoneRef.current = true;
-      } catch (err) {
+      } catch (err: any) {
         console.error('Error sincronizando con Google Drive:', err);
+        setDriveSyncError(err?.message || 'Error al sincronizar con Google Drive.');
       } finally {
         setIsDriveSyncing(false);
         syncPromiseRef.current = null;
@@ -877,7 +880,7 @@ export default function App() {
           <p>
             <strong className="text-blue-900">RutaNómina - Transporte de Viajeros:</strong> herramienta para gestionar rutas, jornadas, turnos y nóminas de conductores de transporte de viajeros.
           </p>
-          {!currentUser && (
+          {!currentUser ? (
             <button
               type="button"
               onClick={() => setIsLoginModalOpen(true)}
@@ -885,8 +888,22 @@ export default function App() {
             >
               Conectar Google Drive
             </button>
-          )}
+          ) : driveFolders?.nominasWebViewLink ? (
+            <a
+              href={driveFolders.nominasWebViewLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-700 hover:text-blue-900 font-bold underline text-left sm:text-right shrink-0"
+            >
+              Abrir carpeta Direxis / Nóminas en Drive
+            </a>
+          ) : null}
         </div>
+        {driveSyncError && (
+          <div className="max-w-5xl mx-auto px-4 pb-2 text-[11px] text-rose-700 font-semibold">
+            Aviso de Google Drive: {driveSyncError}
+          </div>
+        )}
       </div>
 
       {/* Main View Area */}
