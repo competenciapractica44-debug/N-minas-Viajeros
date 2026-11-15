@@ -28,6 +28,7 @@ import {
 } from '../types';
 import { formatCurrency } from '../utils/exporter';
 import { formatMinutesToHoursAndMinutes, computeShiftRateFromConvenio } from '../utils/calculator';
+import { getEffectiveYearRate, getOfficialConvenioExtraAmount } from '../data/convenioZaragoza';
 import { ConfirmModal } from './ConfirmModal';
 
 interface CalendarioViewProps {
@@ -133,7 +134,13 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
     );
   }, [shiftsMap, shifts, currentAssignment.shiftCode]);
 
-  const horaOrdinariaRate = convenio.ratesByYear[selectedYear]?.horaOrdinaria || 12.87;
+  const activeYearRate = useMemo(
+    () => getEffectiveYearRate(convenio, selectedYear),
+    [convenio, selectedYear]
+  );
+  const horaOrdinariaRate = activeYearRate.horaOrdinaria ?? 13.62;
+  const plusRetenRate = activeYearRate.plusRetenDia ?? 8.25;
+  const plusFestivoRate = activeYearRate.plusFestivoMayor4h ?? 42.80;
 
   // Sync late finish inputs when selected day or assignment changes
   useEffect(() => {
@@ -212,29 +219,36 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
         }
         if (asg.extras) {
           asg.extras.forEach((e) => {
-            extrasTotal += e.amount;
+            const convAmt = getOfficialConvenioExtraAmount(e.name, activeYearRate);
+            const qty = e.quantity && e.quantity > 0 ? e.quantity : 1;
+            const isHourlyOfficial =
+              e.name.toLowerCase().includes('festiva') ||
+              e.name.toLowerCase().includes('complementaria');
+            const effectiveAmt =
+              convAmt !== null
+                ? (isHourlyOfficial && e.quantity === undefined ? e.amount : parseFloat((qty * convAmt).toFixed(2)))
+                : e.amount;
+            extrasTotal += effectiveAmt;
           });
         }
         if (asg.lateFinishMinutes && asg.lateFinishMinutes > 0) {
-          const lateAmt = asg.lateFinishAmount !== undefined
-            ? asg.lateFinishAmount
-            : (asg.lateFinishMinutes / 60) * horaOrdinariaRate;
+          const lateAmt = parseFloat(((asg.lateFinishMinutes / 60) * horaOrdinariaRate).toFixed(2));
           extrasTotal += lateAmt;
         }
       }
     }
     return { turnosCount, descansosCount, vacacionesCount, festivosCount, extrasTotal };
-  }, [assignments, daysInMonth, selectedYear, selectedMonth, horaOrdinariaRate]);
+  }, [assignments, daysInMonth, selectedYear, selectedMonth, horaOrdinariaRate, activeYearRate]);
 
   // Helper: check if vacation plus (10€/day) applies based on profile 100% contract condition
   const isJornada100 = !profile || profile.contractType !== 'tiempo_parcial' || (profile.partTimePercentage || 100) >= 100;
   const isAutoVacationPlusActive = profile?.hasVacationPlus100Percent !== false;
   const appliesVacationPlus = isAutoVacationPlusActive && isJornada100;
 
-  // Day subtotal devengado
+  // Day subtotal devengado (en bruto según Convenio)
   const selectedDayTotal = useMemo(() => {
     let base = 0;
-    const yearRate = convenio.ratesByYear[selectedYear] || convenio.ratesByYear[2026];
+    const yearRate = activeYearRate;
     const isHoliday = Boolean(currentAssignment.isHoliday);
 
     if (currentShift) {
@@ -242,30 +256,37 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
         base = 0;
       } else if (currentShift.code === 'V') {
         const factor = (!isJornada100 && profile?.partTimePercentage) ? profile.partTimePercentage / 100 : 1;
-        const baseDia = (yearRate.salarioBaseDia || 53.18) * factor;
-        const plusVac = appliesVacationPlus ? (yearRate.plusVacacionesDia || 10.00) : 0;
+        const baseDia = parseFloat((yearRate.salarioBaseDia * factor).toFixed(2));
+        const plusVac = appliesVacationPlus ? (yearRate.plusVacacionesDia ?? 10.00) : 0;
         base = baseDia + plusVac;
       } else {
         const shiftCalc = computeShiftRateFromConvenio(currentShift, yearRate, { isHoliday });
         base = shiftCalc.totalRate;
       }
     }
-    const extrasSum = currentAssignment.extras?.reduce((sum, e) => sum + e.amount, 0) || 0;
-    const lateAmt = currentAssignment.lateFinishAmount !== undefined
-      ? currentAssignment.lateFinishAmount
-      : (currentAssignment.lateFinishMinutes
-          ? parseFloat(((currentAssignment.lateFinishMinutes / 60) * (yearRate.horaOrdinaria || horaOrdinariaRate)).toFixed(2))
-          : 0);
+    const extrasSum =
+      currentAssignment.extras?.reduce((sum, e) => {
+        const convAmt = getOfficialConvenioExtraAmount(e.name, yearRate);
+        const qty = e.quantity && e.quantity > 0 ? e.quantity : 1;
+        const isHourlyOfficial =
+          e.name.toLowerCase().includes('festiva') ||
+          e.name.toLowerCase().includes('complementaria');
+        const effectiveAmt =
+          convAmt !== null
+            ? (isHourlyOfficial && e.quantity === undefined ? e.amount : parseFloat((qty * convAmt).toFixed(2)))
+            : e.amount;
+        return sum + effectiveAmt;
+      }, 0) || 0;
+    const lateAmt = currentAssignment.lateFinishMinutes
+      ? parseFloat(((currentAssignment.lateFinishMinutes / 60) * horaOrdinariaRate).toFixed(2))
+      : 0;
     return base + extrasSum + lateAmt;
   }, [
     currentShift,
     currentAssignment.extras,
     currentAssignment.lateFinishMinutes,
-    currentAssignment.lateFinishAmount,
-    convenio,
-    selectedYear,
-    selectedMonth,
-    selectedDayNumber,
+    currentAssignment.isHoliday,
+    activeYearRate,
     isJornada100,
     appliesVacationPlus,
     profile?.partTimePercentage,
@@ -318,7 +339,8 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
       const concept = extrasList.find((e) => e.id === selectedExtraConceptId);
       if (concept) {
         name = concept.name;
-        amount = concept.amount;
+        const convAmt = getOfficialConvenioExtraAmount(concept.name, activeYearRate);
+        amount = convAmt ?? concept.amount;
       }
     }
 
@@ -352,10 +374,10 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
 
     let updatedExtras = [...currentExtras];
 
-    // Si se añade como extra el plus de retén, la cuantía siempre debe ser exactamente 8.25€
+    // Si se añade como extra el plus de retén, usa la cuantía del convenio
     // y hay que quitar de ese turno el quebranto de moneda y el plus de conductor perceptor
     if (isAddingReten) {
-      amount = 8.25;
+      amount = plusRetenRate;
       updatedExtras = updatedExtras.filter((e) => {
         const l = e.name.toLowerCase();
         return !l.includes('quebranto') && !l.includes('plus conductor') && !l.includes('medio plus');
@@ -365,7 +387,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
     const newExtra = {
       id: `dayextra-${Date.now()}`,
       name,
-      amount: isAddingReten ? 8.25 : amount,
+      amount: isAddingReten ? plusRetenRate : amount,
     };
 
     updatedExtras.push(newExtra);
@@ -551,7 +573,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
               {formattedDayTitle}
             </h3>
             <p className="text-xs text-slate-500 mt-0.5">
-              {currentAssignment.customLine || 'Línea Interurbana 421 · Coche 304'}
+              {currentAssignment.customLine || 'Sin línea/coche indicado'}
             </p>
           </div>
 
@@ -623,35 +645,35 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                 </span>
                 <span className="text-sm font-bold font-mono text-cyan-800">
                   {formatCurrency(
-                    ((convenio.ratesByYear[selectedYear]?.salarioBaseDia || 53.18) * (!isJornada100 && profile?.partTimePercentage ? profile.partTimePercentage / 100 : 1)) +
-                    (appliesVacationPlus ? (convenio.ratesByYear[selectedYear]?.plusVacacionesDia || 10.00) : 0)
+                    parseFloat((activeYearRate.salarioBaseDia * (!isJornada100 && profile?.partTimePercentage ? profile.partTimePercentage / 100 : 1)).toFixed(2)) +
+                    (appliesVacationPlus ? (activeYearRate.plusVacacionesDia ?? 10.00) : 0)
                   )}
                 </span>
               </div>
               {appliesVacationPlus ? (
                 <p className="text-[11px] text-cyan-800 leading-relaxed">
-                  Jornada retribuida completa (100%): Salario Base diario ({formatCurrency(convenio.ratesByYear[selectedYear]?.salarioBaseDia || 53.18)}) + <strong>Plus de Vacaciones de {formatCurrency(convenio.ratesByYear[selectedYear]?.plusVacacionesDia || 10.00)}/día</strong> según el Art. 9 del Convenio Colectivo de Zaragoza.
+                  Jornada retribuida completa (100%): Salario Base diario ({formatCurrency(activeYearRate.salarioBaseDia)}) + <strong>Plus de Vacaciones de {formatCurrency(activeYearRate.plusVacacionesDia ?? 10.00)}/día</strong> según el Art. 9 del Convenio Colectivo de Zaragoza.
                 </p>
               ) : !isJornada100 ? (
                 <p className="text-[11px] text-cyan-900 leading-relaxed">
-                  Jornada de vacaciones retribuida con Salario Base proporcional ({formatCurrency((convenio.ratesByYear[selectedYear]?.salarioBaseDia || 53.18) * ((profile?.partTimePercentage || 50) / 100))}). El <strong>Plus de Vacaciones (10 €/día)</strong> no se devenga al estar contratado al {profile?.partTimePercentage || 50}% (la opción configurada en el perfil requiere contrato al 100%).
+                  Jornada de vacaciones retribuida con Salario Base proporcional ({formatCurrency(activeYearRate.salarioBaseDia * ((profile?.partTimePercentage || 50) / 100))}). El <strong>Plus de Vacaciones ({formatCurrency(activeYearRate.plusVacacionesDia ?? 10.00)}/día)</strong> no se devenga al estar contratado al {profile?.partTimePercentage || 50}% (la opción configurada en el perfil requiere contrato al 100%).
                 </p>
               ) : (
                 <p className="text-[11px] text-cyan-900 leading-relaxed">
-                  Jornada de vacaciones retribuida con Salario Base diario ({formatCurrency(convenio.ratesByYear[selectedYear]?.salarioBaseDia || 53.18)}). El <strong>Plus de Vacaciones (10 €/día)</strong> se encuentra desactivado en tu Perfil de trabajador.
+                  Jornada de vacaciones retribuida con Salario Base diario ({formatCurrency(activeYearRate.salarioBaseDia)}). El <strong>Plus de Vacaciones ({formatCurrency(activeYearRate.plusVacacionesDia ?? 10.00)}/día)</strong> se encuentra desactivado en tu Perfil de trabajador.
                 </p>
               )}
               <div className="flex items-center justify-between text-[11px] text-cyan-700 pt-1 border-t border-cyan-200/60">
                 <span className="flex items-center gap-1 font-medium">
                   <CheckCircle2 className="w-3.5 h-3.5 text-cyan-600" />
-                  {appliesVacationPlus ? 'Plus de 10 €/día activo (contrato al 100%)' : 'Retribución Salario Base diaria'}
+                  {appliesVacationPlus ? `Plus de ${formatCurrency(activeYearRate.plusVacacionesDia ?? 10.00)}/día activo (contrato al 100%)` : 'Retribución Salario Base diaria'}
                 </span>
                 <span className="text-[10px] font-bold text-cyan-700 uppercase bg-cyan-100 px-2 py-0.5 rounded-md">Art. 9 Convenio</span>
               </div>
             </div>
           ) : (
             (() => {
-              const activeRate = convenio.ratesByYear[selectedYear] || convenio.ratesByYear[2026];
+              const activeRate = activeYearRate;
               const isHoliday = Boolean(currentAssignment.isHoliday);
               const shiftRateCalc = computeShiftRateFromConvenio(currentShift, activeRate, { isHoliday });
 
@@ -678,12 +700,12 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                       {shiftRateCalc.hasReten && (
                         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 font-bold text-[10px]">
                           <ShieldCheck className="w-3 h-3 text-amber-600" />
-                          Plus Retén (+{formatCurrency(shiftRateCalc.retenAmount || 8.25)}) · Sin Quebranto / Sin Plus Conductor
+                          Plus Retén (+{formatCurrency(shiftRateCalc.retenAmount ?? plusRetenRate)}) · Sin Quebranto / Sin Plus Conductor
                         </span>
                       )}
                       {shiftRateCalc.isReducedConductorPlus && (
                         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-900 font-bold text-[10px]">
-                          1/2 Plus Conductor (&lt;4h · {formatCurrency(shiftRateCalc.conductorPlusAmount || 3.14)} en vez de {formatCurrency(activeRate.plusConductorPerceptorDia || 6.27)})
+                          1/2 Plus Conductor (&lt;4h · {formatCurrency(shiftRateCalc.conductorPlusAmount ?? 3.14)} en vez de {formatCurrency(activeRate.plusConductorPerceptorDia ?? 6.27)})
                         </span>
                       )}
                       {shiftRateCalc.hasNight && (
@@ -732,16 +754,16 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                     ? 'bg-amber-100 border-amber-400 text-amber-900 ring-1 ring-amber-300 shadow-2xs'
                     : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-amber-50 hover:border-amber-200 hover:text-amber-800'
                 }`}
-                title="Marcar o desmarcar manualmente si este día es festivo nacional, autonómico o local para cobrar el Plus Festivo (+40,80 €)"
+                title={`Marcar o desmarcar manualmente si este día es festivo nacional, autonómico o local para cobrar el Plus Festivo (+${formatCurrency(plusFestivoRate)})`}
               >
                 <span>🎉</span>
-                <span>{currentAssignment.isHoliday ? 'Festivo (+40,80 €)' : 'Festivo oficial'}</span>
+                <span>{currentAssignment.isHoliday ? `Festivo (+${formatCurrency(plusFestivoRate)})` : 'Festivo oficial'}</span>
                 {currentAssignment.isHoliday && (
                   <Check className="w-3 h-3 text-amber-800 stroke-[3]" />
                 )}
               </button>
 
-              {/* Botón manual para añadir o quitar Plus de Retén (8,25 €) */}
+              {/* Botón manual para añadir o quitar Plus de Retén */}
               <button
                 type="button"
                 onClick={() => {
@@ -763,7 +785,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                     filtered.push({
                       id: `dayextra-reten-${Date.now()}`,
                       name: 'Plus retén',
-                      amount: 8.25,
+                      amount: plusRetenRate,
                     });
                     onUpdateAssignment(selectedDateStr, { extras: filtered });
                   }
@@ -774,14 +796,14 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                     ? 'bg-amber-100 border-amber-400 text-amber-900 ring-1 ring-amber-300 shadow-2xs'
                     : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-amber-50 hover:border-amber-200 hover:text-amber-800'
                 }`}
-                title="Añadir Plus de Retén (8,25 €). Quita automáticamente quebranto de moneda y plus conductor"
+                title={`Añadir Plus de Retén (${formatCurrency(plusRetenRate)}). Quita automáticamente quebranto de moneda y plus conductor`}
               >
                 <ShieldCheck className="w-3.5 h-3.5 text-amber-700" />
                 <span>
                   {(currentAssignment.extras || []).some((e) => e.name.toLowerCase().includes('reten') || e.name.toLowerCase().includes('retén')) ||
                   Boolean(currentShift?.hasPlusReten || currentShift?.code.includes('.LR') || currentShift?.code.includes('.R0'))
-                    ? 'Retén (+8,25 €)'
-                    : 'Plus Retén (+8,25 €)'}
+                    ? `Retén (+${formatCurrency(plusRetenRate)})`
+                    : `Plus Retén (+${formatCurrency(plusRetenRate)})`}
                 </span>
                 {((currentAssignment.extras || []).some((e) => e.name.toLowerCase().includes('reten') || e.name.toLowerCase().includes('retén')) ||
                   Boolean(currentShift?.hasPlusReten || currentShift?.code.includes('.LR') || currentShift?.code.includes('.R0'))) && (
@@ -1013,7 +1035,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
               </div>
               <div className="flex items-center gap-2">
                 <span className="font-bold font-mono text-indigo-900">
-                  +{formatCurrency(currentAssignment.lateFinishAmount || (((currentAssignment.lateFinishMinutes || 0) / 60) * horaOrdinariaRate))}
+                  +{formatCurrency(((currentAssignment.lateFinishMinutes || 0) / 60) * horaOrdinariaRate)}
                 </span>
                 <button
                   type="button"
@@ -1038,7 +1060,17 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
           {/* Lista de otros extras asignados */}
           {currentAssignment.extras && currentAssignment.extras.length > 0 ? (
             <div className="space-y-2">
-              {currentAssignment.extras.map((extra) => (
+              {currentAssignment.extras.map((extra) => {
+                const convAmt = getOfficialConvenioExtraAmount(extra.name, activeYearRate);
+                const qty = extra.quantity && extra.quantity > 0 ? extra.quantity : 1;
+                const isHourlyOfficial =
+                  extra.name.toLowerCase().includes('festiva') ||
+                  extra.name.toLowerCase().includes('complementaria');
+                const displayedAmount =
+                  convAmt !== null
+                    ? (isHourlyOfficial && extra.quantity === undefined ? extra.amount : parseFloat((qty * convAmt).toFixed(2)))
+                    : extra.amount;
+                return (
                 <div
                   key={extra.id}
                   className="flex items-center justify-between p-2.5 bg-amber-50/50 rounded-xl border border-amber-200/60 text-xs"
@@ -1052,7 +1084,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="font-bold font-mono text-emerald-700">
-                      +{formatCurrency(extra.amount)}
+                      +{formatCurrency(displayedAmount)}
                     </span>
                     <button
                       type="button"
@@ -1064,7 +1096,8 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                     </button>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
             !isLateSectionOpen && !(currentAssignment.lateFinishMinutes && currentAssignment.lateFinishMinutes > 0) && (
@@ -1112,10 +1145,10 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
               code: 'V',
               label: 'Vacaciones',
               rate: appliesVacationPlus
-                ? 63.18
-                : Math.round(((convenio.ratesByYear[selectedYear]?.salarioBaseDia || 53.18) * (!isJornada100 && profile?.partTimePercentage ? profile.partTimePercentage / 100 : 1)) * 100) / 100,
+                ? parseFloat((activeYearRate.salarioBaseDia + (activeYearRate.plusVacacionesDia ?? 10.00)).toFixed(2))
+                : Math.round((activeYearRate.salarioBaseDia * (!isJornada100 && profile?.partTimePercentage ? profile.partTimePercentage / 100 : 1)) * 100) / 100,
               color: '#06b6d4',
-              subtitle: appliesVacationPlus ? '+10€' : 'Base',
+              subtitle: appliesVacationPlus ? `+${formatCurrency(activeYearRate.plusVacacionesDia ?? 10.00)}` : 'Base',
             },
             {
               code: '6V.L01',
@@ -1147,7 +1180,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
             },
           ].map((item) => {
             const shiftDef = shiftsMap.get(item.code);
-            const activeRateObj = convenio.ratesByYear[selectedYear] || convenio.ratesByYear[2026];
+            const activeRateObj = activeYearRate;
             const computedRate = shiftDef && item.code !== 'D' && item.code !== 'V'
               ? computeShiftRateFromConvenio(shiftDef, activeRateObj).totalRate
               : item.rate;
@@ -1199,10 +1232,10 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
             className="w-full text-xs py-2 px-3 rounded-xl border border-slate-200 bg-white text-slate-700 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20"
           >
             <option value="">Seleccionar entre todos los partes oficiales Direxis Zaragoza (98 partes)...</option>
-            {shifts
+              {shifts
               .filter((s) => s.code !== 'D' && s.code !== 'V')
               .map((s) => {
-                const rateCalc = computeShiftRateFromConvenio(s, convenio.ratesByYear[selectedYear] || convenio.ratesByYear[2026]);
+                const rateCalc = computeShiftRateFromConvenio(s, activeYearRate);
                 return (
                   <option key={s.id} value={s.code}>
                     {s.code} · {s.title} ({s.startTime}-{s.endTime}) - {formatCurrency(rateCalc.totalRate)}
@@ -1275,19 +1308,22 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                       const found = extrasList.find((x) => x.id === e.target.value);
                       if (found) {
                         setCustomExtraName(found.name);
-                        const isReten = found.id === 'extra-reten' || found.name.toLowerCase().includes('reten') || found.name.toLowerCase().includes('retén');
-                        setCustomExtraAmount(isReten ? 8.25 : found.amount);
+                        const convAmt = getOfficialConvenioExtraAmount(found.name, activeYearRate);
+                        setCustomExtraAmount(convAmt ?? found.amount);
                       }
                     }}
                     className="w-full text-xs py-2 px-3 rounded-xl border border-slate-200 bg-white"
                   >
                     <option value="">-- Seleccionar o escribir manual --</option>
                     <option value="__late_finish__">⏱️ Terminado más tarde del turno (Horas y minutos)</option>
-                    {extrasList.map((e) => (
+                    {extrasList.map((e) => {
+                      const convAmt = getOfficialConvenioExtraAmount(e.name, activeYearRate);
+                      return (
                       <option key={e.id} value={e.id}>
-                        {e.name} (+{formatCurrency(e.name.toLowerCase().includes('reten') ? 8.25 : e.amount)})
+                        {e.name} (+{formatCurrency(convAmt ?? e.amount)})
                       </option>
-                    ))}
+                      );
+                    })}
                   </select>
                 </div>
 
@@ -1301,8 +1337,9 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                     onChange={(e) => {
                       const val = e.target.value;
                       setCustomExtraName(val);
-                      if (val.toLowerCase().includes('reten') || val.toLowerCase().includes('retén')) {
-                        setCustomExtraAmount(8.25);
+                      const convAmt = getOfficialConvenioExtraAmount(val, activeYearRate);
+                      if (convAmt !== null) {
+                        setCustomExtraAmount(convAmt);
                       }
                     }}
                     placeholder="ej. Plus retén o Limpieza interior autocar"
@@ -1324,7 +1361,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                   {(customExtraName.toLowerCase().includes('reten') || customExtraName.toLowerCase().includes('retén')) && (
                     <p className="text-[10.5px] text-amber-700 mt-1 font-semibold flex items-center gap-1">
                       <ShieldCheck className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                      <span>Cuantía estipulada de Plus de Retén según convenio: <strong>8,25 €/día</strong>. Al añadirlo se quitan el Quebranto de moneda y el Plus conductor.</span>
+                      <span>Cuantía estipulada de Plus de Retén según convenio: <strong>{formatCurrency(plusRetenRate)}/día</strong>. Al añadirlo se quitan el Quebranto de moneda y el Plus conductor.</span>
                     </p>
                   )}
                 </div>

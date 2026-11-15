@@ -19,7 +19,7 @@ import {
 } from './types';
 import { ALL_INITIAL_SHIFTS } from './data/defaultTurnos';
 import { DEFAULT_EXTRAS } from './data/defaultExtras';
-import { DEFAULT_CONVENIO_ZARAGOZA } from './data/convenioZaragoza';
+import { DEFAULT_CONVENIO_ZARAGOZA, getEffectiveYearRate } from './data/convenioZaragoza';
 import { calculateMonthlyPayroll, calculateYearlySalaryEvolution } from './utils/calculator';
 import { exportToPDF, exportToPDFBlob, exportToExcel } from './utils/exporter';
 import { getExactOctoberAssignments } from './data/realOctoberPayslip';
@@ -73,108 +73,14 @@ function mapLegacyShiftCode(code?: string): string | undefined {
   return code;
 }
 
-// Initial 2026 assignments (application starts in 2026 with official Direxis parts)
-function getInitial2026Assignments(): DayAssignment[] {
-  const assignments: DayAssignment[] = [];
-  const shiftSchedule: Record<number, string> = {
-    1: '6V.L01',
-    2: '6V.L01',
-    3: '6.S02',
-    4: 'D',
-    5: '6V.L03',
-    6: '6V.L01',
-    7: '6V.L02',
-    8: '6V.L02',
-    9: '6V.LR1',
-    10: '6.S05',
-    11: 'D',
-    12: '6V.L01', // 12 de Octubre: Fiesta Nacional trabajada (Plus Festivo +40,80 €)
-    13: '6V.L01',
-    14: '6V.L01',
-    15: '6V.L02',
-    16: '6V.L02',
-    17: '6.S02',
-    18: 'D',
-    19: '6V.L01',
-    20: '6V.L03',
-    21: '6V.L02',
-    22: '6V.L02',
-    23: '6V.L01',
-    24: '6.S01', // Has extras
-    25: 'D',
-    26: '6V.L01',
-    27: '6V.L03',
-    28: '6V.L02',
-    29: '6V.L03',
-    30: '6V.L13',
-    31: '6.S02',
-  };
-
-  for (let d = 1; d <= 31; d++) {
-    const dStr = `2026-10-${String(d).padStart(2, '0')}`;
-    const code = shiftSchedule[d] || '6V.L01';
-    const isRest = code === 'D';
-
-    const extras = [];
-    if (d === 24) {
-      extras.push(
-        { id: 'oct24-1', name: 'Limpieza interior autocar', amount: 30.00, notes: 'Plus fin de servicio nocturno' },
-        { id: 'oct24-2', name: '30 min espera retraso atasco', amount: 12.50, notes: 'Exceso cómputo jornada A-6' }
-      );
-    } else if (d === 10) {
-      extras.push(
-        { id: 'oct10-1', name: 'Hora de espera en parada', amount: 22.50 }
-      );
-    } else if (d === 16) {
-      extras.push(
-        { id: 'oct16-1', name: 'Gratificación refuerzo imprevisto', amount: 35.00 }
-      );
-    } else if (d === 26) {
-      extras.push(
-        { id: 'oct26-1', name: 'Hora extra prolongación servicio', amount: 30.00, notes: 'Devengado tras el corte oficial de Direxis' }
-      );
-    }
-
-    assignments.push({
-      date: dStr,
-      shiftCode: code,
-      isRest,
-      isSunday: [4, 11, 18, 25].includes(d),
-      isHoliday: d === 12,
-      customLine: d === 24 ? 'Línea Interurbana 421 · Coche 304' : undefined,
-      extras,
-    });
-  }
-
-  // Previous month tail: September 25-30 (relevant for Direxis 25 Sep - 24 Oct cutoff)
-  const sepSchedule: Record<number, { code: string; extras?: { id: string; name: string; amount: number; notes?: string }[] }> = {
-    25: { code: '6V.L01' },
-    26: { code: '6V.L02', extras: [{ id: 'sep26-1', name: 'Lavado y repostaje autocar', amount: 25.00, notes: 'Plus servicio tarde de septiembre' }] },
-    27: { code: 'D' },
-    28: { code: '6V.L01' },
-    29: { code: '6V.L03' },
-    30: { code: '6V.L02' },
-  };
-
-  for (let d = 25; d <= 30; d++) {
-    const item = sepSchedule[d];
-    assignments.push({
-      date: `2026-09-${d}`,
-      shiftCode: item.code,
-      isRest: item.code === 'D',
-      isSunday: d === 27,
-      extras: item.extras || [],
-    });
-  }
-
-  return assignments;
-}
-
 export default function App() {
   const [publicPage, setPublicPage] = useState<PublicLegalPage | null>(() => getPublicPageFromUrl());
   const [currentTab, setCurrentTab] = useState<'turnos' | 'calendario' | 'nomina' | 'extras'>('calendario');
-  const [selectedYear, setSelectedYear] = useState(2026);
-  const [selectedMonth, setSelectedMonth] = useState(10); // Octubre 2026
+  const [selectedYear, setSelectedYear] = useState(() => Math.max(2026, new Date().getFullYear()));
+  const [selectedMonth, setSelectedMonth] = useState(() => {
+    const now = new Date();
+    return now.getFullYear() < 2026 ? 1 : now.getMonth() + 1;
+  });
 
   // Persistent Shifts (Exclusively official Direxis parts without /L + Retén configurations)
   const [shifts, setShifts] = useState<ShiftDefinition[]>(() => {
@@ -223,19 +129,12 @@ export default function App() {
       const saved = localStorage.getItem('rutanomina_extras_v2') || localStorage.getItem('rutanomina_extras_v1');
       if (saved) {
         const parsed: ExtraConcept[] = JSON.parse(saved);
-        // Garantizar que 'Plus retén' siempre tiene exactamente 8.25€
-        const synced = parsed.map((e) => {
-          if (e.id === 'extra-reten' || e.name.toLowerCase().includes('reten') || e.name.toLowerCase().includes('retén')) {
-            return { ...e, amount: 8.25, unit: 'dia' as const };
-          }
-          return e;
-        });
-        const hasReten = synced.some((e) => e.id === 'extra-reten' || e.name.toLowerCase().includes('reten'));
+        const hasReten = parsed.some((e) => e.id === 'extra-reten' || e.name.toLowerCase().includes('reten') || e.name.toLowerCase().includes('retén'));
         if (!hasReten) {
           const defaultReten = DEFAULT_EXTRAS.find((e) => e.id === 'extra-reten');
-          if (defaultReten) synced.unshift(defaultReten);
+          if (defaultReten) return [defaultReten, ...parsed];
         }
-        return synced;
+        return parsed;
       }
     } catch (e) {
       console.error(e);
@@ -251,38 +150,34 @@ export default function App() {
     }
   }, [extras]);
 
-  // Persistent Calendar Assignments (starting in 2026, mapping legacy mock codes)
+  // Persistent Calendar Assignments (starts blank by default; filled by user or Google Drive backup)
   const [assignments, setAssignments] = useState<DayAssignment[]>(() => {
     try {
-      const saved = localStorage.getItem('rutanomina_assignments_v5');
+      const saved = localStorage.getItem('rutanomina_assignments_v6');
       if (saved) {
         const parsed: DayAssignment[] = JSON.parse(saved);
-        const cleaned = parsed
-          .filter((a) => {
-            const yr = parseInt(a.date.split('-')[0], 10);
-            return yr >= 2026;
-          })
-          .map((a) => ({
-            ...a,
-            shiftCode: mapLegacyShiftCode(a.shiftCode),
-            extras: (a.extras || []).map((e) => {
-              if (e.name.toLowerCase().includes('reten') || e.name.toLowerCase().includes('retén')) {
-                return { ...e, amount: 8.25 };
-              }
-              return e;
-            }),
-          }));
-        if (cleaned.length > 0) return cleaned;
+        if (Array.isArray(parsed)) {
+          return parsed
+            .filter((a) => {
+              const yr = parseInt(a.date.split('-')[0], 10);
+              return yr >= 2026;
+            })
+            .map((a) => ({
+              ...a,
+              shiftCode: mapLegacyShiftCode(a.shiftCode),
+              extras: a.extras || [],
+            }));
+        }
       }
     } catch (e) {
       console.error(e);
     }
-    return getInitial2026Assignments();
+    return [];
   });
 
   useEffect(() => {
     try {
-      localStorage.setItem('rutanomina_assignments_v5', JSON.stringify(assignments));
+      localStorage.setItem('rutanomina_assignments_v6', JSON.stringify(assignments));
     } catch (e) {
       console.error(e);
     }
@@ -291,16 +186,18 @@ export default function App() {
   // Persistent Convenio (starting in 2026, ensuring all fields are populated)
   const [convenio, setConvenio] = useState<ConvenioInfo>(() => {
     try {
-      const saved = localStorage.getItem('rutanomina_convenio_v2') || localStorage.getItem('rutanomina_convenio_v1');
+      const saved = localStorage.getItem('rutanomina_convenio_v3') || localStorage.getItem('rutanomina_convenio_v2');
       if (saved) {
         const parsed: ConvenioInfo = JSON.parse(saved);
         const cleanedRates: Record<number, ConvenioYearRate> = {};
         for (const [k, v] of Object.entries(parsed.ratesByYear || {})) {
           const yNum = Number(k);
           if (yNum >= 2026 && v) {
+            const rawRate = v as ConvenioYearRate;
             cleanedRates[yNum] = {
               ...DEFAULT_CONVENIO_ZARAGOZA.ratesByYear[2026],
-              ...(v as ConvenioYearRate),
+              ...rawRate,
+              plusFestivoMayor4h: rawRate.plusFestivoMayor4h === 40.80 ? 42.80 : (rawRate.plusFestivoMayor4h ?? 42.80),
               year: yNum,
             };
           }
@@ -323,7 +220,7 @@ export default function App() {
 
   useEffect(() => {
     try {
-      localStorage.setItem('rutanomina_convenio_v2', JSON.stringify(convenio));
+      localStorage.setItem('rutanomina_convenio_v3', JSON.stringify(convenio));
     } catch (e) {
       console.error(e);
     }
@@ -361,7 +258,7 @@ export default function App() {
       hasMonetaryQuebranto: true,
       hasConductorPerceptorPlus: true,
       hasVacationPlus100Percent: true,
-      salaryBaseRateMode: 'masats_39_89',
+      salaryBaseRateMode: 'convenio_53_18',
       unionFeeDeduction: 0,
       advancePayment: 0,
     };
@@ -421,6 +318,8 @@ export default function App() {
   const [driveSyncError, setDriveSyncError] = useState<string | null>(null);
   const hasInitialDriveSyncDoneRef = React.useRef(false);
   const syncPromiseRef = React.useRef<Promise<void> | null>(null);
+  const latestStateRef = React.useRef({ shifts, profile, convenio, assignments, extras });
+  latestStateRef.current = { shifts, profile, convenio, assignments, extras };
 
   // Sincronizar navegación URL (?page=privacidad / ?page=terminos)
   useEffect(() => {
@@ -476,6 +375,7 @@ export default function App() {
       try {
         const folders = await ensureDirexisHierarchy(token);
         setDriveFolders(folders);
+        const currentSnapshot = latestStateRef.current;
 
         // 1. Turnos base
         // Regla: "si ya hay turnos guardados, se trabajara sobre los guardados en drive"
@@ -499,7 +399,7 @@ export default function App() {
           }
         } else {
           // Si no existen todavía, guardar los turnos actuales como base inicial dentro de Direxis / Nóminas
-          await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'turnos_base.json', shifts);
+          await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'turnos_base.json', currentSnapshot.shifts);
         }
 
         // 2. Configuración de chófer
@@ -510,7 +410,7 @@ export default function App() {
             setProfile(driveProfile);
           }
         } else {
-          await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'chofer_config.json', profile);
+          await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'chofer_config.json', currentSnapshot.profile);
         }
 
         // 3. Valores del Convenio de 2026
@@ -518,13 +418,26 @@ export default function App() {
         if (convenioFile) {
           const driveConvenio = await readDriveJsonFile<ConvenioInfo>(token, convenioFile.id);
           if (driveConvenio && driveConvenio.ratesByYear) {
-            setConvenio(driveConvenio);
+            const migratedRates: Record<number, ConvenioYearRate> = {};
+            for (const [k, v] of Object.entries(driveConvenio.ratesByYear)) {
+              const yNum = Number(k);
+              if (yNum >= 2026 && v) {
+                const r = v as ConvenioYearRate;
+                migratedRates[yNum] = {
+                  ...DEFAULT_CONVENIO_ZARAGOZA.ratesByYear[2026],
+                  ...r,
+                  plusFestivoMayor4h: r.plusFestivoMayor4h === 40.80 ? 42.80 : (r.plusFestivoMayor4h ?? 42.80),
+                  year: yNum,
+                };
+              }
+            }
+            setConvenio({ ...driveConvenio, ratesByYear: migratedRates });
           }
         } else {
-          await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'convenio_2026.json', convenio);
+          await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'convenio_2026.json', currentSnapshot.convenio);
         }
 
-        // 4. Asignaciones de Cuadrante
+        // 4. Asignaciones de Cuadrante (si hay copia en Drive, rellena el calendario; si no, queda en blanco o conserva lo introducido)
         const asignacionesFile = await findFileInFolder(token, 'cuadrante_asignaciones.json', folders.nominasFolderId);
         if (asignacionesFile) {
           const driveAsignaciones = await readDriveJsonFile<DayAssignment[]>(token, asignacionesFile.id);
@@ -532,7 +445,7 @@ export default function App() {
             setAssignments(driveAsignaciones);
           }
         } else {
-          await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'cuadrante_asignaciones.json', assignments);
+          await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'cuadrante_asignaciones.json', currentSnapshot.assignments);
         }
 
         // 5. Catálogo de Extras
@@ -543,7 +456,7 @@ export default function App() {
             setExtras(driveExtras);
           }
         } else {
-          await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'catalogo_extras.json', extras);
+          await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'catalogo_extras.json', currentSnapshot.extras);
         }
 
         // Consultar nóminas archivadas en la subcarpeta
@@ -633,10 +546,7 @@ export default function App() {
 
   // Current year rates
   const currentYearRate = useMemo(() => {
-    return (
-      convenio.ratesByYear[selectedYear] ||
-      convenio.ratesByYear[2026]
-    );
+    return getEffectiveYearRate(convenio, selectedYear);
   }, [convenio, selectedYear]);
 
   // Computed Monthly Payroll
@@ -916,6 +826,7 @@ export default function App() {
             onDeleteTurno={handleDeleteTurno}
             onRestoreDefaults={handleRestoreDefaultShifts}
             currentYear={selectedYear}
+            convenio={convenio}
           />
         )}
 
@@ -962,6 +873,7 @@ export default function App() {
             onToggleExtra={handleToggleExtra}
             onSaveExtra={handleSaveExtra}
             onDeleteExtra={handleDeleteExtra}
+            yearRate={currentYearRate}
           />
         )}
       </main>
@@ -1002,6 +914,7 @@ export default function App() {
         onClose={() => setIsProfileModalOpen(false)}
         profile={profile}
         onSaveProfile={(newProf) => setProfile(newProf)}
+        yearRate={currentYearRate}
       />
 
       {/* Modal de Inicio de Sesión con Cuenta de Gmail / Google Drive */}

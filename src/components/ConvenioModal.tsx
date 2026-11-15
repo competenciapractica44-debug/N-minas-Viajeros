@@ -65,11 +65,27 @@ const CONCEPTS_METADATA: ConceptDefinition[] = [
   },
   {
     key: 'salarioBaseDia',
-    label: 'Salario Base Diario',
+    label: 'Salario Base Diario (Convenio)',
     article: 'Art. 13 Convenio',
     unit: '€ / día',
     section: 'base',
-    description: 'Salario base por día natural trabajado o de vacaciones (53,18 €/día en 2026).',
+    description: 'Salario base bruto por día natural trabajado o de vacaciones según tablas del convenio (53,18 €/día en 2026).',
+  },
+  {
+    key: 'salarioBaseDiaMasats',
+    label: 'Salario Base Diario (Recibo Masats)',
+    article: 'Recibo Masats',
+    unit: '€ / día',
+    section: 'base',
+    description: 'Salario base diario en bruto aplicado cuando se selecciona la modalidad de recibo Masats (39,89 €/día en 2026).',
+  },
+  {
+    key: 'prorrataPagaDia',
+    label: 'Prorrata Paga Extra por Día (c/u)',
+    article: 'Art. 11 · Masats',
+    unit: '€ / día',
+    section: 'base',
+    description: 'Cuantía diaria bruta por cada paga extraordinaria prorrateada en recibo Masats (3,28 €/día en 2026).',
   },
   {
     key: 'salarioBaseAnual',
@@ -77,7 +93,7 @@ const CONCEPTS_METADATA: ConceptDefinition[] = [
     article: 'Art. 13 Convenio',
     unit: '€ / año',
     section: 'base',
-    description: 'Retribución base anual garantizada según convenio (24.196,90 €/año en 2026).',
+    description: 'Retribución base anual garantizada en bruto según convenio (24.196,90 €/año en 2026).',
   },
 
   // Pluses del Convenio Zaragoza
@@ -87,7 +103,7 @@ const CONCEPTS_METADATA: ConceptDefinition[] = [
     article: 'Art. 18 Convenio',
     unit: '€ / hora nocturna',
     section: 'plus',
-    description: 'Complemento de 2,48 €/hora en tramo nocturno (22:00 - 06:00). Se calcula automáticamente por cada minuto realizado.',
+    description: 'Complemento bruto de 2,48 €/hora en tramo nocturno (22:00 - 06:00). Se calcula automáticamente por cada minuto realizado.',
     isHourly: true,
   },
   {
@@ -96,7 +112,7 @@ const CONCEPTS_METADATA: ConceptDefinition[] = [
     article: 'Art. 19 Convenio',
     unit: '€ / día',
     section: 'plus',
-    description: 'Por tareas simultáneas de conducción, cobro y venta de billetes en jornadas de 4 o más horas (6,27 €/día).',
+    description: 'Por tareas simultáneas de conducción, cobro y venta de billetes en jornadas de 4 o más horas (6,27 €/día bruto).',
   },
   {
     key: 'plusConductorPerceptorDiaReducido',
@@ -104,7 +120,7 @@ const CONCEPTS_METADATA: ConceptDefinition[] = [
     article: 'Art. 19 Convenio',
     unit: '€ / día',
     section: 'plus',
-    description: 'Por tareas de cobro y expedición en jornadas inferiores a 4 horas (3,14 €/día).',
+    description: 'Por tareas de cobro y expedición en jornadas inferiores a 4 horas (3,14 €/día bruto).',
   },
   {
     key: 'quebrantoMonedaDia',
@@ -112,7 +128,15 @@ const CONCEPTS_METADATA: ConceptDefinition[] = [
     article: 'Art. 20 Convenio',
     unit: '€ / día',
     section: 'plus',
-    description: 'Compensación fija diaria por manejo y cuadre de efectivo en autocar (1,89 €/día).',
+    description: 'Compensación fija diaria en bruto por manejo y cuadre de efectivo en autocar (1,89 €/día).',
+  },
+  {
+    key: 'plusRetenDia',
+    label: 'Plus de Retén / Disponibilidad',
+    article: 'Art. 13 Convenio',
+    unit: '€ / día',
+    section: 'plus',
+    description: 'Complemento bruto por jornada o servicio de guardia/retén (8,25 €/día). Excluye quebranto y plus conductor.',
   },
   {
     key: 'plusVacacionesDia',
@@ -128,7 +152,7 @@ const CONCEPTS_METADATA: ConceptDefinition[] = [
     article: 'Art. 17 Convenio',
     unit: '€ / servicio',
     section: 'plus',
-    description: 'Plus por trabajar en domingo o festivo oficial con jornada superior a 4 horas (40,80 €/servicio).',
+    description: 'Plus por trabajar en domingo o festivo oficial (nacional, regional o local) con jornada superior a 4 horas (42,80 €/servicio).',
   },
   {
     key: 'plusFestivoMenor4h',
@@ -385,10 +409,21 @@ export const ConvenioModal: React.FC<ConvenioModalProps> = ({
             }
           });
           if (!cleaned[2026]) cleaned[2026] = { ...default2026 };
-          const newConv = { ...parsed, validFrom: '2026-01-01', ratesByYear: cleaned };
+          const newConv = { ...convenio, ...parsed, validFrom: '2026-01-01', ratesByYear: cleaned };
           onSaveConvenio(newConv);
           setActiveRates(cleaned);
-          setSaveSuccessMessage('¡Convenio importado con éxito!');
+          setSaveSuccessMessage('¡Convenio importado con éxito! Las nóminas se recalculan en bruto con estos importes.');
+        } else if (parsed.salarioBaseDia !== undefined && parsed.horaOrdinaria !== undefined) {
+          const targetYr = Number(parsed.year) >= 2026 ? Number(parsed.year) : selectedYearTab;
+          const updatedRates = {
+            ...activeRates,
+            [targetYr]: { ...default2026, ...(parsed as ConvenioYearRate), year: targetYr },
+          };
+          const newConv = { ...convenio, ratesByYear: updatedRates };
+          onSaveConvenio(newConv);
+          setActiveRates(updatedRates);
+          setSelectedYearTab(targetYr);
+          setSaveSuccessMessage(`¡Tablas del año ${targetYr} importadas con éxito! Aplicadas al cálculo en bruto.`);
         } else {
           setJsonImportError('El archivo no tiene el formato de tablas requerido.');
         }
@@ -450,6 +485,11 @@ export const ConvenioModal: React.FC<ConvenioModalProps> = ({
 
         {/* Scrollable Content */}
         <div className="p-5 space-y-4 overflow-y-auto">
+          {/* Gross-before-taxes notice */}
+          <div className="p-3 bg-blue-50/80 border border-blue-200 rounded-2xl text-[11px] text-blue-900 leading-relaxed">
+            <strong>Importes en BRUTO (antes de impuestos):</strong> todas las cuantías subidas o editadas aquí en el convenio se utilizan primero para calcular íntegramente el <strong>Total Bruto Devengado</strong> de cada concepto de la nómina antes de aplicar Seguridad Social e I.R.P.F.
+          </div>
+
           {/* Success Banner */}
           {saveSuccessMessage && (
             <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-between text-xs text-emerald-900 animate-in fade-in">
@@ -704,7 +744,7 @@ export const ConvenioModal: React.FC<ConvenioModalProps> = ({
               <div className="bg-white/95 rounded-xl p-2.5 border border-amber-100 shadow-2xs">
                 <span className="text-[10px] text-amber-800 font-medium block">Plus Festivos (Art. 17)</span>
                 <span className="text-sm font-extrabold text-amber-900 font-mono">
-                  +{formatCurrency(currentRate.plusFestivoMayor4h || 40.80)}
+                  +{formatCurrency(currentRate.plusFestivoMayor4h ?? 42.80)}
                 </span>
                 <span className="text-[10px] text-slate-500 block truncate">Domingos y festivos</span>
               </div>

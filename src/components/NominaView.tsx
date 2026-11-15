@@ -25,6 +25,7 @@ import {
   MonthlySalaryEvolution,
 } from '../types';
 import { REAL_OCTOBER_PAYSLIP } from '../data/realOctoberPayslip';
+import { getEffectiveYearRate } from '../data/convenioZaragoza';
 import { formatCurrency } from '../utils/exporter';
 import { YearlySalaryChart } from './YearlySalaryChart';
 
@@ -74,6 +75,18 @@ export const NominaView: React.FC<NominaViewProps> = ({
     : 100;
 
   const isMasatsBaseMode = profile.salaryBaseRateMode === 'masats_39_89';
+  const activeYearRate = getEffectiveYearRate(convenio, payroll.year);
+  const convenioBaseDia = parseFloat((activeYearRate.salarioBaseDia * payroll.partTimeFactor).toFixed(2));
+  const masatsBaseDia = parseFloat((activeYearRate.salarioBaseDiaMasats ?? 39.89).toFixed(2));
+  const convenioBaseTotal = parseFloat((payroll.salarioBaseDays * convenioBaseDia).toFixed(2));
+  const masatsBaseTotal = parseFloat((payroll.salarioBaseDays * masatsBaseDia).toFixed(2));
+  const reducedConductorUnitRate =
+    activeYearRate.plusConductorPerceptorDiaReducido ??
+    parseFloat(((activeYearRate.plusConductorPerceptorDia ?? 6.27) / 2).toFixed(2));
+  const prorrateoMode = profile.prorrateoPagasExtra || (profile.prorratearPagasExtra !== false ? 'tres_pagas' : 'ninguna');
+  const prorrataNumPagas = prorrateoMode === 'una_paga' ? 1 : 3;
+  const prorrataPerPaga = prorrataNumPagas > 0 ? parseFloat((payroll.prorrataPagasExtra / prorrataNumPagas).toFixed(2)) : 0;
+  const baseIrpf = Math.max(0, payroll.totalDevengado - payroll.dietasExentas);
 
   const handleJornadaChange = (newPercentage: number) => {
     if (newPercentage >= 100) {
@@ -124,7 +137,7 @@ export const NominaView: React.FC<NominaViewProps> = ({
                     : 'bg-blue-400/20 text-blue-300 border-blue-400/30'
                 }`}
               >
-                Base {isMasatsBaseMode ? '39,89 €/día (Recibo Masats)' : '53,18 €/día (Convenio Zaragoza)'}
+                Base {isMasatsBaseMode ? `${formatCurrency(masatsBaseDia)}/día (Recibo Masats)` : `${formatCurrency(convenioBaseDia)}/día (Convenio ${payroll.year})`}
               </span>
               {profile.contractType === 'tiempo_parcial' && (
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/30">
@@ -248,12 +261,12 @@ export const NominaView: React.FC<NominaViewProps> = ({
           </div>
           <div>
             <h4 className="font-bold text-slate-900 leading-tight">
-              Cálculo del Salario Base: 31 días en Octubre
+              Cálculo del Salario Base en Bruto: {payroll.salarioBaseDays} días en {monthName}
             </h4>
             <p className="text-[11px] text-slate-600">
               {isMasatsBaseMode
-                ? 'Actualmente usando base de recibo Masats: 31 días x 39,89 €/día = 1.236,59 € (los pluses completan la nómina).'
-                : 'Actualmente usando Convenio Zaragoza 2026: 31 días x 53,18 €/día = 1.648,58 € (salario base íntegro de tablas).'}
+                ? `Modalidad recibo Masats (tarifa fija): ${payroll.salarioBaseDays} días × ${formatCurrency(masatsBaseDia)}/día = ${formatCurrency(masatsBaseTotal)} (bruto antes de impuestos).`
+                : `Tablas del Convenio ${payroll.year}${payroll.partTimeFactor < 1 ? ` al ${Math.round(payroll.partTimeFactor * 100)}% (${formatCurrency(activeYearRate.salarioBaseDia)} × ${Math.round(payroll.partTimeFactor * 100)}% = ${formatCurrency(convenioBaseDia)}/día)` : ''}: ${payroll.salarioBaseDays} días × ${formatCurrency(convenioBaseDia)}/día = ${formatCurrency(convenioBaseTotal)} (salario base bruto antes de impuestos).`}
             </p>
           </div>
         </div>
@@ -268,7 +281,7 @@ export const NominaView: React.FC<NominaViewProps> = ({
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
             }`}
           >
-            Convenio 53,18 € (1.648,58 €)
+            Convenio {formatCurrency(convenioBaseDia)} ({formatCurrency(convenioBaseTotal)})
           </button>
           <button
             type="button"
@@ -279,7 +292,7 @@ export const NominaView: React.FC<NominaViewProps> = ({
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
             }`}
           >
-            Recibo Masats 39,89 € (1.236,59 €)
+            Recibo Masats {formatCurrency(masatsBaseDia)} ({formatCurrency(masatsBaseTotal)})
           </button>
         </div>
       </div>
@@ -295,11 +308,11 @@ export const NominaView: React.FC<NominaViewProps> = ({
                   Recibo Individual
                 </span>
                 <h3 className="text-sm font-bold text-slate-900">
-                  Desglose Oficial con Número de Veces (Cuantía) y Precios
+                  Desglose Oficial en Bruto (Cuantía y Precios del Convenio)
                 </h3>
               </div>
               <p className="text-[11px] text-slate-500 mt-0.5">
-                Estructura exacta del recibo de sueldos de S.A. Masats / Convenio Zaragoza.
+                Todos los conceptos se calculan primero en bruto (antes de impuestos) según las cuantías subidas en el Convenio {payroll.year}.
               </p>
             </div>
             <div className="text-right">
@@ -757,12 +770,17 @@ export const NominaView: React.FC<NominaViewProps> = ({
 
       {/* Detailed Section: Devengos vs Deducciones */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* DEVENGOS (Percepciones Salariales) */}
+        {/* DEVENGOS (Percepciones Salariales en Bruto) */}
         <div className="bg-white rounded-3xl p-4 sm:p-5 border border-slate-200 shadow-xs space-y-3">
           <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
-            <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
-              <Coins className="w-4 h-4 text-emerald-600" /> I. Devengos Salariales
-            </h3>
+            <div>
+              <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                <Coins className="w-4 h-4 text-emerald-600" /> I. Devengos Salariales (Bruto)
+              </h3>
+              <p className="text-[10px] text-slate-400 mt-0.5">
+                Cuantías antes de impuestos calculadas desde Convenio {payroll.year}
+              </p>
+            </div>
             <span className="text-xs font-extrabold text-emerald-700 font-mono">
               {formatCurrency(payroll.totalDevengado)}
             </span>
@@ -773,8 +791,8 @@ export const NominaView: React.FC<NominaViewProps> = ({
               <div>
                 <p className="font-semibold text-slate-800">Salario Base</p>
                 <p className="text-[10px] text-slate-400">
-                  {payroll.totalDays} días naturales ({payroll.workedDays} trabajados + {payroll.restDays} descansos) x {formatCurrency(isMasatsBaseMode ? (convenio.ratesByYear[payroll.year]?.salarioBaseDiaMasats || 39.89) : (convenio.ratesByYear[payroll.year]?.salarioBaseDia || 53.18))}
-                  {payroll.partTimeFactor < 1 && ` (Jornada al ${Math.round(payroll.partTimeFactor * 100)}%)`}
+                  {payroll.salarioBaseDays} días ({payroll.workedDays} trabajados + {payroll.restDays} descansos{payroll.vacationDays > 0 ? ` + ${payroll.vacationDays} vac.` : ''}) × {formatCurrency(payroll.salarioBaseUnitPrice)}/día
+                  {!isMasatsBaseMode && payroll.partTimeFactor < 1 && ` (${Math.round(payroll.partTimeFactor * 100)}% de ${formatCurrency(activeYearRate.salarioBaseDia)})`}
                 </p>
               </div>
               <span className="font-bold font-mono text-slate-900">{formatCurrency(payroll.salarioBase)}</span>
@@ -788,7 +806,7 @@ export const NominaView: React.FC<NominaViewProps> = ({
                     <p className="font-bold text-cyan-950">Plus de Vacaciones (Art. 9 Convenio)</p>
                   </div>
                   <p className="text-[10px] text-cyan-700">
-                    {payroll.vacationDays} {payroll.vacationDays === 1 ? 'día disfrutado' : 'días disfrutados'} x {formatCurrency(convenio.ratesByYear[payroll.year]?.plusVacacionesDia || 10.00)}/día (Contrato al 100%)
+                    {payroll.vacationDays} {payroll.vacationDays === 1 ? 'día disfrutado' : 'días disfrutados'} × {formatCurrency(activeYearRate.plusVacacionesDia ?? 10.00)}/día (Contrato al 100%)
                   </p>
                 </div>
                 <span className="font-extrabold font-mono text-cyan-800 text-sm">+{formatCurrency(payroll.plusVacaciones)}</span>
@@ -800,7 +818,7 @@ export const NominaView: React.FC<NominaViewProps> = ({
                 <div>
                   <p className="font-semibold text-slate-800">Plus Conductor (Art. 19)</p>
                   <p className="text-[10px] text-slate-400">
-                    {payroll.plusConductorCount} jornadas x 6,27 € por jornada completa
+                    {payroll.plusConductorCount} jornadas × {formatCurrency(activeYearRate.plusConductorPerceptorDia)} por jornada completa
                   </p>
                 </div>
                 <span className="font-bold font-mono text-emerald-700">+{formatCurrency(payroll.plusConductorPerceptor)}</span>
@@ -812,10 +830,10 @@ export const NominaView: React.FC<NominaViewProps> = ({
                 <div>
                   <p className="font-semibold text-slate-800">1/2 Plus Conductor</p>
                   <p className="text-[10px] text-slate-400">
-                    {payroll.medioPlusConductorCount} servicios x 3,14 €/servicio reducido
+                    {payroll.medioPlusConductorCount} servicios × {formatCurrency(reducedConductorUnitRate)}/servicio reducido
                   </p>
                 </div>
-                <span className="font-bold font-mono text-emerald-700">+{formatCurrency(payroll.medioPlusConductorCount * (convenio.ratesByYear[payroll.year]?.plusConductorPerceptorDiaReducido || 3.14))}</span>
+                <span className="font-bold font-mono text-emerald-700">+{formatCurrency(payroll.medioPlusConductorAmount)}</span>
               </div>
             )}
 
@@ -823,7 +841,9 @@ export const NominaView: React.FC<NominaViewProps> = ({
               <div className="flex items-center justify-between pt-2">
                 <div>
                   <p className="font-semibold text-slate-800">Quebranto de Moneda (Art. 20)</p>
-                  <p className="text-[10px] text-slate-400">{payroll.quebrantoCount} días de cobro x 1,89 €</p>
+                  <p className="text-[10px] text-slate-400">
+                    {payroll.quebrantoCount} días de cobro × {formatCurrency(activeYearRate.quebrantoMonedaDia)}
+                  </p>
                 </div>
                 <span className="font-bold font-mono text-emerald-700">+{formatCurrency(payroll.plusQuebrantoMoneda)}</span>
               </div>
@@ -833,7 +853,9 @@ export const NominaView: React.FC<NominaViewProps> = ({
               <div className="flex items-center justify-between pt-2">
                 <div>
                   <p className="font-semibold text-slate-800">Plus Nocturnidad (Art. 18)</p>
-                  <p className="text-[10px] text-slate-400">{payroll.nightHours}h en tramo 22:00-06:00 x 2,48 €/h</p>
+                  <p className="text-[10px] text-slate-400">
+                    {payroll.nightHours}h en tramo 22:00-06:00 × {formatCurrency(activeYearRate.plusNocturnidadHora)}/h
+                  </p>
                 </div>
                 <span className="font-bold font-mono text-emerald-700">+{formatCurrency(payroll.plusNocturnidad)}</span>
               </div>
@@ -843,7 +865,9 @@ export const NominaView: React.FC<NominaViewProps> = ({
               <div className="flex items-center justify-between pt-2">
                 <div>
                   <p className="font-semibold text-slate-800">Plus Festivos y Domingos (Art. 17)</p>
-                  <p className="text-[10px] text-slate-400">{payroll.plusFestivoCount} festivos / domingos trabajados x 40,80 €</p>
+                  <p className="text-[10px] text-slate-400">
+                    {payroll.plusFestivoCount} festivo{payroll.plusFestivoCount === 1 ? '' : 's'} × {formatCurrency(payroll.plusFestivoCount > 0 ? payroll.plusFestivos / payroll.plusFestivoCount : activeYearRate.plusFestivoMayor4h)}
+                  </p>
                 </div>
                 <span className="font-bold font-mono text-emerald-700">+{formatCurrency(payroll.plusFestivos)}</span>
               </div>
@@ -853,9 +877,11 @@ export const NominaView: React.FC<NominaViewProps> = ({
               <div className="flex items-center justify-between pt-2">
                 <div>
                   <p className="font-semibold text-slate-800">Festivas (Horas)</p>
-                  <p className="text-[10px] text-slate-400">{payroll.horasFestivas} horas festivas x 13,62 €/h</p>
+                  <p className="text-[10px] text-slate-400">
+                    {payroll.horasFestivas} horas festivas × {formatCurrency(activeYearRate.horaOrdinaria)}/h
+                  </p>
                 </div>
-                <span className="font-bold font-mono text-emerald-700">+{formatCurrency(payroll.horasFestivas * (convenio.ratesByYear[payroll.year]?.horaOrdinaria || 13.62))}</span>
+                <span className="font-bold font-mono text-emerald-700">+{formatCurrency(payroll.horasFestivasAmount)}</span>
               </div>
             )}
 
@@ -863,21 +889,39 @@ export const NominaView: React.FC<NominaViewProps> = ({
               <div className="flex items-center justify-between pt-2">
                 <div>
                   <p className="font-semibold text-slate-800">Plus Retén</p>
-                  <p className="text-[10px] text-slate-400">{payroll.plusRetenCount} días de retén x 8,25 €/día</p>
+                  <p className="text-[10px] text-slate-400">
+                    {payroll.plusRetenCount} días de retén × {formatCurrency(activeYearRate.plusRetenDia ?? 8.25)}/día
+                  </p>
                 </div>
-                <span className="font-bold font-mono text-emerald-700">+{formatCurrency(payroll.plusRetenCount * (convenio.ratesByYear[payroll.year]?.plusRetenDia || 8.25))}</span>
+                <span className="font-bold font-mono text-emerald-700">+{formatCurrency(payroll.plusRetenAmount)}</span>
               </div>
             )}
 
             {payroll.prorrataPagasExtra > 0 && (
               <div className="flex items-center justify-between pt-2">
                 <div>
-                  <p className="font-semibold text-slate-800">Prorrata Pagas Extras (Marzo, Julio, Dic.)</p>
+                  <p className="font-semibold text-slate-800">
+                    Prorrata Pagas Extras ({prorrataNumPagas === 1 ? 'Marzo' : 'Marzo, Julio, Dic.'})
+                  </p>
                   <p className="text-[10px] text-slate-400">
-                    3 pagas extraordinarias prorrateadas (31 días x 3,28 € = 101,64 € c/u)
+                    {isMasatsBaseMode
+                      ? `${prorrataNumPagas} ${prorrataNumPagas === 1 ? 'paga prorrateada' : 'pagas prorrateadas'} (${payroll.prorrataDays} días × ${formatCurrency(activeYearRate.prorrataPagaDia ?? 3.28)} = ${formatCurrency(prorrataPerPaga)} c/u)`
+                      : `${prorrataNumPagas} ${prorrataNumPagas === 1 ? 'paga prorrateada' : 'pagas prorrateadas'} (${payroll.prorrataDays.toFixed(2).replace('.', ',')} días base × ${formatCurrency(payroll.salarioBaseUnitPrice)} = ${formatCurrency(prorrataPerPaga)} c/u)`}
                   </p>
                 </div>
                 <span className="font-bold font-mono text-emerald-700">+{formatCurrency(payroll.prorrataPagasExtra)}</span>
+              </div>
+            )}
+
+            {payroll.pagaExtraIntegraMes > 0 && (
+              <div className="flex items-center justify-between pt-2 bg-emerald-50/70 p-2.5 rounded-xl border border-emerald-200">
+                <div>
+                  <p className="font-bold text-emerald-950">{payroll.pagaExtraIntegraNombre || 'Paga Extraordinaria Íntegra'}</p>
+                  <p className="text-[10px] text-emerald-700">
+                    30 días × {formatCurrency(payroll.salarioBaseUnitPrice)}
+                  </p>
+                </div>
+                <span className="font-extrabold font-mono text-emerald-800">+{formatCurrency(payroll.pagaExtraIntegraMes)}</span>
               </div>
             )}
 
@@ -889,21 +933,25 @@ export const NominaView: React.FC<NominaViewProps> = ({
                     <p className="font-bold text-indigo-950">Hores Complementarias / Exceso</p>
                   </div>
                   <p className="text-[10px] text-indigo-700">
-                    {payroll.horasComplementarias || payroll.horasExtra} horas acumuladas x {formatCurrency(convenio.ratesByYear[payroll.year]?.horaOrdinaria || 13.62)}/h
+                    {payroll.horasComplementarias || payroll.horasExtra} horas acumuladas × {formatCurrency(activeYearRate.horaOrdinaria)}/h
                   </p>
                 </div>
                 <span className="font-extrabold font-mono text-indigo-900 text-sm">+{formatCurrency(payroll.importeHorasExtra)}</span>
               </div>
             )}
 
-            {payroll.totalExtrasFueraConvenio > 0 && (
+            {(payroll.totalExtrasFueraConvenio > 0 || payroll.extrasItemsList.length > 0) && (
               <div className="pt-2 bg-amber-50/50 p-2.5 rounded-xl border border-amber-200/60 space-y-2">
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="flex items-center gap-1.5">
-                      <p className="font-semibold text-amber-900">Complementos y Extras Fuera de Convenio</p>
+                      <p className="font-semibold text-amber-900">
+                        {payroll.totalExtrasFueraConvenio > 0
+                          ? 'Complementos y Extras Fuera de Convenio'
+                          : 'Registro de Extras y Variables del Período'}
+                      </p>
                       <span className="text-[10px] font-bold bg-amber-100 text-amber-800 px-1.5 py-0.2 rounded">
-                        {payroll.extrasItemsList.length} extras
+                        {payroll.extrasItemsList.length} {payroll.extrasItemsList.length === 1 ? 'apunte' : 'apuntes'}
                       </span>
                     </div>
                     <p className="text-[10px] text-amber-700">
@@ -911,14 +959,17 @@ export const NominaView: React.FC<NominaViewProps> = ({
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="font-bold font-mono text-amber-800">+{formatCurrency(payroll.totalExtrasFueraConvenio)}</span>
+                    {payroll.totalExtrasFueraConvenio > 0 && (
+                      <span className="font-bold font-mono text-amber-800">+{formatCurrency(payroll.totalExtrasFueraConvenio)}</span>
+                    )}
                     {payroll.extrasItemsList.length > 0 && (
                       <button
                         type="button"
                         onClick={() => setShowExtrasDetails(!showExtrasDetails)}
-                        className="text-amber-800 hover:text-amber-950 p-0.5 rounded transition-colors"
+                        className="text-amber-800 hover:text-amber-950 p-0.5 rounded transition-colors flex items-center gap-1 text-[10px] font-bold"
                         title={showExtrasDetails ? 'Ocultar desglose' : 'Ver desglose'}
                       >
+                        <span>{showExtrasDetails ? 'Ocultar' : 'Detalle'}</span>
                         {showExtrasDetails ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                       </button>
                     )}
@@ -971,7 +1022,9 @@ export const NominaView: React.FC<NominaViewProps> = ({
             <div className="flex items-center justify-between pt-2">
               <div>
                 <p className="font-semibold text-slate-800">Desempleo y Formación (Ret. Seg. Soc. D/FP)</p>
-                <p className="text-[10px] text-slate-400">1,65% sobre base (1,55% desempleo + 0,10% FP)</p>
+                <p className="text-[10px] text-slate-400">
+                  {profile.contractType === 'temporal' ? '1,70% sobre base (1,60% desempleo + 0,10% FP)' : '1,65% sobre base (1,55% desempleo + 0,10% FP)'}
+                </p>
               </div>
               <span className="font-bold font-mono text-slate-900">-{formatCurrency(payroll.desempleo + payroll.formacionProfesional)}</span>
             </div>
@@ -987,7 +1040,7 @@ export const NominaView: React.FC<NominaViewProps> = ({
             <div className="flex items-center justify-between pt-2 bg-blue-50/50 p-2 rounded-xl">
               <div>
                 <p className="font-semibold text-blue-900">Retención I.R.P.F.</p>
-                <p className="text-[10px] text-blue-700">{payroll.retencionIrpf}% sobre base {formatCurrency(payroll.totalDevengado)}</p>
+                <p className="text-[10px] text-blue-700">{payroll.retencionIrpf}% sobre base bruta sujeta {formatCurrency(baseIrpf)}</p>
               </div>
               <span className="font-bold font-mono text-blue-800">-{formatCurrency(payroll.retencionIrpfImporte)}</span>
             </div>

@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { SlidersHorizontal, Plus, CheckCircle2, Edit2, Trash2, X, Info } from 'lucide-react';
-import { ExtraConcept, ExtraUnit } from '../types';
+import { ExtraConcept, ExtraUnit, ConvenioYearRate } from '../types';
 import { formatCurrency } from '../utils/exporter';
+import { DEFAULT_CONVENIO_ZARAGOZA, getOfficialConvenioExtraAmount } from '../data/convenioZaragoza';
 import { ConfirmModal } from './ConfirmModal';
 
 interface ExtrasViewProps {
@@ -9,6 +10,7 @@ interface ExtrasViewProps {
   onToggleExtra: (id: string) => void;
   onSaveExtra: (extra: ExtraConcept) => void;
   onDeleteExtra: (id: string) => void;
+  yearRate?: ConvenioYearRate;
 }
 
 export const ExtrasView: React.FC<ExtrasViewProps> = ({
@@ -16,7 +18,9 @@ export const ExtrasView: React.FC<ExtrasViewProps> = ({
   onToggleExtra,
   onSaveExtra,
   onDeleteExtra,
+  yearRate,
 }) => {
+  const effectiveYearRate = yearRate || DEFAULT_CONVENIO_ZARAGOZA.ratesByYear[2026];
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingExtra, setEditingExtra] = useState<ExtraConcept | null>(null);
   const [extraToDelete, setExtraToDelete] = useState<ExtraConcept | null>(null);
@@ -43,9 +47,10 @@ export const ExtrasView: React.FC<ExtrasViewProps> = ({
   };
 
   const handleOpenEdit = (extra: ExtraConcept) => {
+    const officialAmount = getOfficialConvenioExtraAmount(extra.name, effectiveYearRate);
     setEditingExtra(extra);
     setName(extra.name);
-    setAmount(extra.amount);
+    setAmount(officialAmount !== null ? officialAmount : extra.amount);
     setUnit(extra.unit);
     setDescription(extra.description);
     setTagInput(extra.tags.join(', '));
@@ -61,8 +66,8 @@ export const ExtrasView: React.FC<ExtrasViewProps> = ({
       .map((t) => t.trim())
       .filter(Boolean);
 
-    const isReten = name.toLowerCase().includes('reten') || name.toLowerCase().includes('retén');
-    const finalAmount = isReten ? 8.25 : (Number(amount) || 0);
+    const officialAmount = getOfficialConvenioExtraAmount(name.trim(), effectiveYearRate);
+    const finalAmount = officialAmount !== null ? officialAmount : (Number(amount) || 0);
 
     const updated: ExtraConcept = {
       id: editingExtra ? editingExtra.id : `extra-${Date.now()}`,
@@ -133,7 +138,10 @@ export const ExtrasView: React.FC<ExtrasViewProps> = ({
 
       {/* Extra Concept Cards List matching screenshot 4 */}
       <div className="space-y-3">
-        {extras.map((item) => (
+        {extras.map((item) => {
+          const officialAmount = getOfficialConvenioExtraAmount(item.name, effectiveYearRate);
+          const displayAmount = officialAmount !== null ? officialAmount : item.amount;
+          return (
           <div
             key={item.id}
             className={`bg-white rounded-2xl p-4 border transition-all relative ${
@@ -144,9 +152,16 @@ export const ExtrasView: React.FC<ExtrasViewProps> = ({
           >
             <div className="flex items-start justify-between gap-3">
               <div className="space-y-1 flex-1">
-                <h3 className="text-sm sm:text-base font-bold text-slate-900 leading-snug">
-                  {item.name}
-                </h3>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <h3 className="text-sm sm:text-base font-bold text-slate-900 leading-snug">
+                    {item.name}
+                  </h3>
+                  {officialAmount !== null && (
+                    <span className="px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-bold">
+                      Bruto Convenio {effectiveYearRate.year}
+                    </span>
+                  )}
+                </div>
                 <span className="text-[11px] text-slate-500 block">
                   {item.unit === 'servicio' && 'Importe Fijo por ocasión'}
                   {item.unit === 'hora' && 'Precio por hora adicional'}
@@ -158,10 +173,10 @@ export const ExtrasView: React.FC<ExtrasViewProps> = ({
               {/* Amount and unit */}
               <div className="text-right shrink-0">
                 <div className="text-base sm:text-lg font-extrabold text-emerald-700 font-mono tabular-nums leading-none">
-                  {formatCurrency(item.amount)}
+                  {formatCurrency(displayAmount)}
                 </div>
                 <span className="text-[10px] text-slate-400 font-medium block mt-0.5">
-                  / {item.unit}
+                  / {item.unit} (bruto)
                 </span>
               </div>
             </div>
@@ -226,7 +241,8 @@ export const ExtrasView: React.FC<ExtrasViewProps> = ({
               </div>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Button to Create New Concept matching screenshot 4 */}
@@ -273,9 +289,12 @@ export const ExtrasView: React.FC<ExtrasViewProps> = ({
                   onChange={(e) => {
                     const val = e.target.value;
                     setName(val);
-                    if (val.toLowerCase().includes('reten') || val.toLowerCase().includes('retén')) {
-                      setAmount(8.25);
-                      setUnit('dia');
+                    const official = getOfficialConvenioExtraAmount(val, effectiveYearRate);
+                    if (official !== null) {
+                      setAmount(official);
+                      if (val.toLowerCase().includes('reten') || val.toLowerCase().includes('retén')) {
+                        setUnit('dia');
+                      }
                     }
                   }}
                   placeholder="ej. Limpieza profunda o Espera en hotel"
@@ -393,7 +412,7 @@ export const ExtrasView: React.FC<ExtrasViewProps> = ({
         title={extraToDelete ? `¿Eliminar "${extraToDelete.name}"?` : '¿Eliminar extra?'}
         message={
           extraToDelete
-            ? `¿Estás seguro de que deseas eliminar permanentemente el concepto extra "${extraToDelete.name}" (+${formatCurrency(extraToDelete.amount)})?\n\nDejará de aparecer en la lista de extras para futuras asignaciones.`
+            ? `¿Estás seguro de que deseas eliminar permanentemente el concepto extra "${extraToDelete.name}" (+${formatCurrency(getOfficialConvenioExtraAmount(extraToDelete.name, effectiveYearRate) ?? extraToDelete.amount)})?\n\nDejará de aparecer en la lista de extras para futuras asignaciones.`
             : ''
         }
         confirmText="Sí, eliminar concepto"

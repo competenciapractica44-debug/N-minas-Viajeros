@@ -8,6 +8,8 @@ import {
   ShiftDefinition,
   ConvenioInfo,
 } from '../types';
+import { getEffectiveYearRate } from '../data/convenioZaragoza';
+import { computeShiftRateFromConvenio } from './calculator';
 
 /**
  * Format currency with euro symbol
@@ -39,6 +41,10 @@ export function buildPDFDoc(
   });
 
   const pageWidth = doc.internal.pageSize.getWidth();
+  const activeRate = getEffectiveYearRate(convenio, payroll.year);
+  const baseDayRate = profile.salaryBaseRateMode === 'masats_39_89'
+    ? parseFloat((activeRate.salarioBaseDiaMasats ?? 39.89).toFixed(2))
+    : parseFloat((activeRate.salarioBaseDia * payroll.partTimeFactor).toFixed(2));
 
   // Primary brand header
   doc.setFillColor(30, 58, 138); // Navy blue
@@ -98,9 +104,9 @@ export function buildPDFDoc(
 
   autoTable(doc, {
     startY: startY + 16,
-    head: [['CUANTÍA (Nº VECES)', 'PRECIO', 'CONCEPTO RETRIBUTIVO', 'DEVENGOS (€)']],
+    head: [['CUANTÍA (Nº VECES)', 'PRECIO BRUTO', 'CONCEPTO RETRIBUTIVO (ANTES IMP.)', 'DEVENGOS BRUTO (€)']],
     body: devengosRows,
-    foot: [['TOTAL DEVENGADO (TOTAL BRUTO)', '', '', formatCurrency(payroll.totalDevengado)]],
+    foot: [['TOTAL DEVENGADO BRUTO (ANTES DE IMPUESTOS)', '', '', formatCurrency(payroll.totalDevengado)]],
     theme: 'striped',
     headStyles: { fillColor: [37, 99, 235], textColor: 255, fontStyle: 'bold', fontSize: 8.5 },
     footStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 9 },
@@ -202,7 +208,9 @@ export function buildPDFDoc(
           shift ? `${shift.startTime} - ${shift.endTime}` : '-',
           shift?.computedDuration || '-',
           extrasStr,
-          shift?.fixedRate ? formatCurrency(shift.fixedRate) : formatCurrency(convenio.ratesByYear[payroll.year]?.salarioBaseDia || 53.18),
+          shift
+            ? formatCurrency(computeShiftRateFromConvenio(shift, activeRate).totalRate)
+            : formatCurrency(item.shiftCode === 'D' ? 0 : baseDayRate),
         ];
       });
 
@@ -275,6 +283,10 @@ export function exportToExcel(
   monthName: string
 ) {
   const wb = XLSX.utils.book_new();
+  const activeRate = getEffectiveYearRate(convenio, payroll.year);
+  const baseDayRate = profile.salaryBaseRateMode === 'masats_39_89'
+    ? parseFloat((activeRate.salarioBaseDiaMasats ?? 39.89).toFixed(2))
+    : parseFloat((activeRate.salarioBaseDia * payroll.partTimeFactor).toFixed(2));
 
   // Sheet 1: Resumen Nómina
   const resumenData = [
@@ -293,7 +305,7 @@ export function exportToExcel(
     ['Horas Totales Trabajadas', payroll.totalWorkedHours, 'horas'],
     ['Horas Nocturnas (22:00 a 06:00)', payroll.nightHours, 'horas'],
     [],
-    ['II. DEVENGOS (BRUTO)', 'CUANTÍA (Nº VECES)', 'PRECIO (€)', 'IMPORTE DEVENGADO (€)'],
+    ['II. DEVENGOS EN BRUTO (CONVENIO ANTES DE IMPUESTOS)', 'CUANTÍA (Nº VECES)', 'PRECIO BRUTO (€)', 'IMPORTE BRUTO DEVENGADO (€)'],
     ...payroll.lines.map((line) => [
       line.name,
       `${line.quantityLabel} ${line.unit}`,
@@ -343,7 +355,9 @@ export function exportToExcel(
         shift?.endTime || '-',
         shift?.computedDuration || (item.shiftCode === 'V' ? 'Jornada vacaciones retribuida' : '-'),
         extrasStr,
-        shift?.fixedRate || (item.shiftCode === 'D' ? 0 : item.shiftCode === 'V' ? (convenio.ratesByYear[payroll.year]?.salarioBaseDia || 53.18) + (convenio.ratesByYear[payroll.year]?.plusVacacionesDia || 10.00) : convenio.ratesByYear[payroll.year]?.salarioBaseDia || 53.18),
+        shift
+          ? computeShiftRateFromConvenio(shift, activeRate).totalRate
+          : (item.shiftCode === 'D' ? 0 : item.shiftCode === 'V' ? baseDayRate + (activeRate.plusVacacionesDia ?? 10.00) : baseDayRate),
       ];
     });
 

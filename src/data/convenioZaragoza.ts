@@ -21,7 +21,7 @@ export const DEFAULT_CONVENIO_ZARAGOZA: ConvenioInfo = {
       plusConductorPerceptorDia: 6.27,
       plusConductorPerceptorDiaReducido: 3.14,
       quebrantoMonedaDia: 1.89,
-      plusFestivoMayor4h: 40.80,
+      plusFestivoMayor4h: 42.80,
       plusFestivoMenor4h: 30.60,
       plusRetenDia: 8.25,
       prorrataPagaDia: 3.28,
@@ -45,6 +45,7 @@ export function generateProrrogaYearRate(baseRate: ConvenioYearRate, newYear: nu
     year: newYear,
     salarioBaseDia: parseFloat((baseRate.salarioBaseDia * factor).toFixed(2)),
     salarioBaseAnual: parseFloat((baseRate.salarioBaseAnual * factor).toFixed(2)),
+    salarioBaseDiaMasats: parseFloat(((baseRate.salarioBaseDiaMasats ?? 39.89) * factor).toFixed(2)),
     horaOrdinaria: parseFloat((baseRate.horaOrdinaria * factor).toFixed(2)),
     plusNocturnidadHora: parseFloat((baseRate.plusNocturnidadHora * factor).toFixed(2)),
     plusConductorPerceptorDia: parseFloat((baseRate.plusConductorPerceptorDia * factor).toFixed(2)),
@@ -54,12 +55,64 @@ export function generateProrrogaYearRate(baseRate: ConvenioYearRate, newYear: nu
     plusFestivoMenor4h: parseFloat((baseRate.plusFestivoMenor4h * factor).toFixed(2)),
     plus24y31Diciembre: parseFloat((baseRate.plus24y31Diciembre * factor).toFixed(2)),
     dietaComidaCenaRegular: parseFloat((baseRate.dietaComidaCenaRegular * factor).toFixed(2)),
-    dietaComidaCenaDiscrecional: parseFloat(((baseRate.dietaComidaCenaDiscrecional || 18.0) * factor).toFixed(2)),
+    dietaComidaCenaDiscrecional: parseFloat(((baseRate.dietaComidaCenaDiscrecional ?? 19.0) * factor).toFixed(2)),
     dietaPernoctaRegular: parseFloat((baseRate.dietaPernoctaRegular * factor).toFixed(2)),
     dietaPernoctaDiscrecional: parseFloat((baseRate.dietaPernoctaDiscrecional * factor).toFixed(2)),
     plusVacacionesDia: parseFloat((baseRate.plusVacacionesDia * factor).toFixed(2)),
-    plusRetenDia: parseFloat(((baseRate.plusRetenDia || 8.25) * factor).toFixed(2)),
-    prorrataPagaDia: parseFloat(((baseRate.prorrataPagaDia || 3.28) * factor).toFixed(2)),
+    plusRetenDia: parseFloat(((baseRate.plusRetenDia ?? 8.25) * factor).toFixed(2)),
+    prorrataPagaDia: parseFloat(((baseRate.prorrataPagaDia ?? 3.28) * factor).toFixed(2)),
     horasJornadaAnual: baseRate.horasJornadaAnual,
   };
 }
+
+/**
+ * Resolves the active ConvenioYearRate for a target year, falling back gracefully
+ * to the closest configured Convenio year or 2026 defaults while preserving uploaded fields.
+ */
+export function getEffectiveYearRate(convenio: ConvenioInfo | undefined, year: number): ConvenioYearRate {
+  const default2026 = DEFAULT_CONVENIO_ZARAGOZA.ratesByYear[2026];
+  const ratesMap = convenio?.ratesByYear || {};
+  if (ratesMap[year]) {
+    return { ...default2026, ...ratesMap[year], year };
+  }
+  const availableYears = Object.keys(ratesMap)
+    .map(Number)
+    .filter((y) => !isNaN(y))
+    .sort((a, b) => b - a);
+  const fallbackYear = availableYears.find((y) => y <= year) ?? availableYears[0];
+  if (fallbackYear !== undefined && ratesMap[fallbackYear]) {
+    return { ...default2026, ...ratesMap[fallbackYear], year };
+  }
+  return { ...default2026, year };
+}
+
+/**
+ * Returns the live gross Convenio amount for official Convenio-linked extras so UI
+ * and payroll calculation always obey the uploaded Convenio table.
+ */
+export function getOfficialConvenioExtraAmount(name: string, yearRate: ConvenioYearRate): number | null {
+  const lower = (name || '').toLowerCase();
+  if (lower.includes('reten') || lower.includes('retén')) {
+    return yearRate.plusRetenDia ?? 8.25;
+  }
+  if (lower.includes('1/2') || lower.includes('medio plus')) {
+    return (
+      yearRate.plusConductorPerceptorDiaReducido ??
+      parseFloat(((yearRate.plusConductorPerceptorDia ?? 6.27) / 2).toFixed(2))
+    );
+  }
+  if (lower.includes('plus conductor')) {
+    return yearRate.plusConductorPerceptorDia ?? 6.27;
+  }
+  if (lower.includes('quebranto')) {
+    return yearRate.quebrantoMonedaDia ?? 1.89;
+  }
+  if (lower.includes('plus festivo')) {
+    return yearRate.plusFestivoMayor4h ?? 42.80;
+  }
+  if (lower.includes('festiva') || lower.includes('complementaria')) {
+    return yearRate.horaOrdinaria ?? 13.62;
+  }
+  return null;
+}
+

@@ -195,9 +195,12 @@ export interface PayrollBreakdown {
   retribucionVacacionesBase: number;
   plusVacaciones: number;
   plusConductorPerceptor: number;
+  medioPlusConductorAmount: number;
   plusQuebrantoMoneda: number;
   plusNocturnidad: number;
   plusFestivos: number;
+  horasFestivasAmount: number;
+  plusRetenAmount: number;
   prorrataPagasExtra: number;
   pagaExtraIntegraMes: number; // Paga completa de Julio o Diciembre si aplica
   pagaExtraIntegraNombre?: string; // 'Paga Extra de Julio' | 'Paga Extra de Navidad (Diciembre)'

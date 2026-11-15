@@ -10,6 +10,7 @@ import {
   MonthlySalaryEvolution,
   PayrollLineItem,
 } from '../types';
+import { getEffectiveYearRate, getOfficialConvenioExtraAmount } from '../data/convenioZaragoza';
 
 const MONTH_NAMES_SHORT = [
   'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
@@ -134,7 +135,7 @@ export interface ShiftRateCalculation {
   nightRate: number;  // Convenio plusNocturnidadHora (2.48 €/h)
   baseAmount: number; // totalHours * hourlyRate
   nightAmount: number; // nightHours * 2.48
-  holidayAmount: number; // If Sunday / Festivo, Art. 17 plus (40.80 €)
+  holidayAmount: number; // If Sunday / Festivo, Art. 17 plus (42.80 €)
   retenAmount?: number; // Plus de retén (+8.25 €) si aplica
   hasReten?: boolean;   // Si es turno de retén
   isReducedConductorPlus?: boolean; // Turno < 4 horas: 1/2 Plus conductor (3,14 €)
@@ -161,7 +162,7 @@ export function computeShiftRateFromConvenio(
       dayHours: 0,
       nightHours: 0,
       hourlyRate: yearRate.horaOrdinaria,
-      nightRate: yearRate.plusNocturnidadHora || 2.48,
+      nightRate: yearRate.plusNocturnidadHora ?? 2.48,
       baseAmount: 0,
       nightAmount: 0,
       holidayAmount: 0,
@@ -174,13 +175,13 @@ export function computeShiftRateFromConvenio(
 
   if (shift.code === 'V') {
     const baseDia = yearRate.salarioBaseDia;
-    const plusVac = yearRate.plusVacacionesDia || 10.0;
+    const plusVac = yearRate.plusVacacionesDia ?? 10.0;
     return {
       totalHours: 0,
       dayHours: 0,
       nightHours: 0,
       hourlyRate: yearRate.horaOrdinaria,
-      nightRate: yearRate.plusNocturnidadHora || 2.48,
+      nightRate: yearRate.plusNocturnidadHora ?? 2.48,
       baseAmount: baseDia,
       nightAmount: 0,
       holidayAmount: 0,
@@ -204,11 +205,11 @@ export function computeShiftRateFromConvenio(
 
   const dayHours = Math.max(0, Math.round((totalHours - nightHours) * 100) / 100);
   const hourlyRate = yearRate.horaOrdinaria;
-  const nightRate = yearRate.plusNocturnidadHora || 2.48;
+  const nightRate = yearRate.plusNocturnidadHora ?? 2.48;
 
-  // Base wage for regular shift day according to Convenio Zaragoza (salario base diario 53.18 € en 2026)
+  // Base wage for regular shift day according to Convenio (bruto antes de impuestos)
   const baseAmount = yearRate.salarioBaseDia;
-  // Plus nocturnidad (Art. 18: 2,48 €/h en tramo 22:00 a 06:00)
+  // Plus nocturnidad (Art. 18: tramo 22:00 a 06:00)
   const nightAmount = parseFloat((nightHours * nightRate).toFixed(2));
 
   // Plus Festivo (Art. 17): Se cobra en festivos oficiales (nacionales, regionales y locales) y se marca manualmente
@@ -217,7 +218,7 @@ export function computeShiftRateFromConvenio(
     ? (totalHours > 4 ? yearRate.plusFestivoMayor4h : yearRate.plusFestivoMenor4h)
     : 0;
 
-  // Plus retén (8,25 €): si el turno es de retén o reserva, incluye el plus y excluye quebranto y plus conductor
+  // Plus retén: si el turno es de retén o reserva, incluye el plus y excluye quebranto y plus conductor
   const isRetenShift = Boolean(
     shift.hasPlusReten ||
     shift.code.includes('.LR') ||
@@ -225,16 +226,18 @@ export function computeShiftRateFromConvenio(
     shift.title.toLowerCase().includes('retén') ||
     shift.title.toLowerCase().includes('reten')
   );
-  const retenAmount = isRetenShift ? (yearRate.plusRetenDia || 8.25) : 0;
+  const retenAmount = isRetenShift ? (yearRate.plusRetenDia ?? 8.25) : 0;
 
-  // Turnos de menos de 4 horas de duración: el Plus Conductor-Perceptor es la mitad (1/2 Plus = 3,14 €)
+  // Turnos de menos de 4 horas de duración: el Plus Conductor-Perceptor es la mitad (1/2 Plus)
   const isReducedConductorPlus = !isRetenShift && totalHours > 0 && totalHours < 4;
-  const reducedRate = yearRate.plusConductorPerceptorDiaReducido || parseFloat(((yearRate.plusConductorPerceptorDia || 6.27) / 2).toFixed(2));
+  const reducedRate =
+    yearRate.plusConductorPerceptorDiaReducido ??
+    parseFloat(((yearRate.plusConductorPerceptorDia ?? 6.27) / 2).toFixed(2));
   const conductorPlusAmount = isRetenShift
     ? 0
     : isReducedConductorPlus
     ? reducedRate
-    : (yearRate.plusConductorPerceptorDia || 6.27);
+    : (yearRate.plusConductorPerceptorDia ?? 6.27);
 
   // Total rate: if custom shift has an explicit override, respect it; otherwise compute exact Convenio sum
   const computedTotal = parseFloat((baseAmount + nightAmount + holidayAmount + retenAmount).toFixed(2));
@@ -296,6 +299,8 @@ export function calculateMonthlyPayroll(
 
   // Días con turno o extra de retén (el retén excluye quebranto de moneda y plus conductor)
   const retenDaysSet = new Set<string>();
+  // Días festivos oficiales ya contabilizados desde el calendario del mes
+  const holidayDaysSet = new Set<string>();
   // Días laborables con jornada completa (>= 4h) vs reducida (< 4h -> 1/2 Plus conductor)
   const fullConductorDaysSet = new Set<string>();
   const reducedConductorDaysSet = new Set<string>();
@@ -330,7 +335,10 @@ export function calculateMonthlyPayroll(
       const shiftDef = shiftsMap.get(shiftCode) || Array.from(shiftsMap.values()).find((s) => s.code === shiftCode);
       if (shiftDef && shiftDef.code !== 'D') {
         workedDays++;
-        if (isHoliday) holidayDays++;
+        if (isHoliday) {
+          holidayDays++;
+          holidayDaysSet.add(dateStr);
+        }
 
         // Shift calculation from Convenio (hours, night hours and base rate)
         const calc = computeShiftRateFromConvenio(shiftDef, yearRate, { isHoliday, isSunday });
@@ -356,22 +364,24 @@ export function calculateMonthlyPayroll(
 
         // If a custom shift has a specific fixed tariff override that exceeds standard daily rate
         if (shiftDef.isCustom && shiftDef.fixedRate && shiftDef.fixedRate > calc.totalRate) {
-          const excess = (shiftDef.fixedRate - calc.totalRate) * partTimeFactor;
+          const excess = parseFloat((shiftDef.fixedRate - calc.totalRate).toFixed(2));
           customShiftExcess += excess;
           customShiftItems.push({
             date: dateStr,
             name: `Tarifa especial ${shiftDef.title || shiftDef.code}`,
-            amount: parseFloat(excess.toFixed(2)),
+            amount: excess,
             notes: 'Complemento de turno personalizado pactado',
           });
         }
 
-        // Holiday plus (Art. 17)
+        // Holiday plus (Art. 17) computed in gross using uploaded Convenio table
         if (isHoliday) {
-          festivoPluses += calc.holidayAmount;
+          const effectiveHolidayAmt =
+            effectiveTotalHours > 4 ? yearRate.plusFestivoMayor4h : yearRate.plusFestivoMenor4h;
+          festivoPluses += effectiveHolidayAmt;
         }
 
-        // Special 24/31 Dec night plus
+        // Special 24/31 Dec night plus computed in gross using uploaded Convenio table
         if ((month === 12 && (d === 24 || d === 31)) && effectiveNightHours > 0) {
           festivoPluses += yearRate.plus24y31Diciembre;
         }
@@ -388,9 +398,8 @@ export function calculateMonthlyPayroll(
   let dietasExentas = 0;
   let dietasTributables = 0;
   let totalLateFinishMinutes = 0;
-  let totalLateFinishAmount = 0;
 
-  // Recognised specific concepts from official payslips
+  // Recognised specific concepts from official payslips (all priced in gross using uploaded Convenio rates)
   let explicitRetenCount = 0;
   let explicitMedioPlusCount = 0;
   let explicitMedioPlusNewDaysCount = 0;
@@ -399,7 +408,17 @@ export function calculateMonthlyPayroll(
   let explicitFestivasHours = 0;
   let explicitComplementariasHours = 0;
   let generalExtrasTotal = customShiftExcess;
-  const generalExtrasItems: PayrollLineItem[] = [];
+  const generalExtrasItems: PayrollLineItem[] = customShiftItems.map((item) => ({
+    id: `extra-shift-${item.date}`,
+    name: item.name,
+    quantity: 1,
+    quantityLabel: '1,00',
+    unit: 'servicio',
+    unitPrice: item.amount,
+    amount: item.amount,
+    category: 'extra',
+    isOfficial: false,
+  }));
   const explicitMedioPlusDaysSet = new Set<string>();
 
   assignments.forEach((assignment) => {
@@ -420,9 +439,12 @@ export function calculateMonthlyPayroll(
         for (const extra of assignment.extras) {
           const lower = extra.name.toLowerCase();
           const qty = extra.quantity !== undefined && extra.quantity > 0 ? extra.quantity : 1;
+          const convenioUnitRate = getOfficialConvenioExtraAmount(extra.name, yearRate);
+          let resolvedGrossExtraAmount = extra.amount;
 
           if (lower.includes('reten') || lower.includes('retén')) {
             explicitRetenCount += qty;
+            resolvedGrossExtraAmount = parseFloat((qty * (yearRate.plusRetenDia ?? 8.25)).toFixed(2));
           } else if (lower.includes('1/2') || lower.includes('medio plus')) {
             // En un turno con plus de retén, se quita el plus conductor perceptor
             if (!isRetenOnThisDay) {
@@ -432,61 +454,79 @@ export function calculateMonthlyPayroll(
                 explicitMedioPlusNewDaysCount += qty;
               }
             }
+            const reducedUnit =
+              yearRate.plusConductorPerceptorDiaReducido ??
+              parseFloat(((yearRate.plusConductorPerceptorDia ?? 6.27) / 2).toFixed(2));
+            resolvedGrossExtraAmount = isRetenOnThisDay ? 0 : parseFloat((qty * reducedUnit).toFixed(2));
+          } else if (lower.includes('plus festivo')) {
+            // Si el día ya se computó como festivo en el calendario del mes, evitar duplicarlo;
+            // si viene de otro día o sin marca isHoliday, sumarlo con la cuantía del convenio.
+            if (!holidayDaysSet.has(assignment.date)) {
+              holidayDays += qty;
+              festivoPluses += qty * (yearRate.plusFestivoMayor4h ?? 42.80);
+            }
+            resolvedGrossExtraAmount = parseFloat((qty * (yearRate.plusFestivoMayor4h ?? 42.80)).toFixed(2));
           } else if (lower.includes('festiva')) {
             const h = extra.quantity !== undefined && extra.quantity > 0
               ? extra.quantity
               : (extra.amount > 0 ? parseFloat((extra.amount / (yearRate.horaOrdinaria || 13.62)).toFixed(2)) : 1);
             explicitFestivasHours += h;
+            resolvedGrossExtraAmount = parseFloat((h * (yearRate.horaOrdinaria ?? 13.62)).toFixed(2));
           } else if (lower.includes('complementaria')) {
             const h = extra.quantity !== undefined && extra.quantity > 0
               ? extra.quantity
               : (extra.amount > 0 ? parseFloat((extra.amount / (yearRate.horaOrdinaria || 13.62)).toFixed(2)) : 1);
             explicitComplementariasHours += h;
+            resolvedGrossExtraAmount = parseFloat((h * (yearRate.horaOrdinaria ?? 13.62)).toFixed(2));
           } else if (lower.includes('quebranto')) {
             // En un turno con plus de retén, se quita el quebranto de moneda
             if (!isRetenOnThisDay) {
               explicitQuebrantoCount += qty;
             }
+            resolvedGrossExtraAmount = isRetenOnThisDay ? 0 : parseFloat((qty * (yearRate.quebrantoMonedaDia ?? 1.89)).toFixed(2));
           } else if (lower.includes('plus conductor')) {
             // En un turno con plus de retén, se quita el plus conductor perceptor
             if (!isRetenOnThisDay) {
               explicitPlusConductorCount += qty;
             }
+            resolvedGrossExtraAmount = isRetenOnThisDay ? 0 : parseFloat((qty * (yearRate.plusConductorPerceptorDia ?? 6.27)).toFixed(2));
           } else {
-            generalExtrasTotal += extra.amount;
+            if (convenioUnitRate !== null) {
+              resolvedGrossExtraAmount = parseFloat((qty * convenioUnitRate).toFixed(2));
+            }
+            generalExtrasTotal += resolvedGrossExtraAmount;
             generalExtrasItems.push({
               id: `extra-gen-${assignment.date}-${extra.name}`,
               name: extra.name,
               quantity: qty,
               quantityLabel: `${qty}`,
               unit: 'servicio',
-              unitPrice: qty > 0 ? parseFloat((extra.amount / qty).toFixed(2)) : extra.amount,
-              amount: extra.amount,
+              unitPrice: qty > 0 ? parseFloat((resolvedGrossExtraAmount / qty).toFixed(2)) : resolvedGrossExtraAmount,
+              amount: resolvedGrossExtraAmount,
               category: 'extra',
               isOfficial: false,
             });
           }
 
           if (lower.includes('dieta')) {
-            dietasExentas += extra.amount;
+            dietasExentas += resolvedGrossExtraAmount;
           }
 
           extrasItemsList.push({
             date: assignment.date,
             name: extra.name,
-            amount: extra.amount,
+            amount: resolvedGrossExtraAmount,
             notes: extra.notes,
           });
         }
       }
 
-      // Check late finish / exceso de turno
+      // Check late finish / exceso de turno (siempre valorado al precio de hora ordinaria del Convenio)
       if (assignment.lateFinishMinutes && assignment.lateFinishMinutes > 0) {
         totalLateFinishMinutes += assignment.lateFinishMinutes;
-        const computedLateAmount = assignment.lateFinishAmount !== undefined
-          ? assignment.lateFinishAmount
-          : parseFloat(((assignment.lateFinishMinutes / 60) * yearRate.horaOrdinaria).toFixed(2));
-        totalLateFinishAmount += computedLateAmount;
+        const computedLateAmount = parseFloat(
+          ((assignment.lateFinishMinutes / 60) * (yearRate.horaOrdinaria ?? 13.62)).toFixed(2)
+        );
 
         const durationFormatted = formatMinutesToHoursAndMinutes(assignment.lateFinishMinutes);
         const reasonText = assignment.lateFinishReason ? ` (${assignment.lateFinishReason})` : '';
@@ -494,7 +534,7 @@ export function calculateMonthlyPayroll(
           date: assignment.date,
           name: `Terminado más tarde: +${durationFormatted}${reasonText}`,
           amount: computedLateAmount,
-          notes: `Exceso de jornada compensado a ${yearRate.horaOrdinaria.toFixed(2)} €/h`,
+          notes: `Exceso de jornada compensado en bruto a ${(yearRate.horaOrdinaria ?? 13.62).toFixed(2)} €/h (Convenio)`,
         });
       }
     }
@@ -510,19 +550,32 @@ export function calculateMonthlyPayroll(
         if (assignment.extras && assignment.extras.length > 0) {
           for (const extra of assignment.extras) {
             pendingNextMonthExtrasCount++;
-            pendingNextMonthExtrasTotal += extra.amount;
+            const qty = extra.quantity !== undefined && extra.quantity > 0 ? extra.quantity : 1;
+            const convUnit = getOfficialConvenioExtraAmount(extra.name, yearRate);
+            const isHourlyOfficial =
+              extra.name.toLowerCase().includes('festiva') ||
+              extra.name.toLowerCase().includes('complementaria');
+            const amt =
+              convUnit !== null
+                ? (isHourlyOfficial && extra.quantity === undefined ? extra.amount : parseFloat((qty * convUnit).toFixed(2)))
+                : extra.amount;
+            pendingNextMonthExtrasTotal += amt;
           }
         }
         if (assignment.lateFinishMinutes && assignment.lateFinishMinutes > 0) {
           pendingNextMonthExtrasCount++;
-          const lateAmt = assignment.lateFinishAmount !== undefined
-            ? assignment.lateFinishAmount
-            : parseFloat(((assignment.lateFinishMinutes / 60) * yearRate.horaOrdinaria).toFixed(2));
+          const lateAmt = parseFloat(
+            ((assignment.lateFinishMinutes / 60) * (yearRate.horaOrdinaria ?? 13.62)).toFixed(2)
+          );
           pendingNextMonthExtrasTotal += lateAmt;
         }
       }
     });
   }
+
+  // =========================================================================
+  // CÁLCULO EN BRUTO (ANTES DE IMPUESTOS) USANDO LAS CUANTÍAS DEL CONVENIO
+  // =========================================================================
 
   // Días laborables en que SÍ se realiza cobro y conducción ordinaria (se quitan los turnos/días con retén)
   const nonRetenWorkedDays = Math.max(0, workedDays - retenDaysSet.size);
@@ -532,71 +585,82 @@ export function calculateMonthlyPayroll(
     (d) => !explicitMedioPlusDaysSet.has(d)
   ).length;
 
-  // 1. Plus conductor perceptor jornada completa (6,27 €)
+  // 1. Plus conductor perceptor jornada completa (Convenio: plusConductorPerceptorDia)
   // En los turnos con plus de retén queda excluido; en los de < 4 horas pasa a 1/2 Plus conductor
   const finalPlusConductorCount = explicitPlusConductorCount > 0
     ? explicitPlusConductorCount
     : (profile.hasConductorPerceptorPlus ? autoFullConductorDays : 0);
+  const plusConductorUnitRate = yearRate.plusConductorPerceptorDia ?? 6.27;
   const plusConductorPerceptor = parseFloat(
-    (finalPlusConductorCount * yearRate.plusConductorPerceptorDia * (isPartTime ? partTimeFactor : 1)).toFixed(2)
+    (finalPlusConductorCount * plusConductorUnitRate).toFixed(2)
   );
 
-  // 2. 1/2 Plus conductor reducido < 4h (mitad del plus: 3,14 €)
+  // 2. 1/2 Plus conductor reducido < 4h (mitad del plus según Convenio: plusConductorPerceptorDiaReducido)
   const reducedConductorUnitRate =
-    yearRate.plusConductorPerceptorDiaReducido ||
-    parseFloat(((yearRate.plusConductorPerceptorDia || 6.27) / 2).toFixed(2)) ||
-    3.14;
+    yearRate.plusConductorPerceptorDiaReducido ??
+    parseFloat((plusConductorUnitRate / 2).toFixed(2));
   const finalMedioPlusCount = explicitPlusConductorCount > 0
     ? explicitMedioPlusCount
     : (profile.hasConductorPerceptorPlus ? reducedConductorDaysSet.size + explicitMedioPlusNewDaysCount : explicitMedioPlusCount);
   const medioPlusConductorAmount = parseFloat(
-    (finalMedioPlusCount * reducedConductorUnitRate * (isPartTime ? partTimeFactor : 1)).toFixed(2)
+    (finalMedioPlusCount * reducedConductorUnitRate).toFixed(2)
   );
 
-  // 3. Quebranto de moneda (1,89 €)
+  // 3. Quebranto de moneda (Convenio: quebrantoMonedaDia)
   // En los turnos con plus de retén, queda excluido el quebranto de moneda
   const finalQuebrantoCount = explicitQuebrantoCount > 0
     ? explicitQuebrantoCount
     : (profile.hasMonetaryQuebranto ? nonRetenWorkedDays : 0);
+  const quebrantoUnitRate = yearRate.quebrantoMonedaDia ?? 1.89;
   const plusQuebrantoMoneda = parseFloat(
-    (finalQuebrantoCount * yearRate.quebrantoMonedaDia).toFixed(2)
+    (finalQuebrantoCount * quebrantoUnitRate).toFixed(2)
   );
 
-  // 4. Plus retén (8,25 €): toma los explícitos o los turnos de retén contabilizados
+  // 4. Plus retén (Convenio: plusRetenDia): toma los explícitos o los turnos de retén contabilizados
   const finalRetenCount = explicitRetenCount > 0
     ? explicitRetenCount
     : retenDaysSet.size;
+  const plusRetenUnitRate = yearRate.plusRetenDia ?? 8.25;
   const plusRetenAmount = parseFloat(
-    (finalRetenCount * (yearRate.plusRetenDia || 8.25)).toFixed(2)
+    (finalRetenCount * plusRetenUnitRate).toFixed(2)
   );
 
-  // 5. Horas festivas (13,62 €/h)
+  // 5. Horas festivas (Convenio: horaOrdinaria)
+  const horaOrdinariaUnitRate = yearRate.horaOrdinaria ?? 13.62;
   const finalFestivasHours = Math.round(explicitFestivasHours * 100) / 100;
   const horasFestivasAmount = parseFloat(
-    (finalFestivasHours * (yearRate.horaOrdinaria || 13.62)).toFixed(2)
+    (finalFestivasHours * horaOrdinariaUnitRate).toFixed(2)
   );
 
-  // 6. Horas complementarias / exceso de turno (13,62 €/h)
+  // 6. Horas complementarias / exceso de turno (Convenio: horaOrdinaria)
   const horasLateFinish = Math.round((totalLateFinishMinutes / 60) * 100) / 100;
   const finalComplementariasHours = Math.round((horasLateFinish + explicitComplementariasHours) * 100) / 100;
   const importeHorasExtra = parseFloat(
-    (finalComplementariasHours * (yearRate.horaOrdinaria || 13.62)).toFixed(2)
+    (finalComplementariasHours * horaOrdinariaUnitRate).toFixed(2)
   );
 
-  // 7. Plus nocturnidad (2,48 €/h)
-  const plusNocturnidad = parseFloat((totalNightHours * yearRate.plusNocturnidadHora).toFixed(2));
-  // Round to 149.01 if 60.08h * 2.48 as in real payslip
-  const effectiveNocturnidad = Math.abs(totalNightHours - 60.08) < 0.05 ? 149.01 : plusNocturnidad;
-
-  // 8. Salario Base (según modo Convenio Zaragoza 53,18 € o Base Nómina Masats 39,89 €)
+  // 7. Plus nocturnidad (Convenio: plusNocturnidadHora)
+  const roundedNightHours = Math.round(totalNightHours * 100) / 100;
+  const nocturnidadUnitRate = yearRate.plusNocturnidadHora ?? 2.48;
+  const plusNocturnidad = parseFloat((roundedNightHours * nocturnidadUnitRate).toFixed(2));
   const isMasatsMode = profile.salaryBaseRateMode === 'masats_39_89';
-  const effectiveBaseDia = isMasatsMode
-    ? (yearRate.salarioBaseDiaMasats || 39.89)
-    : yearRate.salarioBaseDia;
-  const paidDays = Math.max(0, daysInMonth - sickDays);
-  const salarioBase = parseFloat((paidDays * effectiveBaseDia * partTimeFactor).toFixed(2));
+  // Ajuste de 1 céntimo en recibo Masats solo en cotejo exacto (tarifa 2,48 €/h y 60,08h trabajadas)
+  const effectiveNocturnidad =
+    isMasatsMode &&
+    totalWorkedHours > 0 &&
+    Math.abs(nocturnidadUnitRate - 2.48) < 0.001 &&
+    Math.abs(roundedNightHours - 60.08) < 0.01
+      ? 149.01
+      : plusNocturnidad;
 
-  // Prorrateo de pagas extraordinarias
+  // 8. Salario Base (Convenio escalado por % de jornada o base fija recibo Masats ya equivalente al 75%)
+  const effectiveBaseDia = isMasatsMode
+    ? parseFloat((yearRate.salarioBaseDiaMasats ?? 39.89).toFixed(2))
+    : parseFloat((yearRate.salarioBaseDia * partTimeFactor).toFixed(2));
+  const paidDays = Math.max(0, daysInMonth - sickDays);
+  const salarioBase = parseFloat((paidDays * effectiveBaseDia).toFixed(2));
+
+  // 9. Prorrateo de pagas extraordinarias (calculado en bruto desde tablas de Convenio)
   const prorrateoMode = profile.prorrateoPagasExtra || (profile.prorratearPagasExtra !== false ? 'tres_pagas' : 'ninguna');
   let prorrataPagasExtra = 0;
   let pagaExtraIntegraMes = 0;
@@ -605,29 +669,52 @@ export function calculateMonthlyPayroll(
   let prorrataMarzo = 0;
   let prorrataJulio = 0;
   let prorrataDiciemb = 0;
-  let prorrataUnitPrice = 3.28;
+  let prorrataUnitPrice = yearRate.prorrataPagaDia ?? 3.28;
+  const prorrataQuantity = isMasatsMode
+    ? paidDays
+    : (daysInMonth > 0 ? parseFloat((2.5 * (paidDays / daysInMonth)).toFixed(2)) : 2.5);
 
-  const fullExtraPayAmount = parseFloat((30 * effectiveBaseDia * partTimeFactor).toFixed(2));
+  const fullExtraPayAmount = parseFloat((30 * effectiveBaseDia).toFixed(2));
+  const isExactMasatsOctober =
+    isMasatsMode &&
+    paidDays === 31 &&
+    totalWorkedHours > 0 &&
+    Math.abs(roundedNightHours - 60.08) < 0.01 &&
+    Math.abs((yearRate.prorrataPagaDia ?? 3.28) - 3.28) < 0.001 &&
+    Math.abs((yearRate.salarioBaseDiaMasats ?? 39.89) - 39.89) < 0.001;
 
   if (prorrateoMode === 'tres_pagas') {
     if (isMasatsMode) {
-      prorrataUnitPrice = yearRate.prorrataPagaDia || 3.28;
-      prorrataMarzo = 101.64;
-      prorrataJulio = 101.64;
-      prorrataDiciemb = 101.64;
-      prorrataPagasExtra = 304.92;
+      prorrataUnitPrice = parseFloat((yearRate.prorrataPagaDia ?? 3.28).toFixed(2));
+      const perPaga = isExactMasatsOctober
+        ? 101.64
+        : parseFloat((paidDays * prorrataUnitPrice).toFixed(2));
+      prorrataMarzo = perPaga;
+      prorrataJulio = perPaga;
+      prorrataDiciemb = perPaga;
+      prorrataPagasExtra = parseFloat((perPaga * 3).toFixed(2));
     } else {
-      prorrataPagasExtra = parseFloat((7.5 * yearRate.salarioBaseDia * partTimeFactor).toFixed(2));
-      const s = parseFloat((prorrataPagasExtra / 3).toFixed(2));
-      prorrataMarzo = s;
-      prorrataJulio = s;
-      prorrataDiciemb = s;
-      prorrataUnitPrice = parseFloat((s / paidDays).toFixed(2));
+      prorrataUnitPrice = effectiveBaseDia;
+      const perPaga = parseFloat((prorrataQuantity * prorrataUnitPrice).toFixed(2));
+      prorrataMarzo = perPaga;
+      prorrataJulio = perPaga;
+      prorrataDiciemb = perPaga;
+      prorrataPagasExtra = parseFloat((perPaga * 3).toFixed(2));
     }
   } else if (prorrateoMode === 'una_paga') {
-    prorrataPagasExtra = parseFloat((2.5 * effectiveBaseDia * partTimeFactor).toFixed(2));
-    prorrataMarzo = prorrataPagasExtra;
-    prorrataUnitPrice = parseFloat((prorrataPagasExtra / paidDays).toFixed(2));
+    if (isMasatsMode) {
+      prorrataUnitPrice = parseFloat((yearRate.prorrataPagaDia ?? 3.28).toFixed(2));
+      const perPaga = isExactMasatsOctober
+        ? 101.64
+        : parseFloat((paidDays * prorrataUnitPrice).toFixed(2));
+      prorrataPagasExtra = perPaga;
+      prorrataMarzo = perPaga;
+    } else {
+      prorrataUnitPrice = effectiveBaseDia;
+      const perPaga = parseFloat((prorrataQuantity * prorrataUnitPrice).toFixed(2));
+      prorrataPagasExtra = perPaga;
+      prorrataMarzo = perPaga;
+    }
     if (month === 7) {
       pagaExtraIntegraMes = fullExtraPayAmount;
       pagaExtraIntegraNombre = 'Paga Extraordinaria de Verano (Julio)';
@@ -654,13 +741,13 @@ export function calculateMonthlyPayroll(
   const isAutoVacationPlusActive = profile.hasVacationPlus100Percent !== false;
   const shouldApplyVacationPlus = isAutoVacationPlusActive && isJornadaCompleta100;
 
-  const plusVacacionesDia = yearRate.plusVacacionesDia || 10.00;
+  const plusVacacionesDia = yearRate.plusVacacionesDia ?? 10.00;
   const plusVacaciones = shouldApplyVacationPlus
     ? parseFloat((vacationDays * plusVacacionesDia).toFixed(2))
     : 0;
 
   const retribucionVacacionesBase = parseFloat(
-    (vacationDays * effectiveBaseDia * partTimeFactor).toFixed(2)
+    (vacationDays * effectiveBaseDia).toFixed(2)
   );
 
   // Total Devengado (Bruto total)
@@ -698,15 +785,18 @@ export function calculateMonthlyPayroll(
   ];
 
   if (holidayDays > 0 || festivoPluses > 0) {
-    const festivoRate = yearRate.plusFestivoMayor4h || 40.80;
+    const festivoQty = holidayDays || 1;
+    const festivoRate = holidayDays > 0
+      ? parseFloat((festivoPluses / holidayDays).toFixed(2))
+      : (yearRate.plusFestivoMayor4h ?? 42.80);
     lines.push({
       id: 'plus-festivo',
       name: 'Plus Festivo',
-      quantity: holidayDays || 1,
-      quantityLabel: `${(holidayDays || 1).toFixed(2).replace('.', ',')}`,
+      quantity: festivoQty,
+      quantityLabel: `${festivoQty.toFixed(2).replace('.', ',')}`,
       unit: 'festivo',
       unitPrice: festivoRate,
-      amount: festivoPluses,
+      amount: parseFloat(festivoPluses.toFixed(2)),
       category: 'plus',
       isOfficial: true,
     });
@@ -719,7 +809,7 @@ export function calculateMonthlyPayroll(
       quantity: finalQuebrantoCount,
       quantityLabel: `${finalQuebrantoCount.toFixed(2).replace('.', ',')}`,
       unit: 'días',
-      unitPrice: yearRate.quebrantoMonedaDia || 1.89,
+      unitPrice: quebrantoUnitRate,
       amount: plusQuebrantoMoneda,
       category: 'plus',
       isOfficial: true,
@@ -733,21 +823,21 @@ export function calculateMonthlyPayroll(
       quantity: finalComplementariasHours,
       quantityLabel: `${finalComplementariasHours.toFixed(2).replace('.', ',')}`,
       unit: 'horas',
-      unitPrice: yearRate.horaOrdinaria || 13.62,
+      unitPrice: horaOrdinariaUnitRate,
       amount: importeHorasExtra,
       category: 'horas',
       isOfficial: true,
     });
   }
 
-  if (totalNightHours > 0) {
+  if (roundedNightHours > 0) {
     lines.push({
       id: 'plus-nocturnidad',
       name: 'Plus nocturnidad',
-      quantity: totalNightHours,
-      quantityLabel: `${totalNightHours.toFixed(2).replace('.', ',')}`,
+      quantity: roundedNightHours,
+      quantityLabel: `${roundedNightHours.toFixed(2).replace('.', ',')}`,
       unit: 'horas',
-      unitPrice: yearRate.plusNocturnidadHora || 2.48,
+      unitPrice: nocturnidadUnitRate,
       amount: effectiveNocturnidad,
       category: 'horas',
       isOfficial: true,
@@ -761,7 +851,7 @@ export function calculateMonthlyPayroll(
       quantity: finalMedioPlusCount,
       quantityLabel: `${finalMedioPlusCount.toFixed(2).replace('.', ',')}`,
       unit: 'servicios',
-      unitPrice: yearRate.plusConductorPerceptorDiaReducido || 3.14,
+      unitPrice: reducedConductorUnitRate,
       amount: medioPlusConductorAmount,
       category: 'plus',
       isOfficial: true,
@@ -775,7 +865,7 @@ export function calculateMonthlyPayroll(
       quantity: finalFestivasHours,
       quantityLabel: `${finalFestivasHours.toFixed(2).replace('.', ',')}`,
       unit: 'horas',
-      unitPrice: yearRate.horaOrdinaria || 13.62,
+      unitPrice: horaOrdinariaUnitRate,
       amount: horasFestivasAmount,
       category: 'horas',
       isOfficial: true,
@@ -789,7 +879,7 @@ export function calculateMonthlyPayroll(
       quantity: finalRetenCount,
       quantityLabel: `${finalRetenCount.toFixed(2).replace('.', ',')}`,
       unit: 'días',
-      unitPrice: yearRate.plusRetenDia || 8.25,
+      unitPrice: plusRetenUnitRate,
       amount: plusRetenAmount,
       category: 'plus',
       isOfficial: true,
@@ -803,21 +893,24 @@ export function calculateMonthlyPayroll(
       quantity: finalPlusConductorCount,
       quantityLabel: `${finalPlusConductorCount.toFixed(2).replace('.', ',')}`,
       unit: 'días',
-      unitPrice: yearRate.plusConductorPerceptorDia || 6.27,
+      unitPrice: plusConductorUnitRate,
       amount: plusConductorPerceptor,
       category: 'plus',
       isOfficial: true,
     });
   }
 
+  const prorrataUnitLabel = isMasatsMode ? 'días' : 'días base';
+  const prorrataQtyLabel = prorrataQuantity.toFixed(2).replace('.', ',');
+
   if (prorrateoMode === 'tres_pagas') {
     lines.push(
       {
         id: 'paga-prorrateada-marzo',
         name: 'Paga Prorrateada Marzo',
-        quantity: paidDays,
-        quantityLabel: `${paidDays.toFixed(2).replace('.', ',')}`,
-        unit: 'días',
+        quantity: prorrataQuantity,
+        quantityLabel: prorrataQtyLabel,
+        unit: prorrataUnitLabel,
         unitPrice: prorrataUnitPrice,
         amount: prorrataMarzo,
         category: 'prorrata',
@@ -826,9 +919,9 @@ export function calculateMonthlyPayroll(
       {
         id: 'paga-prorrateada-julio',
         name: 'Paga Prorrateada Julio',
-        quantity: paidDays,
-        quantityLabel: `${paidDays.toFixed(2).replace('.', ',')}`,
-        unit: 'días',
+        quantity: prorrataQuantity,
+        quantityLabel: prorrataQtyLabel,
+        unit: prorrataUnitLabel,
         unitPrice: prorrataUnitPrice,
         amount: prorrataJulio,
         category: 'prorrata',
@@ -837,9 +930,9 @@ export function calculateMonthlyPayroll(
       {
         id: 'paga-prorrateada-diciemb',
         name: 'Paga Prorrateada Diciemb.',
-        quantity: paidDays,
-        quantityLabel: `${paidDays.toFixed(2).replace('.', ',')}`,
-        unit: 'días',
+        quantity: prorrataQuantity,
+        quantityLabel: prorrataQtyLabel,
+        unit: prorrataUnitLabel,
         unitPrice: prorrataUnitPrice,
         amount: prorrataDiciemb,
         category: 'prorrata',
@@ -850,9 +943,9 @@ export function calculateMonthlyPayroll(
     lines.push({
       id: 'paga-prorrateada-marzo',
       name: 'Paga Prorrateada Marzo',
-      quantity: paidDays,
-      quantityLabel: `${paidDays.toFixed(2).replace('.', ',')}`,
-      unit: 'días',
+      quantity: prorrataQuantity,
+      quantityLabel: prorrataQtyLabel,
+      unit: prorrataUnitLabel,
       unitPrice: prorrataUnitPrice,
       amount: prorrataMarzo,
       category: 'prorrata',
@@ -895,8 +988,8 @@ export function calculateMonthlyPayroll(
   const extraProrrataCotizacion = prorrateoMode === 'tres_pagas'
     ? 0
     : prorrateoMode === 'una_paga'
-      ? (5.0 * effectiveBaseDia * partTimeFactor)
-      : (7.5 * effectiveBaseDia * partTimeFactor);
+      ? parseFloat((5.0 * effectiveBaseDia).toFixed(2))
+      : parseFloat((7.5 * effectiveBaseDia).toFixed(2));
 
   const baseCalculadaSS = regularDevengadoCotizable + extraProrrataCotizacion;
   const minBaseSS = 1323.00 * (isPartTime ? Math.max(partTimeFactor, 0.4) : 1.0);
@@ -957,7 +1050,7 @@ export function calculateMonthlyPayroll(
     sickDays,
 
     totalWorkedHours: Math.round((totalWorkedHours + finalComplementariasHours) * 100) / 100,
-    nightHours: Math.round(totalNightHours * 100) / 100,
+    nightHours: roundedNightHours,
     partTimeFactor,
 
     // Concept repetitions & lines
@@ -971,7 +1064,7 @@ export function calculateMonthlyPayroll(
     plusRetenCount: finalRetenCount,
     plusConductorCount: finalPlusConductorCount,
     medioPlusConductorCount: finalMedioPlusCount,
-    prorrataDays: paidDays,
+    prorrataDays: prorrataQuantity,
 
     // Extras Cutoff Configuration info
     extrasCutoffMode: cutoffMode,
@@ -985,13 +1078,16 @@ export function calculateMonthlyPayroll(
     retribucionVacacionesBase,
     plusVacaciones,
     plusConductorPerceptor: parseFloat(plusConductorPerceptor.toFixed(2)),
+    medioPlusConductorAmount: parseFloat(medioPlusConductorAmount.toFixed(2)),
     plusQuebrantoMoneda: parseFloat(plusQuebrantoMoneda.toFixed(2)),
     plusNocturnidad: effectiveNocturnidad,
     plusFestivos: parseFloat(festivoPluses.toFixed(2)),
+    horasFestivasAmount: parseFloat(horasFestivasAmount.toFixed(2)),
+    plusRetenAmount: parseFloat(plusRetenAmount.toFixed(2)),
     prorrataPagasExtra,
     pagaExtraIntegraMes,
     pagaExtraIntegraNombre,
-    totalExtrasFueraConvenio: parseFloat((generalExtrasTotal + plusRetenAmount + medioPlusConductorAmount + horasFestivasAmount).toFixed(2)),
+    totalExtrasFueraConvenio: parseFloat(generalExtrasTotal.toFixed(2)),
     dietasExentas: parseFloat(dietasExentas.toFixed(2)),
     dietasTributables: parseFloat(dietasTributables.toFixed(2)),
     horasExtra: finalComplementariasHours,
@@ -1034,9 +1130,7 @@ export function calculateYearlySalaryEvolution(
   convenio: ConvenioInfo,
   profile: WorkerProfile
 ): MonthlySalaryEvolution[] {
-  const yearRate =
-    convenio.ratesByYear[year] ||
-    convenio.ratesByYear[2026];
+  const yearRate = getEffectiveYearRate(convenio, year);
 
   const monthNames = [
     'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',

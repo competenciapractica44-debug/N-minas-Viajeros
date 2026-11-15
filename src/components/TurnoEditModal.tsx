@@ -64,7 +64,7 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
       plusConductorPerceptorDiaReducido: 3.14,
       quebrantoMonedaDia: 1.89,
       plusRetenDia: 8.25,
-      plusFestivoMayor4h: 40.80,
+      plusFestivoMayor4h: 42.80,
       plusFestivoMenor4h: 30.60,
       plus24y31Diciembre: 30.60,
       dietaComidaCenaRegular: 15.00,
@@ -160,9 +160,9 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
     const hourlyBase = totalHours * effectiveYearRate.horaOrdinaria;
     let total = hourlyBase;
 
-    // Plus nocturnidad (Art. 18: 2,48 €/h en tramo 22:00 a 06:00)
+    // Plus nocturnidad (Art. 18: en tramo 22:00 a 06:00)
     if (includePlusNocturnidad || nightHours > 0) {
-      total += nightHours * (effectiveYearRate.plusNocturnidadHora || 2.48);
+      total += nightHours * (effectiveYearRate.plusNocturnidadHora ?? 2.48);
     }
 
     if (includePlusPuntualidad) {
@@ -171,9 +171,9 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
 
     // El Plus de Festivo no se incluye en la tarifa del turno (se cobra en festivos oficiales y se marca manualmente)
 
-    // Plus de retén (8,25 €): se añade si el turno es de retén y excluye quebranto y plus conductor
+    // Plus de retén: se añade si el turno es de retén y excluye quebranto y plus conductor
     if (hasPlusReten) {
-      total += effectiveYearRate.plusRetenDia || 8.25;
+      total += effectiveYearRate.plusRetenDia ?? 8.25;
     }
 
     return Math.round(total * 100) / 100;
@@ -214,11 +214,11 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
       isPartida ? 'Servicio Partido' : modality === 'nocturno' ? 'Nocturnidad fija' : 'Servicio Ordinario',
     ];
     if (hasPlusReten) {
-      badges.push('Plus Retén (+8,25 €)');
+      badges.push(`Plus Retén (+${formatCurrency(effectiveYearRate.plusRetenDia ?? 8.25)})`);
       badges.push('Sin Quebranto');
       badges.push('Sin Plus Conductor');
     } else if (isUnder4Hours) {
-      badges.push(`1/2 Plus Conductor (<4h · ${formatCurrency(effectiveYearRate.plusConductorPerceptorDiaReducido || 3.14)})`);
+      badges.push(`1/2 Plus Conductor (<4h · ${formatCurrency(effectiveYearRate.plusConductorPerceptorDiaReducido ?? 3.14)})`);
     }
 
     const savedShift: ShiftDefinition = {
@@ -247,9 +247,9 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
       hasConductorPerceptor: !hasPlusReten,
       hasQuebrantoMoneda: !hasPlusReten,
       notes: hasPlusReten
-        ? 'Turno configurado con Plus de Retén (+8,25 €). No aplica Quebranto de moneda ni Plus Conductor-Perceptor al tratarse de un servicio de disponibilidad o guardia.'
+        ? `Turno configurado con Plus de Retén (+${formatCurrency(effectiveYearRate.plusRetenDia ?? 8.25)}). No aplica Quebranto de moneda ni Plus Conductor-Perceptor al tratarse de un servicio de disponibilidad o guardia.`
         : isUnder4Hours
-        ? `Turno de duración inferior a 4 horas (${drivingHoursStr}). El Plus Conductor-Perceptor se abona al 50% (1/2 Plus Conductor: ${formatCurrency(effectiveYearRate.plusConductorPerceptorDiaReducido || 3.14)}).`
+        ? `Turno de duración inferior a 4 horas (${drivingHoursStr}). El Plus Conductor-Perceptor se abona al 50% (1/2 Plus Conductor: ${formatCurrency(effectiveYearRate.plusConductorPerceptorDiaReducido ?? 3.14)}).`
         : shiftToEdit?.notes,
     };
 
@@ -672,12 +672,12 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
                         )}
                       </div>
                       <p className="text-[11px] text-slate-500 mt-0.5">
-                        Jornada o servicio de guardia/retén (+{formatCurrency(effectiveYearRate.plusRetenDia || 8.25)}/día).
+                        Jornada o servicio de guardia/retén (+{formatCurrency(effectiveYearRate.plusRetenDia ?? 8.25)}/día).
                       </p>
                     </div>
                   </label>
                   <span className={`font-mono font-bold text-xs shrink-0 ${hasPlusReten ? 'text-amber-800' : 'text-slate-400'}`}>
-                    +{formatCurrency(effectiveYearRate.plusRetenDia || 8.25)}
+                    +{formatCurrency(effectiveYearRate.plusRetenDia ?? 8.25)}
                   </span>
                 </div>
 
@@ -688,7 +688,7 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
                       <span>Exclusión automática de Quebranto y Plus Conductor:</span>
                     </div>
                     <p className="text-[10.5px] leading-relaxed text-amber-800/90">
-                      Al tener activo el <strong>Plus de Retén</strong>, se <strong>quitan automáticamente</strong> de este turno el <strong>Quebranto de Moneda (-1,89 €)</strong> y el <strong>Plus Conductor-Perceptor (-6,27 €)</strong> al no realizarse venta de billetes.
+                      Al tener activo el <strong>Plus de Retén</strong>, se <strong>quitan automáticamente</strong> de este turno el <strong>Quebranto de Moneda (-{formatCurrency(effectiveYearRate.quebrantoMonedaDia ?? 1.89)})</strong> y el <strong>Plus Conductor-Perceptor (-{formatCurrency(effectiveYearRate.plusConductorPerceptorDia ?? 6.27)})</strong> al no realizarse venta de billetes.
                     </p>
                     <div className="flex flex-wrap items-center gap-1.5 pt-1">
                       <span className="px-2 py-0.5 rounded-md bg-rose-100 text-rose-800 font-semibold text-[10px] border border-rose-200">
@@ -710,11 +710,11 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
                       Duración menor de 4 horas ({drivingHoursStr})
                     </span>
                     <span className="font-mono font-bold text-xs text-indigo-800">
-                      {formatCurrency(effectiveYearRate.plusConductorPerceptorDiaReducido || 3.14)}
+                      {formatCurrency(effectiveYearRate.plusConductorPerceptorDiaReducido ?? 3.14)}
                     </span>
                   </div>
                   <p className="text-[11px] text-indigo-800 leading-relaxed">
-                    Al durar menos de 4 horas, en la nómina se computará automáticamente <strong>1/2 Plus Conductor ({formatCurrency(effectiveYearRate.plusConductorPerceptorDiaReducido || 3.14)})</strong> en lugar del plus completo ({formatCurrency(effectiveYearRate.plusConductorPerceptorDia)}).
+                    Al durar menos de 4 horas, en la nómina se computará automáticamente <strong>1/2 Plus Conductor ({formatCurrency(effectiveYearRate.plusConductorPerceptorDiaReducido ?? 3.14)})</strong> en lugar del plus completo ({formatCurrency(effectiveYearRate.plusConductorPerceptorDia)}).
                   </p>
                 </div>
               )}
@@ -748,7 +748,7 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
                 </div>
               </div>
               <p className="text-[10.5px] text-slate-500 leading-tight">
-                * El Plus de Festivo (+40,80 €) no se incluye en el turno: según convenio se percibe en festivos oficiales (nacionales, regionales y locales) y se marca manualmente en el calendario.
+                * El Plus de Festivo (+{formatCurrency(effectiveYearRate.plusFestivoMayor4h ?? 42.80)}) no se incluye en el turno: según convenio se percibe en festivos oficiales (nacionales, regionales y locales) y se marca manualmente en el calendario.
               </p>
             </div>
           </div>

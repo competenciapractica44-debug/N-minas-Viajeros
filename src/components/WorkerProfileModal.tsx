@@ -1,12 +1,15 @@
 import React, { useState } from 'react';
 import { X, User, Building2, Briefcase, Percent, Check, HelpCircle, Clock, CalendarDays, CalendarRange } from 'lucide-react';
-import { WorkerProfile, ExtraPayProrrateo, ExtrasCutoffMode } from '../types';
+import { WorkerProfile, ExtraPayProrrateo, ExtrasCutoffMode, ConvenioYearRate } from '../types';
+import { DEFAULT_CONVENIO_ZARAGOZA } from '../data/convenioZaragoza';
+import { formatCurrency } from '../utils/exporter';
 
 interface WorkerProfileModalProps {
   isOpen: boolean;
   onClose: () => void;
   profile: WorkerProfile;
   onSaveProfile: (profile: WorkerProfile) => void;
+  yearRate?: ConvenioYearRate;
 }
 
 export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
@@ -14,7 +17,9 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
   onClose,
   profile,
   onSaveProfile,
+  yearRate,
 }) => {
+  const effectiveRate = yearRate || DEFAULT_CONVENIO_ZARAGOZA.ratesByYear[2026];
   const [formData, setFormData] = useState<WorkerProfile>(() => ({
     ...profile,
     prorrateoPagasExtra: profile.prorrateoPagasExtra || (profile.prorratearPagasExtra !== false ? 'tres_pagas' : 'ninguna'),
@@ -465,14 +470,14 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
                   <div className="space-y-1">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="font-bold text-slate-900 text-xs">
-                        Activar automáticamente el Plus de Vacaciones (10 €/día)
+                        Activar automáticamente el Plus de Vacaciones ({formatCurrency(effectiveRate.plusVacacionesDia ?? 10.00)}/día bruto)
                       </span>
                       <span className="text-[10px] font-bold bg-cyan-100 text-cyan-800 px-1.5 py-0.2 rounded">
                         Art. 9 · Sólo al 100% de jornada
                       </span>
                     </div>
                     <p className="text-[11px] text-slate-600 leading-normal">
-                      Aplica automáticamente el incentivo del Art. 9 del Convenio (10,00 €/día) en todos los días marcados como 'V' en el calendario, <strong>únicamente si el contrato se encuentra al 100% de jornada</strong>.
+                      Aplica automáticamente el incentivo del Art. 9 del Convenio ({formatCurrency(effectiveRate.plusVacacionesDia ?? 10.00)}/día en bruto) en todos los días marcados como 'V' en el calendario, <strong>únicamente si el contrato se encuentra al 100% de jornada</strong>.
                     </p>
                     {isPartTime && (formData.partTimePercentage || 50) < 100 && (
                       <div className="flex items-center gap-1.5 text-[10px] text-amber-800 bg-amber-100/70 p-1.5 rounded-lg font-medium mt-1">
@@ -494,7 +499,7 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
                   className="rounded text-blue-600 w-4 h-4"
                 />
                 <span className="text-slate-700">
-                  Aplicar Plus Conductor-Perceptor (Art. 19: 6,27 €/día trabajado)
+                  Aplicar Plus Conductor-Perceptor (Art. 19: {formatCurrency(effectiveRate.plusConductorPerceptorDia ?? 6.27)}/día bruto trabajado)
                 </span>
               </label>
 
@@ -506,7 +511,7 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
                   className="rounded text-blue-600 w-4 h-4"
                 />
                 <span className="text-slate-700">
-                  Cobro de billetes a bordo / Quebranto de moneda (Art. 20: 1,89 €/día)
+                  Cobro de billetes a bordo / Quebranto de moneda (Art. 20: {formatCurrency(effectiveRate.quebrantoMonedaDia ?? 1.89)}/día bruto)
                 </span>
               </label>
             </div>

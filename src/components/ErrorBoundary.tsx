@@ -26,8 +26,10 @@ export class ErrorBoundary extends Component<Props, State> {
 
   private handleReset = () => {
     try {
+      localStorage.removeItem('rutanomina_convenio_v3');
       localStorage.removeItem('rutanomina_convenio_v2');
       localStorage.removeItem('rutanomina_convenio_v1');
+      localStorage.removeItem('rutanomina_assignments_v6');
     } catch (e) {
       console.error(e);
     }

@@ -1,9 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import { Search, Plus, Edit2, Clock, CheckCircle2, Award, ShieldCheck, RefreshCw, Trash2, Calendar, Moon } from 'lucide-react';
-import { ShiftDefinition } from '../types';
+import { ShiftDefinition, ConvenioInfo } from '../types';
 import { formatCurrency } from '../utils/exporter';
 import { computeShiftRateFromConvenio } from '../utils/calculator';
-import { DEFAULT_CONVENIO_ZARAGOZA } from '../data/convenioZaragoza';
+import { getEffectiveYearRate } from '../data/convenioZaragoza';
 import { ConfirmModal } from './ConfirmModal';
 
 interface TurnosBDViewProps {
@@ -13,6 +13,7 @@ interface TurnosBDViewProps {
   onDeleteTurno: (id: string) => void;
   onRestoreDefaults: () => void;
   currentYear: number;
+  convenio?: ConvenioInfo;
 }
 
 type DayFilterType = 'todos' | 'laborable' | 'sabado' | 'festivo';
@@ -39,6 +40,7 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
   onDeleteTurno,
   onRestoreDefaults,
   currentYear,
+  convenio,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedDayType, setSelectedDayType] = useState<DayFilterType>('todos');
@@ -47,8 +49,8 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
   const [confirmRestore, setConfirmRestore] = useState(false);
 
   const activeYearRate = useMemo(() => {
-    return DEFAULT_CONVENIO_ZARAGOZA.ratesByYear[currentYear] || DEFAULT_CONVENIO_ZARAGOZA.ratesByYear[2026];
-  }, [currentYear]);
+    return getEffectiveYearRate(convenio, currentYear);
+  }, [convenio, currentYear]);
 
   // Contadores para el filtro de Jornada (Día)
   const dayCounts = useMemo(() => {
@@ -413,7 +415,7 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
                     <span className="text-[11px] text-slate-400">Cómputo jornada</span>
                     <p className="font-semibold text-slate-800 truncate" title={shift.computedDuration}>
                       {rateCalc.isReducedConductorPlus
-                        ? `${shift.drivingDuration || `${rateCalc.totalHours}h`} (< 4h · 1/2 Plus 3,14 €)`
+                        ? `${shift.drivingDuration || `${rateCalc.totalHours}h`} (< 4h · 1/2 Plus ${formatCurrency(rateCalc.conductorPlusAmount ?? activeYearRate.plusConductorPerceptorDiaReducido ?? 3.14)})`
                         : shift.computedDuration}
                     </p>
                   </div>
@@ -430,7 +432,7 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
                       <>
                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
                           <ShieldCheck className="w-3 h-3 text-amber-600" />
-                          Plus Retén (+{formatCurrency(rateCalc.retenAmount || 8.25)})
+                          Plus Retén (+{formatCurrency(rateCalc.retenAmount ?? activeYearRate.plusRetenDia ?? 8.25)})
                         </span>
                         <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-medium bg-rose-50 text-rose-700 border border-rose-200">
                           ✕ Sin Quebranto
@@ -442,7 +444,7 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
                     )}
                     {rateCalc.isReducedConductorPlus && (
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                        1/2 Plus Conductor (&lt;4h · {formatCurrency(rateCalc.conductorPlusAmount || 3.14)})
+                        1/2 Plus Conductor (&lt;4h · {formatCurrency(rateCalc.conductorPlusAmount ?? activeYearRate.plusConductorPerceptorDiaReducido ?? 3.14)})
                       </span>
                     )}
                     {rateCalc.nightHours > 0 && (
@@ -479,12 +481,12 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
           i
         </div>
         <div className="space-y-1">
-          <h4 className="font-bold text-slate-900">Reglas de Retén y Turnos Menores de 4 Horas</h4>
+          <h4 className="font-bold text-slate-900">Reglas de Retén y Turnos Menores de 4 Horas (Importes Brutos Convenio {activeYearRate.year})</h4>
           <p className="text-slate-600 leading-relaxed">
-            • <strong>Turnos de Retén (+8,25 €)</strong> (LR1, LR3, R01S, etc.): quedan <strong>automáticamente excluidos el Quebranto de Moneda (-1,89 €) y el Plus Conductor-Perceptor (-6,27 €)</strong>.
+            • <strong>Turnos de Retén (+{formatCurrency(activeYearRate.plusRetenDia ?? 8.25)})</strong> (LR1, LR3, R01S, etc.): quedan <strong>automáticamente excluidos el Quebranto de Moneda (-{formatCurrency(activeYearRate.quebrantoMonedaDia ?? 1.89)}) y el Plus Conductor-Perceptor (-{formatCurrency(activeYearRate.plusConductorPerceptorDia ?? 6.27)})</strong>.
           </p>
           <p className="text-slate-600 leading-relaxed">
-            • <strong>Turnos de menos de 4 horas</strong> (ej. 6V.L40 de 02:45h): el Plus Conductor-Perceptor se computa al <strong>50% (1/2 Plus Conductor: 3,14 €)</strong> en lugar de 6,27 €.
+            • <strong>Turnos de menos de 4 horas</strong> (ej. 6V.L40 de 02:45h): el Plus Conductor-Perceptor se computa al <strong>50% (1/2 Plus Conductor: {formatCurrency(activeYearRate.plusConductorPerceptorDiaReducido ?? 3.14)})</strong> en lugar de {formatCurrency(activeYearRate.plusConductorPerceptorDia ?? 6.27)}.
           </p>
         </div>
       </div>
