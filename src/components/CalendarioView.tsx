@@ -20,6 +20,8 @@ import {
   Check,
   Coins,
   Award,
+  Search,
+  X,
 } from 'lucide-react';
 import {
   DayAssignment,
@@ -82,6 +84,11 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
   const [modalLateHours, setModalLateHours] = useState(0);
   const [modalLateMins, setModalLateMins] = useState(40);
   const [modalLateReason, setModalLateReason] = useState('');
+
+  // Buscador rápido e intuitivo de turnos
+  const [pickerSearch, setPickerSearch] = useState('');
+  const [pickerDayFilter, setPickerDayFilter] = useState<'todos' | 'laborable' | 'sabado' | 'festivo'>('laborable');
+  const [pickerTimeFilter, setPickerTimeFilter] = useState<'todos' | 'mañana' | 'tarde' | 'noche' | 'reten' | 'reducido'>('todos');
 
   // Month navigation
   const handlePrevMonth = () => {
@@ -148,6 +155,210 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
   const medioPlusConductorRate =
     activeYearRate.plusConductorPerceptorDiaReducido ??
     parseFloat((plusConductorRate / 2).toFixed(2));
+
+  // Helper: check if vacation plus (10€/day) applies based on profile 100% contract condition
+  const isJornada100 = !profile || profile.contractType !== 'tiempo_parcial' || (profile.partTimePercentage || 100) >= 100;
+  const isAutoVacationPlusActive = profile?.hasVacationPlus100Percent !== false;
+  const appliesVacationPlus = isAutoVacationPlusActive && isJornada100;
+
+  // Tipo de jornada sugerido según el día seleccionado en el calendario
+  const selectedDayTypeSuggested = useMemo<'laborable' | 'sabado' | 'festivo'>(() => {
+    if (currentAssignment.isHoliday) return 'festivo';
+    const dObj = new Date(selectedYear, selectedMonth - 1, selectedDayNumber);
+    const dow = dObj.getDay();
+    if (dow === 0) return 'festivo';
+    if (dow === 6) return 'sabado';
+    return 'laborable';
+  }, [selectedYear, selectedMonth, selectedDayNumber, currentAssignment.isHoliday]);
+
+  // Al cambiar de día, preseleccionar automáticamente el filtro acorde al día (L-V / Sáb / Dom-Fest)
+  useEffect(() => {
+    setPickerDayFilter(selectedDayTypeSuggested);
+  }, [selectedDateStr, selectedDayTypeSuggested]);
+
+  // Helper para comprobar si un turno coincide con una categoría de día
+  const matchesDayCategory = (s: ShiftDefinition, filter: 'todos' | 'laborable' | 'sabado' | 'festivo') => {
+    if (filter === 'todos') return true;
+    if (s.dayType === 'todos') return true;
+    if (filter === 'laborable') return s.dayType === 'laborable';
+    if (filter === 'sabado') {
+      return (
+        s.dayType === 'sabado' ||
+        s.title.toLowerCase().includes('sábado') ||
+        (s.badges && s.badges.some((b) => b.toLowerCase().includes('sábado')))
+      );
+    }
+    return (
+      s.dayType === 'festivo' ||
+      s.title.toLowerCase().includes('festivo') ||
+      s.title.toLowerCase().includes('domingo') ||
+      (s.badges && s.badges.some((b) => b.toLowerCase().includes('festivo') || b.toLowerCase().includes('domingo')))
+    );
+  };
+
+  // Botones de acceso rápido contextuales (D, V + 4 turnos frecuentes/acordes al día)
+  const quickShiftItems = useMemo(() => {
+    const fallbackByDayType: Record<'laborable' | 'sabado' | 'festivo', string[]> = {
+      laborable: ['6V.L01', '6V.L02', '6V.LR1', '6V.L40'],
+      sabado: ['6.S02', '6.S07', '6.R01S', '6.S01'],
+      festivo: ['6.D03', '6.D12', '6.R01F', '6.D01'],
+    };
+
+    // Contabilizar turnos más usados por el conductor para el tipo de día seleccionado
+    const usageCount = new Map<string, number>();
+    assignments.forEach((a) => {
+      if (!a.shiftCode || a.shiftCode === 'D' || a.shiftCode === 'V') return;
+      const def = shiftsMap.get(a.shiftCode);
+      if (def && matchesDayCategory(def, selectedDayTypeSuggested)) {
+        usageCount.set(a.shiftCode, (usageCount.get(a.shiftCode) || 0) + 1);
+      }
+    });
+
+    const mostUsedCodes = Array.from(usageCount.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([code]) => code);
+
+    const chosenCodes: string[] = [];
+    for (const c of [...mostUsedCodes, ...fallbackByDayType[selectedDayTypeSuggested]]) {
+      if (chosenCodes.length >= 4) break;
+      if (!chosenCodes.includes(c) && (shiftsMap.has(c) || shifts.some((s) => s.code === c))) {
+        chosenCodes.push(c);
+      }
+    }
+
+    const workCards = chosenCodes.map((code) => {
+      const shiftDef = shiftsMap.get(code) || shifts.find((s) => s.code === code)!;
+      const calc = computeShiftRateFromConvenio(shiftDef, activeYearRate);
+      const isReten = Boolean(calc.hasReten);
+      const typeLabel = isReten
+        ? 'Retén'
+        : calc.isReducedConductorPlus
+        ? '<4h · 1/2 Plus'
+        : shiftDef.category === 'mañana'
+        ? 'Mañana'
+        : shiftDef.category === 'tarde'
+        ? 'Tarde'
+        : 'Noche';
+      return {
+        code: shiftDef.code,
+        label: `${typeLabel} · ${shiftDef.drivingDuration || `${calc.totalHours}h`}`,
+        rate: calc.totalRate,
+        color: shiftDef.color,
+        subtitle: `${shiftDef.startTime}-${shiftDef.endTime}`,
+        isUsedRecently: usageCount.has(code),
+      };
+    });
+
+    return [
+      {
+        code: 'D',
+        label: 'Fiesta / Descanso',
+        rate: 0,
+        color: '#10b981',
+        subtitle: 'Libre',
+        isUsedRecently: false,
+      },
+      {
+        code: 'V',
+        label: 'Vacaciones',
+        rate: appliesVacationPlus
+          ? parseFloat((activeYearRate.salarioBaseDia + (activeYearRate.plusVacacionesDia ?? 10.00)).toFixed(2))
+          : Math.round((activeYearRate.salarioBaseDia * (!isJornada100 && profile?.partTimePercentage ? profile.partTimePercentage / 100 : 1)) * 100) / 100,
+        color: '#06b6d4',
+        subtitle: appliesVacationPlus ? `+${formatCurrency(activeYearRate.plusVacacionesDia ?? 10.00)}` : 'Base',
+        isUsedRecently: false,
+      },
+      ...workCards,
+    ];
+  }, [
+    assignments,
+    shifts,
+    shiftsMap,
+    selectedDayTypeSuggested,
+    activeYearRate,
+    appliesVacationPlus,
+    isJornada100,
+    profile?.partTimePercentage,
+  ]);
+
+  // Turnos filtrados y contadores para el buscador visual de turnos
+  const { pickerDayCounts, pickerFilteredShifts, pickerUsedFallbackAllDays } = useMemo(() => {
+    const workShifts = shifts.filter((s) => s.code !== 'D' && s.code !== 'V');
+    const counts = {
+      todos: workShifts.length,
+      laborable: 0,
+      sabado: 0,
+      festivo: 0,
+    };
+
+    workShifts.forEach((s) => {
+      if (matchesDayCategory(s, 'laborable')) counts.laborable++;
+      if (matchesDayCategory(s, 'sabado')) counts.sabado++;
+      if (matchesDayCategory(s, 'festivo')) counts.festivo++;
+    });
+
+    const query = pickerSearch.trim().toLowerCase();
+
+    const filterList = (dayFilter: 'todos' | 'laborable' | 'sabado' | 'festivo') => {
+      return workShifts.filter((s) => {
+        if (!matchesDayCategory(s, dayFilter)) return false;
+
+        const isReten = Boolean(
+          s.hasPlusReten ||
+          s.code.includes('.LR') ||
+          s.code.includes('.R0') ||
+          s.title.toLowerCase().includes('retén') ||
+          s.title.toLowerCase().includes('reten')
+        );
+        const calc = computeShiftRateFromConvenio(s, activeYearRate);
+
+        if (pickerTimeFilter === 'mañana' && s.category !== 'mañana') return false;
+        if (pickerTimeFilter === 'tarde' && s.category !== 'tarde') return false;
+        if (pickerTimeFilter === 'noche' && s.category !== 'noche') return false;
+        if (pickerTimeFilter === 'reten' && !isReten) return false;
+        if (pickerTimeFilter === 'reducido' && !(calc.totalHours > 0 && calc.totalHours < 4 && !isReten)) return false;
+
+        if (!query) return true;
+
+        const shortCode = s.code.replace(/^6V\./i, '').replace(/^6\./i, '').toLowerCase();
+        const searchable = [
+          s.code,
+          shortCode,
+          s.startTime,
+          s.endTime,
+          `${s.startTime}-${s.endTime}`,
+          s.drivingDuration,
+          s.category,
+          s.title,
+          isReten ? 'reten retén' : '',
+          calc.isReducedConductorPlus ? 'medio 1/2 reducido <4h' : '',
+          ...(s.badges || []),
+        ]
+          .join(' ')
+          .toLowerCase();
+
+        return searchable.includes(query);
+      });
+    };
+
+    let matched = filterList(pickerDayFilter);
+    let usedFallback = false;
+
+    // Si el usuario escribe un código específico (ej. "S05" estando en L-V) y no aparece en el filtro de día, buscar en todos
+    if (query && matched.length === 0 && pickerDayFilter !== 'todos') {
+      const globalMatched = filterList('todos');
+      if (globalMatched.length > 0) {
+        matched = globalMatched;
+        usedFallback = true;
+      }
+    }
+
+    return {
+      pickerDayCounts: counts,
+      pickerFilteredShifts: matched,
+      pickerUsedFallbackAllDays: usedFallback,
+    };
+  }, [shifts, pickerSearch, pickerDayFilter, pickerTimeFilter, activeYearRate]);
 
   // Sync late finish inputs when selected day or assignment changes
   useEffect(() => {
@@ -246,11 +457,6 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
     }
     return { turnosCount, descansosCount, vacacionesCount, festivosCount, extrasTotal };
   }, [assignments, daysInMonth, selectedYear, selectedMonth, horaOrdinariaRate, activeYearRate]);
-
-  // Helper: check if vacation plus (10€/day) applies based on profile 100% contract condition
-  const isJornada100 = !profile || profile.contractType !== 'tiempo_parcial' || (profile.partTimePercentage || 100) >= 100;
-  const isAutoVacationPlusActive = profile?.hasVacationPlus100Percent !== false;
-  const appliesVacationPlus = isAutoVacationPlusActive && isJornada100;
 
   // Estado de Retén, Quebranto de Moneda y Plus Conductor (entero o mitad) para el día seleccionado
   const dayPlusStatus = useMemo(() => {
@@ -1285,59 +1491,10 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
           </span>
         </div>
 
-        {/* Quick buttons strip */}
+        {/* Quick buttons strip (div:nth-of-type(2)) */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-          {[
-            {
-              code: 'D',
-              label: 'Fiesta / Descanso',
-              rate: 0,
-              color: '#10b981',
-              subtitle: 'Libre',
-            },
-            {
-              code: 'V',
-              label: 'Vacaciones',
-              rate: appliesVacationPlus
-                ? parseFloat((activeYearRate.salarioBaseDia + (activeYearRate.plusVacacionesDia ?? 10.00)).toFixed(2))
-                : Math.round((activeYearRate.salarioBaseDia * (!isJornada100 && profile?.partTimePercentage ? profile.partTimePercentage / 100 : 1)) * 100) / 100,
-              color: '#06b6d4',
-              subtitle: appliesVacationPlus ? `+${formatCurrency(activeYearRate.plusVacacionesDia ?? 10.00)}` : 'Base',
-            },
-            {
-              code: '6V.L01',
-              label: 'Parte L01 · Mañana',
-              rate: 113.50,
-              color: '#eab308',
-              subtitle: '06:30',
-            },
-            {
-              code: '6V.L02',
-              label: 'Parte L02 · Tarde',
-              rate: 115.77,
-              color: '#0284c7',
-              subtitle: '14:40',
-            },
-            {
-              code: '6.S02',
-              label: 'Parte S02 · Sábado',
-              rate: 124.85,
-              color: '#eab308',
-              subtitle: '05:30',
-            },
-            {
-              code: '6.D03',
-              label: 'Parte D03 · Festivo',
-              rate: 160.07,
-              color: '#eab308',
-              subtitle: '06:30',
-            },
-          ].map((item) => {
-            const shiftDef = shiftsMap.get(item.code);
-            const activeRateObj = activeYearRate;
-            const computedRate = shiftDef && item.code !== 'D' && item.code !== 'V'
-              ? computeShiftRateFromConvenio(shiftDef, activeRateObj).totalRate
-              : item.rate;
+          {quickShiftItems.map((item) => {
+            const isSelectedShift = currentAssignment.shiftCode === item.code;
 
             return (
               <button
@@ -1345,58 +1502,279 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                 type="button"
                 onClick={() => handleAssignShift(item.code)}
                 className={`p-2.5 rounded-xl border text-left transition-all flex flex-col justify-between ${
-                  currentAssignment.shiftCode === item.code
-                    ? 'border-blue-600 bg-blue-50/70 shadow-xs ring-1 ring-blue-600'
+                  isSelectedShift
+                    ? 'border-blue-600 bg-blue-50/80 shadow-xs ring-1 ring-blue-600'
                     : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
                 }`}
               >
-                <div className="flex items-center justify-between w-full">
+                <div className="flex items-center justify-between gap-1 w-full">
                   <span
-                    className="font-bold text-xs px-1.5 py-0.5 rounded truncate max-w-[80px]"
+                    className="font-bold text-xs px-1.5 py-0.5 rounded truncate max-w-[82px]"
                     style={{ backgroundColor: `${item.color}20`, color: item.color }}
                   >
                     {item.code}
                   </span>
                   {item.subtitle && (
-                    <span className="text-[9px] font-bold text-slate-600 bg-slate-100 px-1 py-0.5 rounded">
+                    <span className="text-[9px] font-bold text-slate-600 bg-slate-100 px-1 py-0.5 rounded truncate">
                       {item.subtitle}
                     </span>
                   )}
                 </div>
-                <div className="mt-1">
+                <div className="mt-1.5">
                   <span className="text-[11px] font-semibold text-slate-700 block truncate">
                     {item.label}
                   </span>
-                  <span className="text-[10px] text-slate-500 font-mono">
-                    {computedRate > 0 ? formatCurrency(computedRate) : 'Libre (0€)'}
-                  </span>
+                  <div className="flex items-center justify-between mt-0.5">
+                    <span className="text-[10px] text-slate-500 font-mono">
+                      {item.rate > 0 ? formatCurrency(item.rate) : 'Libre (0€)'}
+                    </span>
+                    {item.isUsedRecently && (
+                      <span className="text-[9px] font-bold text-blue-600">Habitual</span>
+                    )}
+                  </div>
                 </div>
               </button>
             );
           })}
         </div>
 
-        {/* Dropdown to pick from all other official DIREXIS parts */}
-        <div className="flex items-center gap-2 pt-1">
-          <select
-            value={currentAssignment.shiftCode || ''}
-            onChange={(e) => {
-              if (e.target.value) handleAssignShift(e.target.value);
-            }}
-            className="w-full text-xs py-2 px-3 rounded-xl border border-slate-200 bg-white text-slate-700 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-          >
-            <option value="">Seleccionar entre todos los partes oficiales Direxis Zaragoza (98 partes)...</option>
-              {shifts
-              .filter((s) => s.code !== 'D' && s.code !== 'V')
-              .map((s) => {
-                const rateCalc = computeShiftRateFromConvenio(s, activeYearRate);
+        {/* Buscador visual e intuitivo de turnos (div:nth-of-type(3)) */}
+        <div className="bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden">
+          {/* Barra de búsqueda + filtros rápidos */}
+          <div className="p-3 bg-slate-50/70 border-b border-slate-100 space-y-2.5">
+            <div className="relative">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                value={pickerSearch}
+                onChange={(e) => setPickerSearch(e.target.value)}
+                placeholder="Buscar por código, hora o tipo (ej. L08, 06:30, retén, S05)..."
+                className="w-full text-xs pl-9 pr-8 py-2 rounded-xl border border-slate-200 bg-white text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+              />
+              {pickerSearch && (
+                <button
+                  type="button"
+                  onClick={() => setPickerSearch('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-slate-700 rounded-md hover:bg-slate-100"
+                  title="Limpiar búsqueda"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Fila 1: Filtro por Día / Jornada (auto-detectado según el día elegido) */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              {(
+                [
+                  { id: 'laborable', label: 'L-V', count: pickerDayCounts.laborable },
+                  { id: 'sabado', label: 'Sáb', count: pickerDayCounts.sabado },
+                  { id: 'festivo', label: 'Dom/Fest', count: pickerDayCounts.festivo },
+                  { id: 'todos', label: 'Todos', count: pickerDayCounts.todos },
+                ] as const
+              ).map((tab) => {
+                const isActive = pickerDayFilter === tab.id;
+                const isSuggested = selectedDayTypeSuggested === tab.id;
                 return (
-                  <option key={s.id} value={s.code}>
-                    {s.code} · {s.title} ({s.startTime}-{s.endTime}) - {formatCurrency(rateCalc.totalRate)}
-                  </option>
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setPickerDayFilter(tab.id)}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all flex items-center gap-1 ${
+                      isActive
+                        ? 'bg-slate-900 text-white shadow-2xs'
+                        : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    <span>{tab.label}</span>
+                    <span
+                      className={`text-[10px] font-mono px-1 rounded ${
+                        isActive ? 'bg-slate-700 text-slate-200' : 'bg-slate-100 text-slate-500'
+                      }`}
+                    >
+                      {tab.count}
+                    </span>
+                    {isSuggested && !isActive && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-500" title="Acorde al día seleccionado" />
+                    )}
+                  </button>
                 );
               })}
-          </select>
+
+              {pickerUsedFallbackAllDays && (
+                <span className="text-[10px] font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200 ml-auto">
+                  Mostrando en todos los días
+                </span>
+              )}
+            </div>
+
+            {/* Fila 2: Filtro por Franja / Particularidad */}
+            <div className="flex flex-wrap items-center gap-1">
+              {(
+                [
+                  { id: 'todos', label: 'Todas las franjas' },
+                  { id: 'mañana', label: 'Mañana', dot: 'bg-amber-400' },
+                  { id: 'tarde', label: 'Tarde', dot: 'bg-sky-500' },
+                  { id: 'noche', label: 'Noche', dot: 'bg-purple-600' },
+                  { id: 'reten', label: 'Retén', dot: 'bg-amber-600' },
+                  { id: 'reducido', label: '<4h (1/2 Plus)', dot: 'bg-indigo-500' },
+                ] as const
+              ).map((chip) => {
+                const isActive = pickerTimeFilter === chip.id;
+                return (
+                  <button
+                    key={chip.id}
+                    type="button"
+                    onClick={() => setPickerTimeFilter(chip.id)}
+                    className={`px-2 py-1 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 ${
+                      isActive
+                        ? 'bg-blue-600 text-white shadow-2xs'
+                        : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    {'dot' in chip && chip.dot && (
+                      <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-white' : chip.dot}`} />
+                    )}
+                    <span>{chip.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Lista clara y escaneable de turnos */}
+          <div className="max-h-72 overflow-y-auto divide-y divide-slate-100">
+            {pickerFilteredShifts.length === 0 ? (
+              <div className="p-6 text-center text-xs text-slate-500 space-y-2">
+                <p className="font-semibold text-slate-700">No hay turnos que coincidan con esa búsqueda</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPickerSearch('');
+                    setPickerDayFilter('todos');
+                    setPickerTimeFilter('todos');
+                  }}
+                  className="text-blue-600 font-bold hover:underline"
+                >
+                  Ver todos los turnos ({pickerDayCounts.todos})
+                </button>
+              </div>
+            ) : (
+              pickerFilteredShifts.map((s) => {
+                const rateCalc = computeShiftRateFromConvenio(s, activeYearRate);
+                const isAssigned = currentAssignment.shiftCode === s.code;
+                const dayShort =
+                  s.dayType === 'sabado'
+                    ? 'Sáb'
+                    : s.dayType === 'festivo'
+                    ? 'Dom/Fest'
+                    : s.dayType === 'todos'
+                    ? 'L-D'
+                    : 'L-V';
+                const slotLabel =
+                  s.category === 'mañana'
+                    ? 'Mañana'
+                    : s.category === 'tarde'
+                    ? 'Tarde'
+                    : s.category === 'noche'
+                    ? 'Noche'
+                    : 'Servicio';
+
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => handleAssignShift(s.code)}
+                    className={`w-full px-3 py-2.5 text-left transition-colors flex items-center justify-between gap-2.5 ${
+                      isAssigned
+                        ? 'bg-blue-50/90 hover:bg-blue-50'
+                        : 'bg-white hover:bg-slate-50/90'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span
+                        className="font-extrabold text-xs px-2 py-1 rounded-lg shrink-0 min-w-[64px] text-center"
+                        style={{
+                          backgroundColor: `${s.color}18`,
+                          color: s.color,
+                          border: `1px solid ${s.color}35`,
+                        }}
+                      >
+                        {s.code}
+                      </span>
+
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-xs font-bold text-slate-900 font-mono">
+                            {s.startTime} – {s.endTime}
+                          </span>
+                          <span className="text-[10px] font-semibold text-slate-500">
+                            · {s.drivingDuration || `${rateCalc.totalHours}h`}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-1 flex-wrap mt-0.5">
+                          <span className="text-[10px] font-semibold text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded">
+                            {dayShort} · {slotLabel}
+                          </span>
+                          {rateCalc.hasReten && (
+                            <span className="text-[10px] font-bold text-amber-900 bg-amber-100 px-1.5 py-0.5 rounded">
+                              Retén +{formatCurrency(rateCalc.retenAmount ?? plusRetenRate)}
+                            </span>
+                          )}
+                          {rateCalc.isReducedConductorPlus && (
+                            <span className="text-[10px] font-bold text-indigo-800 bg-indigo-100 px-1.5 py-0.5 rounded">
+                              1/2 Plus (&lt;4h)
+                            </span>
+                          )}
+                          {rateCalc.nightHours > 0 && (
+                            <span className="text-[10px] font-bold text-purple-800 bg-purple-100 px-1.5 py-0.5 rounded">
+                              {rateCalc.nightHours}h noct.
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="text-right shrink-0 flex items-center gap-2">
+                      <span className="text-xs font-extrabold font-mono text-emerald-700 tabular-nums">
+                        {formatCurrency(rateCalc.totalRate)}
+                      </span>
+                      <span
+                        className={`text-[10px] font-bold px-2 py-1 rounded-lg ${
+                          isAssigned
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-slate-100 text-slate-700'
+                        }`}
+                      >
+                        {isAssigned ? 'Asignado ✓' : 'Elegir'}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })
+            )}
+          </div>
+
+          {/* Pie informativo con conteo y reinicio rápido */}
+          <div className="px-3 py-1.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-500">
+            <span>
+              Mostrando <strong>{pickerFilteredShifts.length}</strong> de {pickerDayCounts.todos} turnos
+            </span>
+            {(pickerSearch || pickerTimeFilter !== 'todos' || pickerDayFilter !== selectedDayTypeSuggested) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setPickerSearch('');
+                  setPickerTimeFilter('todos');
+                  setPickerDayFilter(selectedDayTypeSuggested);
+                }}
+                className="text-blue-600 font-bold hover:underline"
+              >
+                Restablecer filtros
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
