@@ -18,6 +18,8 @@ import {
   Moon,
   ShieldCheck,
   Check,
+  Coins,
+  Award,
 } from 'lucide-react';
 import {
   DayAssignment,
@@ -27,7 +29,7 @@ import {
   WorkerProfile,
 } from '../types';
 import { formatCurrency } from '../utils/exporter';
-import { formatMinutesToHoursAndMinutes, computeShiftRateFromConvenio } from '../utils/calculator';
+import { formatMinutesToHoursAndMinutes, computeShiftRateFromConvenio, calculateTotalHours } from '../utils/calculator';
 import { getEffectiveYearRate, getOfficialConvenioExtraAmount } from '../data/convenioZaragoza';
 import { ConfirmModal } from './ConfirmModal';
 
@@ -141,6 +143,11 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
   const horaOrdinariaRate = activeYearRate.horaOrdinaria ?? 13.62;
   const plusRetenRate = activeYearRate.plusRetenDia ?? 8.25;
   const plusFestivoRate = activeYearRate.plusFestivoMayor4h ?? 42.80;
+  const quebrantoRate = activeYearRate.quebrantoMonedaDia ?? 1.89;
+  const plusConductorRate = activeYearRate.plusConductorPerceptorDia ?? 6.27;
+  const medioPlusConductorRate =
+    activeYearRate.plusConductorPerceptorDiaReducido ??
+    parseFloat((plusConductorRate / 2).toFixed(2));
 
   // Sync late finish inputs when selected day or assignment changes
   useEffect(() => {
@@ -245,6 +252,98 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
   const isAutoVacationPlusActive = profile?.hasVacationPlus100Percent !== false;
   const appliesVacationPlus = isAutoVacationPlusActive && isJornada100;
 
+  // Estado de Retén, Quebranto de Moneda y Plus Conductor (entero o mitad) para el día seleccionado
+  const dayPlusStatus = useMemo(() => {
+    const dayExtras = currentAssignment.extras || [];
+    const isWorkingShift = Boolean(
+      currentShift &&
+      currentShift.code !== 'D' &&
+      currentShift.code !== 'V' &&
+      currentShift.code !== 'B' &&
+      !currentAssignment.isRest &&
+      !currentAssignment.isVacation &&
+      !currentAssignment.isSickLeave
+    );
+
+    const hasRetenShift = Boolean(
+      currentShift &&
+      (currentShift.hasPlusReten ||
+        currentShift.code.includes('.LR') ||
+        currentShift.code.includes('.R0') ||
+        currentShift.title.toLowerCase().includes('retén') ||
+        currentShift.title.toLowerCase().includes('reten'))
+    );
+    const hasRetenExtra = dayExtras.some((e) => {
+      const l = e.name.toLowerCase();
+      return l.includes('reten') || l.includes('retén');
+    });
+    const isRetenOnDay = hasRetenShift || hasRetenExtra;
+
+    let effectiveShiftHours = 0;
+    if (isWorkingShift && currentShift) {
+      if (currentAssignment.customStartTime && currentAssignment.customEndTime) {
+        effectiveShiftHours = calculateTotalHours(
+          currentAssignment.customStartTime,
+          currentAssignment.customEndTime
+        );
+      } else {
+        effectiveShiftHours = computeShiftRateFromConvenio(currentShift, activeYearRate).totalHours;
+      }
+    }
+
+    const hasExplicitQuebranto = dayExtras.some((e) => e.name.toLowerCase().includes('quebranto'));
+    const hasExplicitMedioPlus = dayExtras.some((e) => {
+      const l = e.name.toLowerCase();
+      return l.includes('1/2') || l.includes('medio plus');
+    });
+    const hasExplicitFullConductor = dayExtras.some((e) => {
+      const l = e.name.toLowerCase();
+      return l.includes('plus conductor') && !l.includes('1/2') && !l.includes('medio plus');
+    });
+
+    const hasQuebranto =
+      !isRetenOnDay &&
+      ((isWorkingShift && profile?.hasMonetaryQuebranto !== false) || hasExplicitQuebranto);
+
+    const hasHalfConductorPlus =
+      !isRetenOnDay &&
+      !hasExplicitFullConductor &&
+      (hasExplicitMedioPlus ||
+        (isWorkingShift &&
+          profile?.hasConductorPerceptorPlus !== false &&
+          effectiveShiftHours > 0 &&
+          effectiveShiftHours < 4));
+
+    const hasFullConductorPlus =
+      !isRetenOnDay &&
+      !hasHalfConductorPlus &&
+      (hasExplicitFullConductor ||
+        (isWorkingShift &&
+          profile?.hasConductorPerceptorPlus !== false &&
+          (effectiveShiftHours >= 4 || effectiveShiftHours === 0)));
+
+    return {
+      isRetenOnDay,
+      hasQuebranto,
+      hasHalfConductorPlus,
+      hasFullConductorPlus,
+      hasExplicitQuebranto,
+      hasExplicitMedioPlus,
+      hasExplicitFullConductor,
+    };
+  }, [
+    currentShift,
+    currentAssignment.extras,
+    currentAssignment.isRest,
+    currentAssignment.isVacation,
+    currentAssignment.isSickLeave,
+    currentAssignment.customStartTime,
+    currentAssignment.customEndTime,
+    activeYearRate,
+    profile?.hasMonetaryQuebranto,
+    profile?.hasConductorPerceptorPlus,
+  ]);
+
   // Day subtotal devengado (en bruto según Convenio)
   const selectedDayTotal = useMemo(() => {
     let base = 0;
@@ -264,6 +363,15 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
         base = shiftCalc.totalRate;
       }
     }
+    const autoQuebranto =
+      dayPlusStatus.hasQuebranto && !dayPlusStatus.hasExplicitQuebranto ? quebrantoRate : 0;
+    const autoConductorPlus =
+      dayPlusStatus.hasHalfConductorPlus && !dayPlusStatus.hasExplicitMedioPlus
+        ? medioPlusConductorRate
+        : dayPlusStatus.hasFullConductorPlus && !dayPlusStatus.hasExplicitFullConductor
+        ? plusConductorRate
+        : 0;
+
     const extrasSum =
       currentAssignment.extras?.reduce((sum, e) => {
         const convAmt = getOfficialConvenioExtraAmount(e.name, yearRate);
@@ -280,7 +388,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
     const lateAmt = currentAssignment.lateFinishMinutes
       ? parseFloat(((currentAssignment.lateFinishMinutes / 60) * horaOrdinariaRate).toFixed(2))
       : 0;
-    return base + extrasSum + lateAmt;
+    return base + autoQuebranto + autoConductorPlus + extrasSum + lateAmt;
   }, [
     currentShift,
     currentAssignment.extras,
@@ -291,6 +399,10 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
     appliesVacationPlus,
     profile?.partTimePercentage,
     horaOrdinariaRate,
+    dayPlusStatus,
+    quebrantoRate,
+    plusConductorRate,
+    medioPlusConductorRate,
   ]);
 
   // Date formatted in human Spanish
@@ -736,10 +848,23 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
 
         {/* PARTICULARIDADES / EXTRAS DEL DÍA matching screenshot 3 & User Request */}
         <div className="space-y-2.5 pt-1">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-              Particularidades / Extras del Día
-            </span>
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                Particularidades / Extras del Día
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setModalExtraTab('concepto');
+                  setIsAddingExtraModal(true);
+                }}
+                className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1 hover:underline px-1 py-0.5 shrink-0"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Añadir</span>
+              </button>
+            </div>
             <div className="flex flex-wrap items-center gap-1.5">
               {/* Botón manual para marcar Festivo Oficial (Nacional, Autonómico o Local) */}
               <button
@@ -791,8 +916,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                   }
                 }}
                 className={`text-xs font-bold px-2.5 py-1 rounded-lg border flex items-center gap-1.5 transition-all ${
-                  (currentAssignment.extras || []).some((e) => e.name.toLowerCase().includes('reten') || e.name.toLowerCase().includes('retén')) ||
-                  Boolean(currentShift?.hasPlusReten || currentShift?.code.includes('.LR') || currentShift?.code.includes('.R0'))
+                  dayPlusStatus.isRetenOnDay
                     ? 'bg-amber-100 border-amber-400 text-amber-900 ring-1 ring-amber-300 shadow-2xs'
                     : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-amber-50 hover:border-amber-200 hover:text-amber-800'
                 }`}
@@ -800,16 +924,58 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
               >
                 <ShieldCheck className="w-3.5 h-3.5 text-amber-700" />
                 <span>
-                  {(currentAssignment.extras || []).some((e) => e.name.toLowerCase().includes('reten') || e.name.toLowerCase().includes('retén')) ||
-                  Boolean(currentShift?.hasPlusReten || currentShift?.code.includes('.LR') || currentShift?.code.includes('.R0'))
+                  {dayPlusStatus.isRetenOnDay
                     ? `Retén (+${formatCurrency(plusRetenRate)})`
                     : `Plus Retén (+${formatCurrency(plusRetenRate)})`}
                 </span>
-                {((currentAssignment.extras || []).some((e) => e.name.toLowerCase().includes('reten') || e.name.toLowerCase().includes('retén')) ||
-                  Boolean(currentShift?.hasPlusReten || currentShift?.code.includes('.LR') || currentShift?.code.includes('.R0'))) && (
+                {dayPlusStatus.isRetenOnDay && (
                   <Check className="w-3 h-3 text-amber-800 stroke-[3]" />
                 )}
               </button>
+
+              {/* Reflejo de Quebranto de Moneda cuando el turno lo lleva aparejado */}
+              {dayPlusStatus.hasQuebranto && (
+                <span
+                  className="text-xs font-bold px-2.5 py-1 rounded-lg border flex items-center gap-1.5 bg-emerald-100 border-emerald-400 text-emerald-900 ring-1 ring-emerald-300 shadow-2xs"
+                  title={`Quebranto de moneda incluido con este turno (+${formatCurrency(quebrantoRate)} bruto/día según Convenio)`}
+                >
+                  <Coins className="w-3.5 h-3.5 text-emerald-700" />
+                  <span>Quebranto (+{formatCurrency(quebrantoRate)})</span>
+                  <Check className="w-3 h-3 text-emerald-800 stroke-[3]" />
+                </span>
+              )}
+
+              {/* Reflejo de Plus Conductor (entero o 1/2 en turnos < 4h) cuando el turno lo lleva aparejado */}
+              {(dayPlusStatus.hasFullConductorPlus || dayPlusStatus.hasHalfConductorPlus) && (
+                <span
+                  className={`text-xs font-bold px-2.5 py-1 rounded-lg border flex items-center gap-1.5 ring-1 shadow-2xs ${
+                    dayPlusStatus.hasHalfConductorPlus
+                      ? 'bg-indigo-100 border-indigo-400 text-indigo-900 ring-indigo-300'
+                      : 'bg-blue-100 border-blue-400 text-blue-900 ring-blue-300'
+                  }`}
+                  title={
+                    dayPlusStatus.hasHalfConductorPlus
+                      ? `1/2 Plus Conductor-Perceptor (< 4h) incluido con este turno (+${formatCurrency(medioPlusConductorRate)} bruto/día según Convenio)`
+                      : `Plus Conductor-Perceptor completo incluido con este turno (+${formatCurrency(plusConductorRate)} bruto/día según Convenio)`
+                  }
+                >
+                  <Award
+                    className={`w-3.5 h-3.5 ${
+                      dayPlusStatus.hasHalfConductorPlus ? 'text-indigo-700' : 'text-blue-700'
+                    }`}
+                  />
+                  <span>
+                    {dayPlusStatus.hasHalfConductorPlus
+                      ? `1/2 Plus Conductor (+${formatCurrency(medioPlusConductorRate)})`
+                      : `Plus Conductor (+${formatCurrency(plusConductorRate)})`}
+                  </span>
+                  <Check
+                    className={`w-3 h-3 stroke-[3] ${
+                      dayPlusStatus.hasHalfConductorPlus ? 'text-indigo-800' : 'text-blue-800'
+                    }`}
+                  />
+                </span>
+              )}
 
               <button
                 type="button"
@@ -827,18 +993,6 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                   <span className="w-2 h-2 rounded-full bg-indigo-600"></span>
                 )}
                 {isLateSectionOpen ? <ChevronUp className="w-3 h-3 text-indigo-600" /> : <ChevronDown className="w-3 h-3 text-slate-400" />}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setModalExtraTab('concepto');
-                  setIsAddingExtraModal(true);
-                }}
-                className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1 hover:underline px-1 py-1"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Añadir</span>
               </button>
             </div>
           </div>
