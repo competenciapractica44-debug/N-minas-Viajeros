@@ -307,6 +307,8 @@ export function calculateMonthlyPayroll(
   let sickDays = 0;
 
   let totalWorkedHours = 0;
+  let ordinaryShiftHours = 0;
+  let holidayShiftHours = 0;
   let totalNightHours = 0;
 
   let festivoPluses = 0;
@@ -336,9 +338,10 @@ export function calculateMonthlyPayroll(
   const customStartDay = profile.customCutoffStartDay || 25;
   const cutoffRange = getExtrasDateRange(year, month, cutoffMode, customStartDay);
 
-  // Acumuladores exactos para Retén, Conductor (entero y 1/2), Quebranto y Festivo dentro del período de corte
+  // Acumuladores exactos para Retén, Conductor (entero y 1/2), Quebranto, Festivo y Vacaciones dentro del período de corte
   const holidayDaysSet = new Set<string>();
   let cutoffHolidayCount = 0;
+  let cutoffVacationPlusDays = 0;
   let computedRetenCount = 0;
   let computedFullConductorCount = 0;
   let computedMedioPlusCount = 0;
@@ -514,11 +517,15 @@ export function calculateMonthlyPayroll(
         dayPlusFestivoQty,
       } = extractDayPlusQuantities(dayExtras);
 
+      const isVacationDay = Boolean(assignment.isVacation || shiftCode === 'V');
+      if (isVacationDay) {
+        cutoffVacationPlusDays++;
+      }
+
       const isRestOrOff = Boolean(
         assignment.isRest ||
         shiftCode === 'D' ||
-        assignment.isVacation ||
-        shiftCode === 'V' ||
+        isVacationDay ||
         assignment.isSickLeave ||
         shiftCode === 'B'
       );
@@ -539,6 +546,13 @@ export function calculateMonthlyPayroll(
 
         totalWorkedHours += effectiveTotalHours;
         totalNightHours += effectiveNightHours;
+
+        const isPaidHolidayDay = isHoliday || dayPlusFestivoQty > 0;
+        if (isPaidHolidayDay) {
+          holidayShiftHours += effectiveTotalHours;
+        } else {
+          ordinaryShiftHours += effectiveTotalHours;
+        }
 
         // Retén, Quebranto y Plus Conductor (entero o 1/2)
         const isRetenDay = Boolean(calc.hasReten) || dayRetenQty > 0;
@@ -728,18 +742,31 @@ export function calculateMonthlyPayroll(
 
       // Terminado más tarde dentro del período de corte
       if (assignment.lateFinishMinutes && assignment.lateFinishMinutes > 0) {
-        totalLateFinishMinutes += assignment.lateFinishMinutes;
+        const isPaidHolidayDay = isHoliday || dayPlusFestivoQty > 0;
+        const lateHoursDay = assignment.lateFinishMinutes / 60;
         const computedLateAmount = parseFloat(
-          ((assignment.lateFinishMinutes / 60) * (yearRate.horaOrdinaria ?? 13.62)).toFixed(2)
+          (lateHoursDay * (yearRate.horaOrdinaria ?? 13.62)).toFixed(2)
         );
         const durationFormatted = formatMinutesToHoursAndMinutes(assignment.lateFinishMinutes);
         const reasonText = assignment.lateFinishReason ? ` (${assignment.lateFinishReason})` : '';
-        extrasItemsList.push({
-          date: dateStr,
-          name: `Terminado más tarde: +${durationFormatted}${reasonText}`,
-          amount: computedLateAmount,
-          notes: `Exceso de jornada compensado en bruto a ${(yearRate.horaOrdinaria ?? 13.62).toFixed(2)} €/h (Convenio)`,
-        });
+
+        if (isPaidHolidayDay) {
+          holidayShiftHours += lateHoursDay;
+          extrasItemsList.push({
+            date: dateStr,
+            name: `Terminado más tarde en festivo: +${durationFormatted}${reasonText}`,
+            amount: computedLateAmount,
+            notes: `Computado como horas festivas a ${(yearRate.horaOrdinaria ?? 13.62).toFixed(2)} €/h`,
+          });
+        } else {
+          totalLateFinishMinutes += assignment.lateFinishMinutes;
+          extrasItemsList.push({
+            date: dateStr,
+            name: `Terminado más tarde: +${durationFormatted}${reasonText}`,
+            amount: computedLateAmount,
+            notes: `Exceso de jornada compensado en bruto a ${(yearRate.horaOrdinaria ?? 13.62).toFixed(2)} €/h (Convenio)`,
+          });
+        }
       }
     }
 
@@ -926,6 +953,15 @@ export function calculateMonthlyPayroll(
         } = extractDayPlusQuantities(dayExtras);
 
         if (!isExactOctoberCotejo) {
+          const isVacationDayPostCutoff = Boolean(assignment.isVacation || shiftCode === 'V');
+          if (isVacationDayPostCutoff && profile.hasVacationPlus !== false) {
+            const vacRate =
+              yearRate.plusVacacionesDia && yearRate.plusVacacionesDia > 0
+                ? yearRate.plusVacacionesDia
+                : 10.00;
+            pendingNextMonthExtrasCount++;
+            pendingNextMonthExtrasTotal += parseFloat((vacRate * partTimeFactor).toFixed(2));
+          }
           if (shiftDef && shiftDef.code !== 'D') {
             const calc = computeShiftRateFromConvenio(shiftDef, yearRate, { isHoliday: Boolean(assignment.isHoliday) });
             const effectiveTotalHours =
@@ -1083,16 +1119,32 @@ export function calculateMonthlyPayroll(
     (finalRetenCount * plusRetenUnitRate).toFixed(2)
   );
 
-  // 5. Horas festivas (Convenio: horaOrdinaria)
+  // Horas Convenio objetivo (Art. 14, escalado por % de jornada parcial o completa)
+  const convenioAnnualHoursBase =
+    yearRate.horasJornadaAnual && yearRate.horasJornadaAnual > 0 ? yearRate.horasJornadaAnual : 1776;
+  const convenioAnnualHoursTarget = parseFloat((convenioAnnualHoursBase * partTimeFactor).toFixed(2));
+  const convenioMonthlyHoursTarget = parseFloat((convenioAnnualHoursTarget / 12).toFixed(2));
+
+  // 5. Horas festivas (Convenio: horaOrdinaria) - Incluye jornadas en festivo marcado (no computan en convenio)
   const horaOrdinariaUnitRate = yearRate.horaOrdinaria ?? 13.62;
-  const finalFestivasHours = Math.round(explicitFestivasHours * 100) / 100;
+  const finalFestivasHours = isExactOctoberCotejo
+    ? Math.round(explicitFestivasHours * 100) / 100
+    : Math.round((holidayShiftHours + explicitFestivasHours) * 100) / 100;
   const horasFestivasAmount = parseFloat(
     (finalFestivasHours * horaOrdinariaUnitRate).toFixed(2)
   );
 
-  // 6. Horas complementarias / exceso de turno (Convenio: horaOrdinaria)
+  // 6. Horas complementarias / exceso de jornada sobre Convenio (Convenio: horaOrdinaria)
   const horasLateFinish = Math.round((totalLateFinishMinutes / 60) * 100) / 100;
-  const finalComplementariasHours = Math.round((horasLateFinish + explicitComplementariasHours) * 100) / 100;
+  const ordinaryConvenioHours = isExactOctoberCotejo
+    ? Math.round(totalWorkedHours * 100) / 100
+    : Math.round((ordinaryShiftHours + horasLateFinish) * 100) / 100;
+  const autoExcessOverConvenioHours = !isExactOctoberCotejo
+    ? Math.max(0, Math.round((ordinaryConvenioHours - convenioMonthlyHoursTarget) * 100) / 100)
+    : 0;
+  const finalComplementariasHours = isExactOctoberCotejo
+    ? Math.round((horasLateFinish + explicitComplementariasHours) * 100) / 100
+    : Math.round((Math.max(autoExcessOverConvenioHours, horasLateFinish) + explicitComplementariasHours) * 100) / 100;
   const importeHorasExtra = parseFloat(
     (finalComplementariasHours * horaOrdinariaUnitRate).toFixed(2)
   );
@@ -1194,11 +1246,13 @@ export function calculateMonthlyPayroll(
   }
 
   // Retribución de Vacaciones según Art. 9 Convenio Colectivo Transporte de Zaragoza (proporcional al % de jornada: 10€/día al 100%, 7,50€/día al 75%)
-  const isAutoVacationPlusActive = profile.hasVacationPlus100Percent !== false;
-  const basePlusVacacionesDia = yearRate.plusVacacionesDia ?? 10.00;
+  const isAutoVacationPlusActive = profile.hasVacationPlus !== false;
+  const basePlusVacacionesDia =
+    yearRate.plusVacacionesDia && yearRate.plusVacacionesDia > 0 ? yearRate.plusVacacionesDia : 10.00;
   const plusVacacionesDia = parseFloat((basePlusVacacionesDia * partTimeFactor).toFixed(2));
+  const finalVacationPlusDays = isExactOctoberCotejo ? vacationDays : cutoffVacationPlusDays;
   const plusVacaciones = isAutoVacationPlusActive
-    ? parseFloat((vacationDays * plusVacacionesDia).toFixed(2))
+    ? parseFloat((finalVacationPlusDays * plusVacacionesDia).toFixed(2))
     : 0;
 
   const retribucionVacacionesBase = parseFloat(
@@ -1425,8 +1479,8 @@ export function calculateMonthlyPayroll(
     lines.push({
       id: 'plus-vacaciones',
       name: 'Plus de Vacaciones (Art. 9 Convenio)',
-      quantity: vacationDays,
-      quantityLabel: `${vacationDays.toFixed(2).replace('.', ',')}`,
+      quantity: finalVacationPlusDays,
+      quantityLabel: `${finalVacationPlusDays.toFixed(2).replace('.', ',')}`,
       unit: 'días',
       unitPrice: plusVacacionesDia,
       amount: plusVacaciones,
@@ -1493,6 +1547,10 @@ export function calculateMonthlyPayroll(
     (totalDevengado + ssEmpresaCC + ssEmpresaDesempleo + ssEmpresaFP + ssEmpresaFogasa + ssEmpresaMEI).toFixed(2)
   );
 
+  const computedTotalWorkedHours = isExactOctoberCotejo
+    ? Math.round((totalWorkedHours + finalComplementariasHours) * 100) / 100
+    : Math.round((ordinaryConvenioHours + finalFestivasHours + explicitComplementariasHours) * 100) / 100;
+
   return {
     monthKey,
     year,
@@ -1502,11 +1560,16 @@ export function calculateMonthlyPayroll(
     restDays,
     holidayDays,
     vacationDays,
+    vacationPlusDays: finalVacationPlusDays,
     sickDays,
 
-    totalWorkedHours: Math.round((totalWorkedHours + finalComplementariasHours) * 100) / 100,
+    totalWorkedHours: computedTotalWorkedHours,
+    ordinaryConvenioHours,
     nightHours: roundedNightHours,
     partTimeFactor,
+    convenioAnnualHoursBase,
+    convenioAnnualHoursTarget,
+    convenioMonthlyHoursTarget,
 
     // Concept repetitions & lines
     lines,
@@ -1667,6 +1730,7 @@ export function calculateYearlySalaryEvolution(
       isProjected,
       workedDays: payroll.workedDays,
       totalHours: payroll.totalWorkedHours,
+      ordinaryConvenioHours: payroll.ordinaryConvenioHours,
     });
   }
 

@@ -198,6 +198,7 @@ export default function App() {
               ...DEFAULT_CONVENIO_ZARAGOZA.ratesByYear[2026],
               ...rawRate,
               plusFestivoMayor4h: rawRate.plusFestivoMayor4h === 40.80 ? 42.80 : (rawRate.plusFestivoMayor4h ?? 42.80),
+              plusVacacionesDia: rawRate.plusVacacionesDia && rawRate.plusVacacionesDia > 0 ? rawRate.plusVacacionesDia : 10.00,
               year: yNum,
             };
           }
@@ -235,8 +236,8 @@ export default function App() {
         return {
           extrasCutoffMode: 'direxis_25_24',
           customCutoffStartDay: 25,
-          hasVacationPlus100Percent: true,
           ...parsed,
+          hasVacationPlus: parsed.hasVacationPlus !== undefined ? parsed.hasVacationPlus : true,
         };
       }
     } catch (e) {
@@ -257,7 +258,7 @@ export default function App() {
       customCutoffStartDay: 25,
       hasMonetaryQuebranto: true,
       hasConductorPerceptorPlus: true,
-      hasVacationPlus100Percent: true,
+      hasVacationPlus: true,
       salaryBaseRateMode: 'convenio_53_18',
       unionFeeDeduction: 0,
       advancePayment: 0,
@@ -412,7 +413,10 @@ export default function App() {
         if (choferFile) {
           const driveProfile = await readDriveJsonFile<WorkerProfile>(token, choferFile.id);
           if (driveProfile && driveProfile.name) {
-            setProfile(driveProfile);
+            setProfile({
+              ...driveProfile,
+              hasVacationPlus: driveProfile.hasVacationPlus !== undefined ? driveProfile.hasVacationPlus : true,
+            });
           }
         } else {
           await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'chofer_config.json', currentSnapshot.profile);
@@ -432,6 +436,7 @@ export default function App() {
                   ...DEFAULT_CONVENIO_ZARAGOZA.ratesByYear[2026],
                   ...r,
                   plusFestivoMayor4h: r.plusFestivoMayor4h === 40.80 ? 42.80 : (r.plusFestivoMayor4h ?? 42.80),
+                  plusVacacionesDia: r.plusVacacionesDia && r.plusVacacionesDia > 0 ? r.plusVacacionesDia : 10.00,
                   year: yNum,
                 };
               }
@@ -638,6 +643,7 @@ export default function App() {
                 ...DEFAULT_CONVENIO_ZARAGOZA.ratesByYear[2026],
                 ...r,
                 plusFestivoMayor4h: r.plusFestivoMayor4h === 40.80 ? 42.80 : (r.plusFestivoMayor4h ?? 42.80),
+                plusVacacionesDia: r.plusVacacionesDia && r.plusVacacionesDia > 0 ? r.plusVacacionesDia : 10.00,
                 year: yNum,
               };
             }
@@ -650,9 +656,13 @@ export default function App() {
           }
         }
         if (driveProfile && driveProfile.name) {
-          if (JSON.stringify(driveProfile) !== JSON.stringify(cur.profile)) {
+          const normalizedDriveProfile: WorkerProfile = {
+            ...driveProfile,
+            hasVacationPlus: driveProfile.hasVacationPlus !== undefined ? driveProfile.hasVacationPlus : true,
+          };
+          if (JSON.stringify(normalizedDriveProfile) !== JSON.stringify(cur.profile)) {
             isApplyingRemoteSyncRef.current = true;
-            setProfile(driveProfile);
+            setProfile(normalizedDriveProfile);
             updatedAny = true;
           }
         }

@@ -128,7 +128,8 @@ export interface WorkerProfile {
   customCutoffStartDay?: number; // e.g. 25
   hasMonetaryQuebranto: boolean; // cobra billetes en efectivo
   hasConductorPerceptorPlus: boolean;
-  hasVacationPlus100Percent?: boolean; // Activar automáticamente el plus de vacaciones (10 €/día) en días 'V' sólo si la jornada está al 100%
+  hasVacationPlus?: boolean; // Activar automáticamente el plus de vacaciones Art. 9 (10 €/día al 100%, proporcional al % de jornada) en días 'V'
+  hasVacationPlus100Percent?: boolean; // legacy compatibility
   salaryBaseRateMode?: 'convenio_53_18' | 'masats_39_89'; // 53.18 € Convenio Zaragoza o 39.89 € Recibo Masats
   unionFeeDeduction: number; // e.g. 0.00
   advancePayment: number; // anticipos
@@ -163,11 +164,16 @@ export interface PayrollBreakdown {
   restDays: number;
   holidayDays: number;
   vacationDays: number;
+  vacationPlusDays: number;
   sickDays: number;
 
   totalWorkedHours: number;
+  ordinaryConvenioHours: number; // Horas ordinarias dentro de convenio (excluyendo horas festivas)
   nightHours: number;
   partTimeFactor: number; // 1 for full time, e.g. 0.5 for 50%
+  convenioAnnualHoursBase: number; // e.g. 1776h al 100% (Art. 14 Convenio)
+  convenioAnnualHoursTarget: number; // e.g. 1332h al 75%, 1776h al 100%
+  convenioMonthlyHoursTarget: number; // e.g. 111h al 75%, 148h al 100%
 
   // Extras Cutoff Configuration info
   extrasCutoffMode: ExtrasCutoffMode;
@@ -250,4 +256,5 @@ export interface MonthlySalaryEvolution {
   isProjected: boolean; // Si es proyección estimada o datos reales del cuadrante
   workedDays: number;
   totalHours: number;
+  ordinaryConvenioHours?: number;
 }

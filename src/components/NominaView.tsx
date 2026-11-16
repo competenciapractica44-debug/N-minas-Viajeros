@@ -95,6 +95,20 @@ export const NominaView: React.FC<NominaViewProps> = ({
   const prorrataPerPaga = prorrataNumPagas > 0 ? parseFloat((payroll.prorrataPagasExtra / prorrataNumPagas).toFixed(2)) : 0;
   const baseIrpf = Math.max(0, payroll.totalDevengado - payroll.dietasExentas);
 
+  const formatHoursES = (h: number) =>
+    new Intl.NumberFormat('es-ES', { minimumFractionDigits: h % 1 === 0 ? 0 : 2, maximumFractionDigits: 2 }).format(h);
+  const annualLoggedHours = parseFloat(
+    yearlyEvolution
+      .filter((m) => !m.isProjected)
+      .reduce((acc, m) => acc + (m.ordinaryConvenioHours ?? m.totalHours), 0)
+      .toFixed(2)
+  );
+  const periodHoursDiff = parseFloat((payroll.ordinaryConvenioHours - payroll.convenioMonthlyHoursTarget).toFixed(2));
+  const annualHoursProgressPct =
+    payroll.convenioAnnualHoursTarget > 0
+      ? Math.min(100, Math.round((annualLoggedHours / payroll.convenioAnnualHoursTarget) * 100))
+      : 0;
+
   const handleJornadaChange = (newPercentage: number) => {
     if (newPercentage >= 100) {
       onUpdateProfile({
@@ -200,6 +214,63 @@ export const NominaView: React.FC<NominaViewProps> = ({
           <div>
             <span className="text-slate-400 text-[11px] block">Horas Nocturnas (22-06h)</span>
             <span className="font-bold text-amber-300 font-mono text-sm">{payroll.nightHours} horas</span>
+          </div>
+        </div>
+
+        {/* Convenio Art. 14 Target Hours Strip */}
+        <div className="mt-3 pt-3 border-t border-white/10 grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs bg-white/5 rounded-2xl p-3">
+          <div>
+            <span className="text-slate-400 text-[10px] uppercase tracking-wider font-semibold block">
+              Horas Convenio a Cumplir ({Math.round(payroll.partTimeFactor * 100)}%)
+            </span>
+            <span className="font-bold text-sky-300 font-mono text-sm">
+              {formatHoursES(payroll.convenioAnnualHoursTarget)} h/año
+            </span>
+            <span className="text-[11px] text-slate-300 block">
+              Ref. mensual: <strong className="font-mono text-white">{formatHoursES(payroll.convenioMonthlyHoursTarget)} h/mes</strong>
+              {payroll.partTimeFactor < 1 && ` (${Math.round(payroll.partTimeFactor * 100)}% de ${formatHoursES(payroll.convenioAnnualHoursBase)} h)`}
+            </span>
+          </div>
+
+          <div>
+            <span className="text-slate-400 text-[10px] uppercase tracking-wider font-semibold block">
+              Horas Ordinarias en Convenio
+            </span>
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-white font-mono text-sm">
+                {formatHoursES(payroll.ordinaryConvenioHours)} h
+              </span>
+              <span
+                className={`text-[10px] font-bold px-1.5 py-0.5 rounded font-mono ${
+                  periodHoursDiff >= 0
+                    ? 'bg-emerald-400/20 text-emerald-300'
+                    : 'bg-amber-400/20 text-amber-300'
+                }`}
+              >
+                {periodHoursDiff >= 0 ? `+${formatHoursES(periodHoursDiff)} h compl.` : `${formatHoursES(periodHoursDiff)} h`}
+              </span>
+            </div>
+            <span className="text-[11px] text-slate-300 block">
+              {payroll.horasFestivas > 0
+                ? `Ref. ${formatHoursES(payroll.convenioMonthlyHoursTarget)} h/mes · ${formatHoursES(payroll.horasFestivas)} h festivas excluidas (Total: ${formatHoursES(payroll.totalWorkedHours)} h)`
+                : `Respecto a ref. de ${formatHoursES(payroll.convenioMonthlyHoursTarget)} h/mes`}
+            </span>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between text-[10px] uppercase tracking-wider font-semibold text-slate-400 mb-1">
+              <span>Acumulado Anual {selectedYear}</span>
+              <span className="font-mono text-sky-300">{annualHoursProgressPct}%</span>
+            </div>
+            <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden mb-1">
+              <div
+                className="h-full bg-gradient-to-r from-sky-400 to-emerald-400 rounded-full transition-all"
+                style={{ width: `${annualHoursProgressPct}%` }}
+              />
+            </div>
+            <span className="text-[11px] text-slate-200 font-mono block">
+              <strong>{formatHoursES(annualLoggedHours)} h</strong> / {formatHoursES(payroll.convenioAnnualHoursTarget)} h
+            </span>
           </div>
         </div>
 
@@ -686,8 +757,8 @@ export const NominaView: React.FC<NominaViewProps> = ({
           <div className="flex items-center justify-between gap-1 pt-1 border-t border-slate-100">
             <p className="text-[11px] text-slate-500 truncate">
               {currentJornadaPercentage === 100
-                ? 'Jornada completa al 100% de convenio.'
-                : `Jornada parcial al ${currentJornadaPercentage}% proporcional.`}
+                ? `Completa 100% · ${formatHoursES(payroll.convenioAnnualHoursTarget)} h/año (${formatHoursES(payroll.convenioMonthlyHoursTarget)} h/mes)`
+                : `Parcial ${currentJornadaPercentage}% · ${formatHoursES(payroll.convenioAnnualHoursTarget)} h/año (${formatHoursES(payroll.convenioMonthlyHoursTarget)} h/mes)`}
             </p>
             <div className="flex items-center gap-1 shrink-0">
               {[50, 75, 100].map((preset) => (
@@ -721,7 +792,7 @@ export const NominaView: React.FC<NominaViewProps> = ({
                 Ciclo de Corte para Variables, Pluses y Extras
               </h4>
               <p className="text-[11px] text-slate-500">
-                El salario base, prorrata y vacaciones corresponden al mes natural. Todos los pluses y variables (Conductor, Quebranto, Retén, Nocturnidad, Festivos, Horas y Extras) se cierran estrictamente del ciclo:
+                El salario base y la prorrata corresponden al mes natural. Todos los pluses y variables (Plus de Vacaciones, Conductor, Quebranto, Retén, Nocturnidad, Festivos, Horas y Extras) se cierran estrictamente del ciclo:
               </p>
             </div>
           </div>
@@ -846,10 +917,10 @@ export const NominaView: React.FC<NominaViewProps> = ({
                     <p className="font-bold text-cyan-950">Plus de Vacaciones (Art. 9 Convenio)</p>
                   </div>
                   <p className="text-[10px] text-cyan-700">
-                    {payroll.vacationDays} {payroll.vacationDays === 1 ? 'día disfrutado' : 'días disfrutados'} ×{' '}
-                    {formatCurrency(parseFloat(((activeYearRate.plusVacacionesDia ?? 10.00) * payroll.partTimeFactor).toFixed(2)))}/día{' '}
+                    {payroll.vacationPlusDays} {payroll.vacationPlusDays === 1 ? 'día disfrutado' : 'días disfrutados'} ×{' '}
+                    {formatCurrency(parseFloat((((activeYearRate.plusVacacionesDia && activeYearRate.plusVacacionesDia > 0 ? activeYearRate.plusVacacionesDia : 10.00)) * payroll.partTimeFactor).toFixed(2)))}/día{' '}
                     {payroll.partTimeFactor < 1
-                      ? `(Proporcional al ${Math.round(payroll.partTimeFactor * 100)}% de ${formatCurrency(activeYearRate.plusVacacionesDia ?? 10.00)})`
+                      ? `(Proporcional al ${Math.round(payroll.partTimeFactor * 100)}% de ${formatCurrency(activeYearRate.plusVacacionesDia && activeYearRate.plusVacacionesDia > 0 ? activeYearRate.plusVacacionesDia : 10.00)})`
                       : '(Contrato al 100%)'}
                   </p>
                 </div>
@@ -922,7 +993,7 @@ export const NominaView: React.FC<NominaViewProps> = ({
                 <div>
                   <p className="font-semibold text-slate-800">Festivas (Horas)</p>
                   <p className="text-[10px] text-slate-400">
-                    {payroll.horasFestivas} horas festivas × {formatCurrency(activeYearRate.horaOrdinaria)}/h
+                    {formatHoursES(payroll.horasFestivas)} h en festivo × {formatCurrency(activeYearRate.horaOrdinaria)}/h (no computan dentro de convenio)
                   </p>
                 </div>
                 <span className="font-bold font-mono text-emerald-700">+{formatCurrency(payroll.horasFestivasAmount)}</span>
@@ -977,7 +1048,10 @@ export const NominaView: React.FC<NominaViewProps> = ({
                     <p className="font-bold text-indigo-950">Hores Complementarias / Exceso</p>
                   </div>
                   <p className="text-[10px] text-indigo-700">
-                    {payroll.horasComplementarias || payroll.horasExtra} horas acumuladas × {formatCurrency(activeYearRate.horaOrdinaria)}/h
+                    {formatHoursES(payroll.horasComplementarias || payroll.horasExtra)} h × {formatCurrency(activeYearRate.horaOrdinaria)}/h
+                    {payroll.ordinaryConvenioHours > payroll.convenioMonthlyHoursTarget
+                      ? ` (exceso sobre ${formatHoursES(payroll.convenioMonthlyHoursTarget)} h de convenio)`
+                      : ' (exceso de jornada acumulado)'}
                   </p>
                 </div>
                 <span className="font-extrabold font-mono text-indigo-900 text-sm">+{formatCurrency(payroll.importeHorasExtra)}</span>

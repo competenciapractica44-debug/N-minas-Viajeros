@@ -159,9 +159,9 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
   // Helper: vacation plus (10€/day at 100%, proportional to part-time % e.g. 7.50€/day at 75%)
   const isJornada100 = !profile || profile.contractType !== 'tiempo_parcial' || (profile.partTimePercentage || 100) >= 100;
   const partTimeFactorCal = !isJornada100 && profile?.partTimePercentage ? profile.partTimePercentage / 100 : 1;
-  const isAutoVacationPlusActive = profile?.hasVacationPlus100Percent !== false;
+  const isAutoVacationPlusActive = profile?.hasVacationPlus !== false;
   const appliesVacationPlus = isAutoVacationPlusActive;
-  const effectiveVacationPlusDia = parseFloat(((activeYearRate.plusVacacionesDia ?? 10.00) * partTimeFactorCal).toFixed(2));
+  const effectiveVacationPlusDia = parseFloat((((activeYearRate.plusVacacionesDia && activeYearRate.plusVacacionesDia > 0 ? activeYearRate.plusVacacionesDia : 10.00)) * partTimeFactorCal).toFixed(2));
 
   // Tipo de jornada sugerido según el día seleccionado en el calendario
   const selectedDayTypeSuggested = useMemo<'laborable' | 'sabado' | 'festivo'>(() => {
@@ -420,6 +420,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
     let vacacionesCount = 0;
     let festivosCount = 0;
     let extrasTotal = 0;
+    let monthWorkedHours = 0;
 
     for (let d = 1; d <= daysInMonth; d++) {
       const dStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
@@ -434,6 +435,14 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
           vacacionesCount++;
         } else if (asg.shiftCode) {
           turnosCount++;
+          const shiftDef = shiftsMap.get(asg.shiftCode) || shifts.find((s) => s.code === asg.shiftCode);
+          if (shiftDef) {
+            if (asg.customStartTime && asg.customEndTime) {
+              monthWorkedHours += calculateTotalHours(asg.customStartTime, asg.customEndTime);
+            } else {
+              monthWorkedHours += computeShiftRateFromConvenio(shiftDef, activeYearRate).totalHours;
+            }
+          }
         }
         if (asg.extras) {
           asg.extras.forEach((e) => {
@@ -452,11 +461,24 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
         if (asg.lateFinishMinutes && asg.lateFinishMinutes > 0) {
           const lateAmt = parseFloat(((asg.lateFinishMinutes / 60) * horaOrdinariaRate).toFixed(2));
           extrasTotal += lateAmt;
+          monthWorkedHours += asg.lateFinishMinutes / 60;
         }
       }
     }
-    return { turnosCount, descansosCount, vacacionesCount, festivosCount, extrasTotal };
-  }, [assignments, daysInMonth, selectedYear, selectedMonth, horaOrdinariaRate, activeYearRate]);
+    return {
+      turnosCount,
+      descansosCount,
+      vacacionesCount,
+      festivosCount,
+      extrasTotal,
+      monthWorkedHours: Math.round(monthWorkedHours * 100) / 100,
+    };
+  }, [assignments, daysInMonth, selectedYear, selectedMonth, horaOrdinariaRate, activeYearRate, shiftsMap, shifts]);
+
+  const convenioAnnualTargetCal = parseFloat(
+    (((activeYearRate.horasJornadaAnual && activeYearRate.horasJornadaAnual > 0 ? activeYearRate.horasJornadaAnual : 1776)) * partTimeFactorCal).toFixed(2)
+  );
+  const convenioMonthlyTargetCal = parseFloat((convenioAnnualTargetCal / 12).toFixed(2));
 
   // Estado de Retén, Quebranto de Moneda y Plus Conductor (entero o mitad) para el día seleccionado
   const dayPlusStatus = useMemo(() => {
@@ -663,6 +685,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
       shiftCode: code,
       isRest: code === 'D',
       isVacation: code === 'V',
+      isSickLeave: code === 'B',
       extras: updatedExtras,
     });
   };
@@ -808,6 +831,21 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
         <span className="flex items-center gap-1.5 text-slate-700">
           <span className="w-2 h-2 rounded-full bg-amber-500"></span>
           <strong>{counters.extrasTotal > 0 ? `+${formatCurrency(counters.extrasTotal)}` : '0€'}</strong> Extras
+        </span>
+      </div>
+
+      {/* Convenio Art. 14 Target Hours Indicator */}
+      <div className="bg-blue-50/70 border border-blue-200/80 rounded-2xl px-3.5 py-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-blue-950">
+        <div className="flex items-center gap-1.5">
+          <Clock className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+          <span>
+            <strong>Jornada Convenio ({Math.round(partTimeFactorCal * 100)}%):</strong>{' '}
+            <strong className="font-mono">{convenioAnnualTargetCal.toLocaleString('es-ES')} h/año</strong>{' '}
+            <span className="text-blue-700">({convenioMonthlyTargetCal.toLocaleString('es-ES')} h/mes ref.)</span>
+          </span>
+        </div>
+        <span className="font-mono font-bold text-blue-800">
+          Realizadas mes: {counters.monthWorkedHours.toLocaleString('es-ES')} h
         </span>
       </div>
 

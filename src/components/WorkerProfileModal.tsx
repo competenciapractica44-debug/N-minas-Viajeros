@@ -26,7 +26,7 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
     partTimePercentage: profile.partTimePercentage !== undefined ? profile.partTimePercentage : 50,
     extrasCutoffMode: profile.extrasCutoffMode || 'direxis_25_24',
     customCutoffStartDay: profile.customCutoffStartDay || 25,
-    hasVacationPlus100Percent: profile.hasVacationPlus100Percent !== undefined ? profile.hasVacationPlus100Percent : true,
+    hasVacationPlus: profile.hasVacationPlus !== undefined ? profile.hasVacationPlus : true,
   }));
 
   if (!isOpen) return null;
@@ -244,7 +244,24 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
                 <p className="text-[11px] text-amber-800 leading-relaxed">
                   El salario base y las pagas extraordinarias se calcularán de forma proporcional al{' '}
                   <strong className="font-semibold">{formData.partTimePercentage || 50}%</strong> de la jornada de convenio.
+                  <span className="block mt-1 font-semibold text-amber-950">
+                    Jornada anual a cumplir (Art. 14):{' '}
+                    {parseFloat((((effectiveRate.horasJornadaAnual || 1776) * (formData.partTimePercentage || 50)) / 100).toFixed(2)).toLocaleString('es-ES')} h/año
+                    {' '}({parseFloat(((((effectiveRate.horasJornadaAnual || 1776) * (formData.partTimePercentage || 50)) / 100) / 12).toFixed(2)).toLocaleString('es-ES')} h/mes equivalente).
+                  </span>
                 </p>
+              </div>
+            )}
+
+            {!isPartTime && (
+              <div className="p-3 bg-blue-50/70 border border-blue-200/80 rounded-2xl text-[11px] text-blue-900 flex items-center justify-between gap-2">
+                <span>
+                  <strong>Jornada Completa (100% · Art. 14 Convenio):</strong> deber anual de{' '}
+                  <strong>{(effectiveRate.horasJornadaAnual || 1776).toLocaleString('es-ES')} h/año</strong>
+                </span>
+                <span className="font-mono font-bold bg-white px-2 py-0.5 rounded-lg border border-blue-200 shrink-0">
+                  {parseFloat(((effectiveRate.horasJornadaAnual || 1776) / 12).toFixed(2)).toLocaleString('es-ES')} h/mes
+                </span>
               </div>
             )}
 
@@ -458,13 +475,13 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
                 Pluses e Incentivos de Convenio
               </span>
 
-              {/* Opción Plus de Vacaciones (10€/día en días 'V' sólo si el contrato está al 100%) */}
+              {/* Opción Plus de Vacaciones (Art. 9 Convenio: 10€/día al 100%, proporcional al % de jornada) */}
               <div className="p-3 bg-cyan-50/70 rounded-2xl border border-cyan-200/80 space-y-1.5 transition-all">
                 <label className="flex items-start gap-2.5 cursor-pointer">
                   <input
                     type="checkbox"
-                    checked={formData.hasVacationPlus100Percent !== false}
-                    onChange={(e) => setFormData({ ...formData, hasVacationPlus100Percent: e.target.checked })}
+                    checked={formData.hasVacationPlus !== false}
+                    onChange={(e) => setFormData({ ...formData, hasVacationPlus: e.target.checked })}
                     className="mt-0.5 rounded text-cyan-600 focus:ring-cyan-500 w-4 h-4 shrink-0"
                   />
                   <div className="space-y-1">
