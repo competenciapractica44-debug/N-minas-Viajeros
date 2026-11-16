@@ -718,10 +718,10 @@ export const NominaView: React.FC<NominaViewProps> = ({
             </div>
             <div>
               <h4 className="text-xs font-bold text-slate-900 leading-tight">
-                Ciclo de Corte para Extras y Variables
+                Ciclo de Corte para Variables, Pluses y Extras
               </h4>
               <p className="text-[11px] text-slate-500">
-                El sueldo base corresponde a los días del mes natural. Los extras y variables se cierran según el ciclo de la empresa:
+                El salario base, prorrata y vacaciones corresponden al mes natural. Todos los pluses y variables (Conductor, Quebranto, Retén, Nocturnidad, Festivos, Horas y Extras) se cierran estrictamente del ciclo:
               </p>
             </div>
           </div>
@@ -797,7 +797,12 @@ export const NominaView: React.FC<NominaViewProps> = ({
           <div className="flex items-start gap-2 p-2.5 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-900">
             <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
             <div className="text-[11px] leading-tight">
-              <strong>{payroll.pendingNextMonthExtrasCount} extras generados entre el día 25 y el 31 (+{formatCurrency(payroll.pendingNextMonthExtrasTotal || 0)})</strong> pasarán a la nómina del mes siguiente según el corte oficial de Direxis.
+              <strong>
+                {payroll.pendingNextMonthExtrasCount} conceptos variables/pluses generados entre el día{' '}
+                {profile.extrasCutoffMode === 'personalizado' ? (profile.customCutoffStartDay || 25) : 25} y el {payroll.totalDays}{' '}
+                (+{formatCurrency(payroll.pendingNextMonthExtrasTotal || 0)})
+              </strong>{' '}
+              quedan excluidos de este mes y pasarán a la nómina del mes siguiente según el período de corte ({payroll.extrasCutoffPeriod}).
             </div>
           </div>
         ) : null}
@@ -841,7 +846,11 @@ export const NominaView: React.FC<NominaViewProps> = ({
                     <p className="font-bold text-cyan-950">Plus de Vacaciones (Art. 9 Convenio)</p>
                   </div>
                   <p className="text-[10px] text-cyan-700">
-                    {payroll.vacationDays} {payroll.vacationDays === 1 ? 'día disfrutado' : 'días disfrutados'} × {formatCurrency(activeYearRate.plusVacacionesDia ?? 10.00)}/día (Contrato al 100%)
+                    {payroll.vacationDays} {payroll.vacationDays === 1 ? 'día disfrutado' : 'días disfrutados'} ×{' '}
+                    {formatCurrency(parseFloat(((activeYearRate.plusVacacionesDia ?? 10.00) * payroll.partTimeFactor).toFixed(2)))}/día{' '}
+                    {payroll.partTimeFactor < 1
+                      ? `(Proporcional al ${Math.round(payroll.partTimeFactor * 100)}% de ${formatCurrency(activeYearRate.plusVacacionesDia ?? 10.00)})`
+                      : '(Contrato al 100%)'}
                   </p>
                 </div>
                 <span className="font-extrabold font-mono text-cyan-800 text-sm">+{formatCurrency(payroll.plusVacaciones)}</span>

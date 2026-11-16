@@ -357,7 +357,11 @@ export function exportToExcel(
         extrasStr,
         shift
           ? computeShiftRateFromConvenio(shift, activeRate).totalRate
-          : (item.shiftCode === 'D' ? 0 : item.shiftCode === 'V' ? baseDayRate + (activeRate.plusVacacionesDia ?? 10.00) : baseDayRate),
+          : (item.shiftCode === 'D'
+              ? 0
+              : item.shiftCode === 'V'
+              ? baseDayRate + (profile.hasVacationPlus100Percent !== false ? parseFloat(((activeRate.plusVacacionesDia ?? 10.00) * payroll.partTimeFactor).toFixed(2)) : 0)
+              : baseDayRate),
       ];
     });
 

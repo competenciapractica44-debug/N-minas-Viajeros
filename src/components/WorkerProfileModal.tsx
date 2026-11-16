@@ -470,20 +470,28 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
                   <div className="space-y-1">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="font-bold text-slate-900 text-xs">
-                        Activar automáticamente el Plus de Vacaciones ({formatCurrency(effectiveRate.plusVacacionesDia ?? 10.00)}/día bruto)
+                        Activar automáticamente el Plus de Vacaciones ({formatCurrency(effectiveRate.plusVacacionesDia ?? 10.00)}/día bruto al 100%)
                       </span>
                       <span className="text-[10px] font-bold bg-cyan-100 text-cyan-800 px-1.5 py-0.2 rounded">
-                        Art. 9 · Sólo al 100% de jornada
+                        Art. 9 · Proporcional a la jornada
                       </span>
                     </div>
                     <p className="text-[11px] text-slate-600 leading-normal">
-                      Aplica automáticamente el incentivo del Art. 9 del Convenio ({formatCurrency(effectiveRate.plusVacacionesDia ?? 10.00)}/día en bruto) en todos los días marcados como 'V' en el calendario, <strong>únicamente si el contrato se encuentra al 100% de jornada</strong>.
+                      Aplica automáticamente el incentivo del Art. 9 del Convenio ({formatCurrency(effectiveRate.plusVacacionesDia ?? 10.00)}/día bruto al 100%, o parte proporcional según tu % de jornada) en todos los días marcados como 'V' en el calendario.
                     </p>
                     {isPartTime && (formData.partTimePercentage || 50) < 100 && (
-                      <div className="flex items-center gap-1.5 text-[10px] text-amber-800 bg-amber-100/70 p-1.5 rounded-lg font-medium mt-1">
+                      <div className="flex items-center gap-1.5 text-[10px] text-cyan-900 bg-cyan-100/80 p-1.5 rounded-lg font-medium mt-1">
                         <span>ℹ️</span>
                         <span>
-                          Tu jornada actual está configurada al <strong>{formData.partTimePercentage || 50}%</strong>. Este plus no se devengará en la nómina hasta alcanzar el 100% de jornada.
+                          Con tu jornada actual al <strong>{formData.partTimePercentage || 50}%</strong>, percibirás{' '}
+                          <strong>
+                            {formatCurrency(
+                              parseFloat(
+                                (((effectiveRate.plusVacacionesDia ?? 10.00) * (formData.partTimePercentage || 50)) / 100).toFixed(2)
+                              )
+                            )}/día bruto
+                          </strong>{' '}
+                          en cada día de vacaciones ('V').
                         </span>
                       </div>
                     )}

@@ -156,10 +156,12 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
     activeYearRate.plusConductorPerceptorDiaReducido ??
     parseFloat((plusConductorRate / 2).toFixed(2));
 
-  // Helper: check if vacation plus (10€/day) applies based on profile 100% contract condition
+  // Helper: vacation plus (10€/day at 100%, proportional to part-time % e.g. 7.50€/day at 75%)
   const isJornada100 = !profile || profile.contractType !== 'tiempo_parcial' || (profile.partTimePercentage || 100) >= 100;
+  const partTimeFactorCal = !isJornada100 && profile?.partTimePercentage ? profile.partTimePercentage / 100 : 1;
   const isAutoVacationPlusActive = profile?.hasVacationPlus100Percent !== false;
-  const appliesVacationPlus = isAutoVacationPlusActive && isJornada100;
+  const appliesVacationPlus = isAutoVacationPlusActive;
+  const effectiveVacationPlusDia = parseFloat(((activeYearRate.plusVacacionesDia ?? 10.00) * partTimeFactorCal).toFixed(2));
 
   // Tipo de jornada sugerido según el día seleccionado en el calendario
   const selectedDayTypeSuggested = useMemo<'laborable' | 'sabado' | 'festivo'>(() => {
@@ -261,11 +263,9 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
       {
         code: 'V',
         label: 'Vacaciones',
-        rate: appliesVacationPlus
-          ? parseFloat((activeYearRate.salarioBaseDia + (activeYearRate.plusVacacionesDia ?? 10.00)).toFixed(2))
-          : Math.round((activeYearRate.salarioBaseDia * (!isJornada100 && profile?.partTimePercentage ? profile.partTimePercentage / 100 : 1)) * 100) / 100,
+        rate: parseFloat((activeYearRate.salarioBaseDia * partTimeFactorCal).toFixed(2)) + (appliesVacationPlus ? effectiveVacationPlusDia : 0),
         color: '#06b6d4',
-        subtitle: appliesVacationPlus ? `+${formatCurrency(activeYearRate.plusVacacionesDia ?? 10.00)}` : 'Base',
+        subtitle: appliesVacationPlus ? `+${formatCurrency(effectiveVacationPlusDia)}` : 'Base',
         isUsedRecently: false,
       },
       ...workCards,
@@ -277,8 +277,8 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
     selectedDayTypeSuggested,
     activeYearRate,
     appliesVacationPlus,
-    isJornada100,
-    profile?.partTimePercentage,
+    partTimeFactorCal,
+    effectiveVacationPlusDia,
   ]);
 
   // Turnos filtrados y contadores para el buscador visual de turnos
@@ -567,9 +567,8 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
       if (currentShift.code === 'D') {
         base = 0;
       } else if (currentShift.code === 'V') {
-        const factor = (!isJornada100 && profile?.partTimePercentage) ? profile.partTimePercentage / 100 : 1;
-        const baseDia = parseFloat((yearRate.salarioBaseDia * factor).toFixed(2));
-        const plusVac = appliesVacationPlus ? (yearRate.plusVacacionesDia ?? 10.00) : 0;
+        const baseDia = parseFloat((yearRate.salarioBaseDia * partTimeFactorCal).toFixed(2));
+        const plusVac = appliesVacationPlus ? effectiveVacationPlusDia : 0;
         base = baseDia + plusVac;
       } else {
         const shiftCalc = computeShiftRateFromConvenio(currentShift, yearRate, { isHoliday });
@@ -620,9 +619,9 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
     currentAssignment.lateFinishMinutes,
     currentAssignment.isHoliday,
     activeYearRate,
-    isJornada100,
+    partTimeFactorCal,
+    effectiveVacationPlusDia,
     appliesVacationPlus,
-    profile?.partTimePercentage,
     horaOrdinariaRate,
     dayPlusStatus,
     quebrantoRate,
@@ -985,28 +984,26 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                 </span>
                 <span className="text-sm font-bold font-mono text-cyan-800">
                   {formatCurrency(
-                    parseFloat((activeYearRate.salarioBaseDia * (!isJornada100 && profile?.partTimePercentage ? profile.partTimePercentage / 100 : 1)).toFixed(2)) +
-                    (appliesVacationPlus ? (activeYearRate.plusVacacionesDia ?? 10.00) : 0)
+                    parseFloat((activeYearRate.salarioBaseDia * partTimeFactorCal).toFixed(2)) +
+                    (appliesVacationPlus ? effectiveVacationPlusDia : 0)
                   )}
                 </span>
               </div>
               {appliesVacationPlus ? (
                 <p className="text-[11px] text-cyan-800 leading-relaxed">
-                  Jornada retribuida completa (100%): Salario Base diario ({formatCurrency(activeYearRate.salarioBaseDia)}) + <strong>Plus de Vacaciones de {formatCurrency(activeYearRate.plusVacacionesDia ?? 10.00)}/día</strong> según el Art. 9 del Convenio Colectivo de Zaragoza.
-                </p>
-              ) : !isJornada100 ? (
-                <p className="text-[11px] text-cyan-900 leading-relaxed">
-                  Jornada de vacaciones retribuida con Salario Base proporcional ({formatCurrency(activeYearRate.salarioBaseDia * ((profile?.partTimePercentage || 50) / 100))}). El <strong>Plus de Vacaciones ({formatCurrency(activeYearRate.plusVacacionesDia ?? 10.00)}/día)</strong> no se devenga al estar contratado al {profile?.partTimePercentage || 50}% (la opción configurada en el perfil requiere contrato al 100%).
+                  Jornada {isJornada100 ? 'completa (100%)' : `parcial al ${Math.round(partTimeFactorCal * 100)}%`}: Salario Base diario ({formatCurrency(parseFloat((activeYearRate.salarioBaseDia * partTimeFactorCal).toFixed(2)))}) + <strong>Plus de Vacaciones de {formatCurrency(effectiveVacationPlusDia)}/día</strong>{!isJornada100 ? ` (${Math.round(partTimeFactorCal * 100)}% de ${formatCurrency(activeYearRate.plusVacacionesDia ?? 10.00)})` : ''} según el Art. 9 del Convenio Colectivo de Zaragoza.
                 </p>
               ) : (
                 <p className="text-[11px] text-cyan-900 leading-relaxed">
-                  Jornada de vacaciones retribuida con Salario Base diario ({formatCurrency(activeYearRate.salarioBaseDia)}). El <strong>Plus de Vacaciones ({formatCurrency(activeYearRate.plusVacacionesDia ?? 10.00)}/día)</strong> se encuentra desactivado en tu Perfil de trabajador.
+                  Jornada de vacaciones retribuida con Salario Base diario ({formatCurrency(parseFloat((activeYearRate.salarioBaseDia * partTimeFactorCal).toFixed(2)))}). El <strong>Plus de Vacaciones</strong> se encuentra desactivado en tu Perfil de trabajador.
                 </p>
               )}
               <div className="flex items-center justify-between text-[11px] text-cyan-700 pt-1 border-t border-cyan-200/60">
                 <span className="flex items-center gap-1 font-medium">
                   <CheckCircle2 className="w-3.5 h-3.5 text-cyan-600" />
-                  {appliesVacationPlus ? `Plus de ${formatCurrency(activeYearRate.plusVacacionesDia ?? 10.00)}/día activo (contrato al 100%)` : 'Retribución Salario Base diaria'}
+                  {appliesVacationPlus
+                    ? `Plus de ${formatCurrency(effectiveVacationPlusDia)}/día activo (${isJornada100 ? '100%' : `proporcional al ${Math.round(partTimeFactorCal * 100)}%`})`
+                    : 'Retribución Salario Base diaria'}
                 </span>
                 <span className="text-[10px] font-bold text-cyan-700 uppercase bg-cyan-100 px-2 py-0.5 rounded-md">Art. 9 Convenio</span>
               </div>
