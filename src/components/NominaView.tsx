@@ -134,7 +134,14 @@ export const NominaView: React.FC<NominaViewProps> = ({
     });
   });
 
-  const nonZeroExtrasItems = payroll.extrasItemsList.filter((item) => item.amount > 0);
+  const nonZeroExtrasItems = payroll.extrasItemsList
+    .filter(
+      (item) =>
+        item.amount > 0 &&
+        (!payroll.extrasCutoffStartDate || item.date >= payroll.extrasCutoffStartDate) &&
+        (!payroll.extrasCutoffEndDate || item.date <= payroll.extrasCutoffEndDate)
+    )
+    .sort((a, b) => a.date.localeCompare(b.date));
   const nonZeroExtrasTotal = parseFloat(
     nonZeroExtrasItems.reduce((acc, item) => acc + item.amount, 0).toFixed(2)
   );
@@ -163,6 +170,29 @@ export const NominaView: React.FC<NominaViewProps> = ({
     const wd = weekDaysShort[new Date(y, m - 1, d).getDay()];
     return `${wd} ${String(d).padStart(2, '0')} ${monthsShort[m - 1] || ''}`;
   };
+
+  const formatFullDateES = (dateStr?: string) => {
+    if (!dateStr) return '';
+    const [y, m, d] = dateStr.split('-').map(Number);
+    if (!y || !m || !d) return dateStr;
+    return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
+  };
+
+  const cutoffTotalDays = (() => {
+    if (!payroll.extrasCutoffStartDate || !payroll.extrasCutoffEndDate) return 0;
+    const [sy, sm, sd] = payroll.extrasCutoffStartDate.split('-').map(Number);
+    const [ey, em, ed] = payroll.extrasCutoffEndDate.split('-').map(Number);
+    if (!sy || !sm || !sd || !ey || !em || !ed) return 0;
+    const diff = Date.UTC(ey, em - 1, ed) - Date.UTC(sy, sm - 1, sd);
+    return Math.max(1, Math.round(diff / (24 * 60 * 60 * 1000)) + 1);
+  })();
+
+  const cutoffModeShortLabel =
+    payroll.extrasCutoffMode === 'mes_natural'
+      ? 'Mes Natural'
+      : payroll.extrasCutoffMode === 'personalizado'
+        ? 'Corte Personalizado'
+        : 'Ciclo Direxis (25-24)';
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-4 pb-28 space-y-4">
@@ -888,10 +918,40 @@ export const NominaView: React.FC<NominaViewProps> = ({
               )}
             </div>
             <p className="text-[10px] text-slate-500 mt-1">
-              Del {profile.customCutoffStartDay || 25} al {(profile.customCutoffStartDay || 25) - 1}
+              {(profile.customCutoffStartDay || 25) === 1
+                ? 'Del 1 al fin de mes (incluidos)'
+                : `Del ${profile.customCutoffStartDay || 25} mes ant. al ${(profile.customCutoffStartDay || 25) - 1} actual`}
             </p>
           </button>
         </div>
+
+        {profile.extrasCutoffMode === 'personalizado' && (
+          <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-purple-50/70 rounded-xl border border-purple-200/80 text-xs text-purple-950">
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-[11px]">Día de inicio personalizado:</span>
+              <input
+                type="number"
+                min={1}
+                max={28}
+                value={profile.customCutoffStartDay || 25}
+                onChange={(e) => {
+                  const val = Math.max(1, Math.min(28, parseInt(e.target.value, 10) || 1));
+                  onUpdateProfile({
+                    extrasCutoffMode: 'personalizado',
+                    customCutoffStartDay: val,
+                  });
+                }}
+                className="w-16 py-1 px-2 border border-purple-300 rounded-lg text-xs font-mono font-bold text-center bg-white text-purple-950"
+              />
+            </div>
+            <span className="text-[11px] text-purple-800">
+              Cobertura actual:{' '}
+              <strong>
+                {formatFullDateES(payroll.extrasCutoffStartDate)} al {formatFullDateES(payroll.extrasCutoffEndDate)} (incluidos)
+              </strong>
+            </span>
+          </div>
+        )}
 
         {/* If pending extras after cutoff exist in current month */}
         {payroll.pendingNextMonthExtrasCount && payroll.pendingNextMonthExtrasCount > 0 ? (
@@ -900,10 +960,10 @@ export const NominaView: React.FC<NominaViewProps> = ({
             <div className="text-[11px] leading-tight">
               <strong>
                 {payroll.pendingNextMonthExtrasCount} conceptos variables/pluses generados entre el día{' '}
-                {profile.extrasCutoffMode === 'personalizado' ? (profile.customCutoffStartDay || 25) : 25} y el {payroll.totalDays}{' '}
+                {Math.min(payroll.totalDays, (Number(payroll.extrasCutoffEndDate?.split('-')[2] || 24) + 1))} y el {payroll.totalDays}{' '}
                 (+{formatCurrency(payroll.pendingNextMonthExtrasTotal || 0)})
               </strong>{' '}
-              quedan excluidos de este mes y pasarán a la nómina del mes siguiente según el período de corte ({payroll.extrasCutoffPeriod}).
+              quedan excluidos de este mes y pasarán a la nómina del mes siguiente según el período de corte ({payroll.extrasCutoffPeriod}, incluidos).
             </div>
           </div>
         ) : null}
@@ -1114,8 +1174,12 @@ export const NominaView: React.FC<NominaViewProps> = ({
                         {nonZeroExtrasItems.length} {nonZeroExtrasItems.length === 1 ? 'concepto' : 'conceptos'} · {groupedExtrasByDay.length} {groupedExtrasByDay.length === 1 ? 'día' : 'días'}
                       </span>
                     </div>
-                    <p className="text-[10px] text-amber-800 mt-0.5">
-                      Corte: <strong>{payroll.extrasCutoffPeriod}</strong> · Solo importes &gt; 0,00 €
+                    <p className="text-[10px] text-amber-800 mt-0.5 leading-snug">
+                      Período cubierto:{' '}
+                      <strong>
+                        {formatFullDateES(payroll.extrasCutoffStartDate)} al {formatFullDateES(payroll.extrasCutoffEndDate)} (incluidos)
+                      </strong>{' '}
+                      · {cutoffModeShortLabel} ({cutoffTotalDays} {cutoffTotalDays === 1 ? 'día' : 'días'}) · Solo importes &gt; 0,00 €
                     </p>
                   </div>
                   <div className="flex items-center gap-2 ml-auto">
@@ -1142,7 +1206,7 @@ export const NominaView: React.FC<NominaViewProps> = ({
                   </div>
                 </div>
 
-                {/* Desglose fiable por día (agrupa varios extras/pluses en el mismo día y omite importes 0,00 €) */}
+                {/* Desglose fiable por día (acotado exactamente al mismo período de corte que la nómina, ambos extremos incluidos) */}
                 {showExtrasDetails && groupedExtrasByDay.length > 0 && (
                   <div className="pt-2.5 border-t border-amber-200/70 space-y-2 text-[11px] animate-fadeIn">
                     {groupedExtrasByDay.map((dayGroup) => (
@@ -1187,8 +1251,10 @@ export const NominaView: React.FC<NominaViewProps> = ({
                       </div>
                     ))}
 
-                    <div className="flex items-center justify-between pt-1.5 px-1 text-[10px] text-amber-900 font-bold border-t border-amber-200/60">
-                      <span>Suma total verificada de pluses diarios y extras en corte</span>
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 px-1 text-[10px] text-amber-900 font-bold border-t border-amber-200/60">
+                      <span>
+                        Suma verificada ({formatFullDateES(payroll.extrasCutoffStartDate)} – {formatFullDateES(payroll.extrasCutoffEndDate)}, incluidos)
+                      </span>
                       <span className="font-mono text-xs text-emerald-800">+{formatCurrency(nonZeroExtrasTotal)}</span>
                     </div>
                   </div>

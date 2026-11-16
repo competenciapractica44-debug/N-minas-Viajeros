@@ -607,8 +607,14 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
                           className="w-16 py-1 px-2 border border-slate-300 rounded-lg text-xs font-mono font-bold text-center bg-white"
                         />
                         <span className="text-[11px] text-slate-600">
-                          del mes anterior al{' '}
-                          <strong>{((formData.customCutoffStartDay || 25) - 1) || 31}</strong> del mes en curso.
+                          {(formData.customCutoffStartDay || 25) === 1 ? (
+                            <>al último día del mes en curso (Mes natural completo).</>
+                          ) : (
+                            <>
+                              del mes anterior al{' '}
+                              <strong>{(formData.customCutoffStartDay || 25) - 1}</strong> del mes en curso (incluidos).
+                            </>
+                          )}
                         </span>
                       </div>
                     )}

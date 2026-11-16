@@ -47,37 +47,42 @@ export function getExtrasDateRange(
   label: string;
   periodText: string;
 } {
-  if (cutoffMode === 'mes_natural') {
-    const lastDay = new Date(year, month, 0).getDate();
+  const daysInCurrentMonth = new Date(year, month, 0).getDate();
+  const clampedCustomStart = Math.max(1, Math.min(28, customStartDay || 25));
+
+  if (cutoffMode === 'mes_natural' || (cutoffMode === 'personalizado' && clampedCustomStart === 1)) {
     const startDateStr = `${year}-${String(month).padStart(2, '0')}-01`;
-    const endDateStr = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+    const endDateStr = `${year}-${String(month).padStart(2, '0')}-${String(daysInCurrentMonth).padStart(2, '0')}`;
+    const isNatural = cutoffMode === 'mes_natural';
     return {
       startDateStr,
       endDateStr,
-      label: 'Mes natural (del 1 al último día del mes)',
-      periodText: `1 ${MONTH_NAMES_SHORT[month - 1]} - ${lastDay} ${MONTH_NAMES_SHORT[month - 1]}`,
+      label: isNatural
+        ? `Mes natural (del 1 al ${daysInCurrentMonth} de ${MONTH_NAMES_SHORT[month - 1]}, incluidos)`
+        : `Corte personalizado (del 1 al ${daysInCurrentMonth} de ${MONTH_NAMES_SHORT[month - 1]}, incluidos)`,
+      periodText: `1 ${MONTH_NAMES_SHORT[month - 1]} - ${daysInCurrentMonth} ${MONTH_NAMES_SHORT[month - 1]}`,
     };
   }
 
-  // Direxis (25 to 24) or custom
-  const startDay = cutoffMode === 'direxis_25_24' ? 25 : (customStartDay || 25);
-  const endDay = startDay === 1 ? 31 : startDay - 1;
+  // Direxis (25 prev month to 24 current month) or custom (day X prev month to X-1 current month)
+  const startDay = cutoffMode === 'direxis_25_24' ? 25 : clampedCustomStart;
 
   // Previous month and year
   const prevMonth = month === 1 ? 12 : month - 1;
   const prevYear = month === 1 ? year - 1 : year;
   const maxPrevDays = new Date(prevYear, prevMonth, 0).getDate();
   const safeStartDay = Math.min(startDay, maxPrevDays);
+  const safeEndDay = Math.min(startDay - 1, daysInCurrentMonth);
 
   const startDateStr = `${prevYear}-${String(prevMonth).padStart(2, '0')}-${String(safeStartDay).padStart(2, '0')}`;
-  const endDateStr = `${year}-${String(month).padStart(2, '0')}-${String(endDay).padStart(2, '0')}`;
+  const endDateStr = `${year}-${String(month).padStart(2, '0')}-${String(safeEndDay).padStart(2, '0')}`;
 
-  const isDirexis = cutoffMode === 'direxis_25_24' || startDay === 25;
+  const isDirexis = cutoffMode === 'direxis_25_24';
   const label = isDirexis
-    ? 'Ciclo Direxis Zaragoza (del 25 mes anterior al 24 del mes actual)'
-    : `Corte personalizado (del ${safeStartDay} al ${endDay})`;
+    ? `Ciclo Direxis Zaragoza (del ${safeStartDay} ${MONTH_NAMES_SHORT[prevMonth - 1]} al ${safeEndDay} ${MONTH_NAMES_SHORT[month - 1]}, incluidos)`
+    : `Corte personalizado (del ${safeStartDay} ${MONTH_NAMES_SHORT[prevMonth - 1]} al ${safeEndDay} ${MONTH_NAMES_SHORT[month - 1]}, incluidos)`;
 
-  const periodText = `${safeStartDay} ${MONTH_NAMES_SHORT[prevMonth - 1]} - ${endDay} ${MONTH_NAMES_SHORT[month - 1]}`;
+  const periodText = `${safeStartDay} ${MONTH_NAMES_SHORT[prevMonth - 1]} - ${safeEndDay} ${MONTH_NAMES_SHORT[month - 1]}`;
 
   return {
     startDateStr,
@@ -322,21 +327,24 @@ export function calculateMonthlyPayroll(
     : 100;
   const partTimeFactor = partTimePercent / 100;
 
+  const cutoffMode = profile.extrasCutoffMode || 'direxis_25_24';
+  const customStartDay = profile.customCutoffStartDay || 25;
+  const cutoffRange = getExtrasDateRange(year, month, cutoffMode, customStartDay);
+
   const isMasatsMode = profile.salaryBaseRateMode === 'masats_39_89';
   // Detectar si estamos ante el cuadrante de cotejo exacto de la nómina escaneada de Octubre 2026
+  // (solo si el rango de corte cubre del 01/10 al 24/10; si el usuario escoge otro corte personalizado, recalcula acompasado)
   const isExactOctoberCotejo =
     isMasatsMode &&
     year === 2026 &&
     month === 10 &&
+    cutoffRange.startDateStr <= '2026-10-01' &&
+    cutoffRange.endDateStr >= '2026-10-24' &&
     assignments.some(
       (a) =>
         a.date.startsWith('2026-10-') &&
         a.extras?.some((e) => e.id?.startsWith('pc-') || e.id?.startsWith('qm-'))
     );
-
-  const cutoffMode = profile.extrasCutoffMode || 'direxis_25_24';
-  const customStartDay = profile.customCutoffStartDay || 25;
-  const cutoffRange = getExtrasDateRange(year, month, cutoffMode, customStartDay);
 
   // Acumuladores exactos para Retén, Conductor (entero y 1/2), Quebranto, Festivo y Vacaciones dentro del período de corte
   const holidayDaysSet = new Set<string>();
@@ -450,22 +458,26 @@ export function calculateMonthlyPayroll(
             fullConductorDaysSetCotejo.add(dateStr);
           }
 
+          const isInCutoff = dateStr >= cutoffRange.startDateStr && dateStr <= cutoffRange.endDateStr;
+
           if (shiftDef.isCustom && shiftDef.fixedRate && shiftDef.fixedRate > calc.totalRate) {
             const excess = parseFloat((shiftDef.fixedRate - calc.totalRate).toFixed(2));
             customShiftExcess += excess;
-            customShiftItems.push({
-              date: dateStr,
-              name: `Tarifa especial ${shiftDef.title || shiftDef.code}`,
-              amount: excess,
-              notes: 'Complemento de turno personalizado pactado',
-            });
+            if (isInCutoff) {
+              customShiftItems.push({
+                date: dateStr,
+                name: `Tarifa especial ${shiftDef.title || shiftDef.code}`,
+                amount: excess,
+                notes: 'Complemento de turno personalizado pactado',
+              });
+            }
           }
 
           if (isHoliday) {
             const effectiveHolidayAmt =
               effectiveTotalHours > 4 ? yearRate.plusFestivoMayor4h : yearRate.plusFestivoMenor4h;
             festivoPluses += effectiveHolidayAmt;
-            if (effectiveHolidayAmt > 0) {
+            if (effectiveHolidayAmt > 0 && isInCutoff) {
               extrasItemsList.push({
                 date: dateStr,
                 name: 'Plus Festivo (Art. 17)',
@@ -477,7 +489,7 @@ export function calculateMonthlyPayroll(
 
           if (effectiveNightHours > 0) {
             const nAmt = parseFloat((effectiveNightHours * (yearRate.plusNocturnidadHora ?? 2.48)).toFixed(2));
-            if (nAmt > 0) {
+            if (nAmt > 0 && isInCutoff) {
               extrasItemsList.push({
                 date: dateStr,
                 name: `Plus nocturnidad (${effectiveNightHours.toFixed(2).replace('.', ',')} h)`,
@@ -1077,7 +1089,8 @@ export function calculateMonthlyPayroll(
   // =========================================================================
   let pendingNextMonthExtrasCount = 0;
   let pendingNextMonthExtrasTotal = 0;
-  if (cutoffMode !== 'mes_natural') {
+  const currentMonthLastDateStr = `${year}-${String(month).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`;
+  if (cutoffRange.endDateStr < currentMonthLastDateStr) {
     const currentMonthPrefix = `${year}-${String(month).padStart(2, '0')}-`;
     assignments.forEach((assignment) => {
       if (assignment.date.startsWith(currentMonthPrefix) && assignment.date > cutoffRange.endDateStr) {
@@ -1770,8 +1783,15 @@ export function calculateMonthlyPayroll(
     extrasCutoffMode: cutoffMode,
     extrasCutoffPeriod: cutoffRange.periodText,
     extrasCutoffLabel: cutoffRange.label,
+    extrasCutoffStartDate: cutoffRange.startDateStr,
+    extrasCutoffEndDate: cutoffRange.endDateStr,
     extrasItemsList: extrasItemsList
-      .filter((item) => item.amount > 0)
+      .filter(
+        (item) =>
+          item.amount > 0 &&
+          item.date >= cutoffRange.startDateStr &&
+          item.date <= cutoffRange.endDateStr
+      )
       .sort((a, b) => a.date.localeCompare(b.date)),
     pendingNextMonthExtrasCount,
     pendingNextMonthExtrasTotal: parseFloat(pendingNextMonthExtrasTotal.toFixed(2)),

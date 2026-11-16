@@ -183,6 +183,8 @@ export interface PayrollBreakdown {
   extrasCutoffMode: ExtrasCutoffMode;
   extrasCutoffPeriod: string; // e.g. "25 Sep al 24 Oct"
   extrasCutoffLabel: string; // e.g. "Ciclo Direxis Zaragoza (25 al 24)"
+  extrasCutoffStartDate: string; // "YYYY-MM-DD" inclusive
+  extrasCutoffEndDate: string; // "YYYY-MM-DD" inclusive
   extrasItemsList: PayrollExtraItemDetail[];
   pendingNextMonthExtrasCount?: number; // Extras after cutoff in the current month
   pendingNextMonthExtrasTotal?: number;
