@@ -156,7 +156,7 @@ export interface ShiftRateCalculation {
   nightRate: number;  // Convenio plusNocturnidadHora (2.48 €/h)
   baseAmount: number; // totalHours * hourlyRate
   nightAmount: number; // nightHours * 2.48
-  holidayAmount: number; // If Sunday / Festivo, Art. 17 plus (42.80 €)
+  holidayAmount: number; // If Sunday / Festivo, Art. 17 plus (40.80 €)
   retenAmount?: number; // Plus de retén (+8.25 €) si aplica
   hasReten?: boolean;   // Si es turno de retén
   isReducedConductorPlus?: boolean; // Turno < 4 horas: 1/2 Plus conductor (3,14 €)
@@ -626,7 +626,7 @@ export function calculateMonthlyPayroll(
         } else if (dayPlusFestivoQty > 0) {
           cutoffHolidayCount += dayPlusFestivoQty;
           holidayDaysSet.add(dateStr);
-          const festAmt = parseFloat((dayPlusFestivoQty * (yearRate.plusFestivoMayor4h ?? 42.80)).toFixed(2));
+          const festAmt = parseFloat((dayPlusFestivoQty * (yearRate.plusFestivoMayor4h ?? 40.80)).toFixed(2));
           festivoPluses += festAmt;
           extrasItemsList.push({
             date: dateStr,
@@ -676,10 +676,15 @@ export function calculateMonthlyPayroll(
             });
           }
         }
-        if (dayPlusFestivoQty > 0) {
+        if (isHoliday) {
+          cutoffHolidayCount++;
+          holidayDaysSet.add(dateStr);
+          const festAmt = parseFloat((yearRate.plusFestivoMayor4h ?? 40.80).toFixed(2));
+          festivoPluses += festAmt;
+        } else if (dayPlusFestivoQty > 0) {
           cutoffHolidayCount += dayPlusFestivoQty;
           holidayDaysSet.add(dateStr);
-          const festAmt = parseFloat((dayPlusFestivoQty * (yearRate.plusFestivoMayor4h ?? 42.80)).toFixed(2));
+          const festAmt = parseFloat((dayPlusFestivoQty * (yearRate.plusFestivoMayor4h ?? 40.80)).toFixed(2));
           festivoPluses += festAmt;
           extrasItemsList.push({
             date: dateStr,
@@ -845,9 +850,11 @@ export function calculateMonthlyPayroll(
               } else if (lower.includes('plus festivo')) {
                 if (!holidayDaysSet.has(assignment.date)) {
                   holidayDays += qty;
-                  festivoPluses += qty * (yearRate.plusFestivoMayor4h ?? 42.80);
+                  festivoPluses += qty * (yearRate.plusFestivoMayor4h ?? 40.80);
+                } else {
+                  continue;
                 }
-                resolvedGrossExtraAmount = parseFloat((qty * (yearRate.plusFestivoMayor4h ?? 42.80)).toFixed(2));
+                resolvedGrossExtraAmount = parseFloat((qty * (yearRate.plusFestivoMayor4h ?? 40.80)).toFixed(2));
               } else if (lower.includes('quebranto')) {
                 if (!isRetenOnThisDay) {
                   explicitQuebrantoCountCotejo += qty;
@@ -1013,7 +1020,7 @@ export function calculateMonthlyPayroll(
                 effectiveTotalHours > 4 ? yearRate.plusFestivoMayor4h : yearRate.plusFestivoMenor4h;
             } else if (dayPlusFestivoQty > 0) {
               pendingNextMonthExtrasCount += dayPlusFestivoQty;
-              pendingNextMonthExtrasTotal += parseFloat((dayPlusFestivoQty * (yearRate.plusFestivoMayor4h ?? 42.80)).toFixed(2));
+              pendingNextMonthExtrasTotal += parseFloat((dayPlusFestivoQty * (yearRate.plusFestivoMayor4h ?? 40.80)).toFixed(2));
             }
           } else {
             if (dayRetenQty > 0) {
@@ -1037,7 +1044,7 @@ export function calculateMonthlyPayroll(
             }
             if (dayPlusFestivoQty > 0) {
               pendingNextMonthExtrasCount += dayPlusFestivoQty;
-              pendingNextMonthExtrasTotal += parseFloat((dayPlusFestivoQty * (yearRate.plusFestivoMayor4h ?? 42.80)).toFixed(2));
+              pendingNextMonthExtrasTotal += parseFloat((dayPlusFestivoQty * (yearRate.plusFestivoMayor4h ?? 40.80)).toFixed(2));
             }
           }
         }
@@ -1297,7 +1304,7 @@ export function calculateMonthlyPayroll(
     const festivoQty = holidayDays || 1;
     const festivoRate = holidayDays > 0
       ? parseFloat((festivoPluses / holidayDays).toFixed(2))
-      : (yearRate.plusFestivoMayor4h ?? 42.80);
+      : (yearRate.plusFestivoMayor4h ?? 40.80);
     lines.push({
       id: 'plus-festivo',
       name: 'Plus Festivo',

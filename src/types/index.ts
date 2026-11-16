@@ -117,6 +117,8 @@ export interface WorkerProfile {
   name: string;
   nif: string;
   category: string;
+  autonomousCommunity?: string; // e.g. 'aragon'
+  locality?: string; // e.g. 'Zaragoza', 'Utebo', 'Calatayud'
   companyName: string;
   cif: string;
   irpfPercentage: number; // e.g. 14.5

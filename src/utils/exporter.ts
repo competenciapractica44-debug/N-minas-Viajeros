@@ -720,9 +720,12 @@ export function exportToExcel(
   const cuadranteRows = sortedAssignments.map((item) => {
     const shift = shiftsMap.get(item.shiftCode || '') || Array.from(shiftsMap.values()).find((s) => s.code === item.shiftCode);
     const extraParts: string[] = [];
-    if (item.isHoliday) extraParts.push('Festivo oficial');
+    if (item.isHoliday) extraParts.push(`Plus Festivo (+${(activeRate.plusFestivoMayor4h ?? 40.80).toFixed(2)}€)`);
     if (item.extras && item.extras.length > 0) {
-      item.extras.forEach((e) => extraParts.push(`${e.name} (+${e.amount.toFixed(2)}€)`));
+      item.extras.forEach((e) => {
+        if (item.isHoliday && e.name.toLowerCase().includes('plus festivo')) return;
+        extraParts.push(`${e.name} (+${e.amount.toFixed(2)}€)`);
+      });
     }
     if (item.lateFinishMinutes && item.lateFinishMinutes > 0) {
       extraParts.push(`Exceso +${item.lateFinishMinutes} min`);

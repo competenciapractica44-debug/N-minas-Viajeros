@@ -152,7 +152,7 @@ const CONCEPTS_METADATA: ConceptDefinition[] = [
     article: 'Art. 17 Convenio',
     unit: '€ / servicio',
     section: 'plus',
-    description: 'Plus por trabajar en domingo o festivo oficial (nacional, regional o local) con jornada superior a 4 horas (42,80 €/servicio).',
+    description: 'Plus por trabajar en domingo o festivo oficial (nacional, regional o local) con jornada superior a 4 horas (40,80 €/servicio).',
   },
   {
     key: 'plusFestivoMenor4h',
@@ -744,7 +744,7 @@ export const ConvenioModal: React.FC<ConvenioModalProps> = ({
               <div className="bg-white/95 rounded-xl p-2.5 border border-amber-100 shadow-2xs">
                 <span className="text-[10px] text-amber-800 font-medium block">Plus Festivos (Art. 17)</span>
                 <span className="text-sm font-extrabold text-amber-900 font-mono">
-                  +{formatCurrency(currentRate.plusFestivoMayor4h ?? 42.80)}
+                  +{formatCurrency(currentRate.plusFestivoMayor4h ?? 40.80)}
                 </span>
                 <span className="text-[10px] text-slate-500 block truncate">Domingos y festivos</span>
               </div>

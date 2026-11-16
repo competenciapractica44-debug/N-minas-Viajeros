@@ -21,7 +21,7 @@ export const DEFAULT_CONVENIO_ZARAGOZA: ConvenioInfo = {
       plusConductorPerceptorDia: 6.27,
       plusConductorPerceptorDiaReducido: 3.14,
       quebrantoMonedaDia: 1.89,
-      plusFestivoMayor4h: 42.80,
+      plusFestivoMayor4h: 40.80,
       plusFestivoMenor4h: 30.60,
       plusRetenDia: 8.25,
       prorrataPagaDia: 3.28,
@@ -108,7 +108,7 @@ export function getOfficialConvenioExtraAmount(name: string, yearRate: ConvenioY
     return yearRate.quebrantoMonedaDia ?? 1.89;
   }
   if (lower.includes('plus festivo')) {
-    return yearRate.plusFestivoMayor4h ?? 42.80;
+    return yearRate.plusFestivoMayor4h ?? 40.80;
   }
   if (lower.includes('festiva') || lower.includes('complementaria')) {
     return yearRate.horaOrdinaria ?? 13.62;

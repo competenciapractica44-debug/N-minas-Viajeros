@@ -1,7 +1,12 @@
-import React, { useState } from 'react';
-import { X, User, Building2, Briefcase, Percent, Check, HelpCircle, Clock, CalendarDays, CalendarRange } from 'lucide-react';
-import { WorkerProfile, ExtraPayProrrateo, ExtrasCutoffMode, ConvenioYearRate } from '../types';
+import React, { useState, useEffect, useMemo } from 'react';
+import { X, User, Building2, Briefcase, Check, Clock, CalendarDays, CalendarRange, MapPin } from 'lucide-react';
+import { WorkerProfile, ConvenioYearRate } from '../types';
 import { DEFAULT_CONVENIO_ZARAGOZA } from '../data/convenioZaragoza';
+import {
+  SPANISH_AUTONOMOUS_COMMUNITIES,
+  getOfficialHolidaysForYear,
+  resolveRegionId,
+} from '../data/spanishHolidays';
 import { formatCurrency } from '../utils/exporter';
 
 interface WorkerProfileModalProps {
@@ -22,6 +27,8 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
   const effectiveRate = yearRate || DEFAULT_CONVENIO_ZARAGOZA.ratesByYear[2026];
   const [formData, setFormData] = useState<WorkerProfile>(() => ({
     ...profile,
+    autonomousCommunity: profile.autonomousCommunity || 'aragon',
+    locality: profile.locality || '',
     prorrateoPagasExtra: profile.prorrateoPagasExtra || (profile.prorratearPagasExtra !== false ? 'tres_pagas' : 'ninguna'),
     partTimePercentage: profile.partTimePercentage !== undefined ? profile.partTimePercentage : 50,
     extrasCutoffMode: profile.extrasCutoffMode || 'direxis_25_24',
@@ -29,11 +36,45 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
     hasVacationPlus: profile.hasVacationPlus !== undefined ? profile.hasVacationPlus : true,
   }));
 
+  useEffect(() => {
+    if (isOpen) {
+      setFormData({
+        ...profile,
+        autonomousCommunity: profile.autonomousCommunity || 'aragon',
+        locality: profile.locality || '',
+        prorrateoPagasExtra: profile.prorrateoPagasExtra || (profile.prorratearPagasExtra !== false ? 'tres_pagas' : 'ninguna'),
+        partTimePercentage: profile.partTimePercentage !== undefined ? profile.partTimePercentage : 50,
+        extrasCutoffMode: profile.extrasCutoffMode || 'direxis_25_24',
+        customCutoffStartDay: profile.customCutoffStartDay || 25,
+        hasVacationPlus: profile.hasVacationPlus !== undefined ? profile.hasVacationPlus : true,
+      });
+    }
+  }, [isOpen, profile]);
+
+  const activeRegionId = resolveRegionId(formData.autonomousCommunity, formData.locality) || 'aragon';
+  const activeRegionObj = useMemo(
+    () => SPANISH_AUTONOMOUS_COMMUNITIES.find((c) => c.id === activeRegionId) || SPANISH_AUTONOMOUS_COMMUNITIES[0],
+    [activeRegionId]
+  );
+
+  const previewHolidays = useMemo(() => {
+    const targetYear = effectiveRate.year || 2026;
+    const map = getOfficialHolidaysForYear(targetYear, activeRegionId, formData.locality);
+    return Array.from(map.values()).sort((a, b) => a.date.localeCompare(b.date));
+  }, [effectiveRate.year, activeRegionId, formData.locality]);
+
+  const regionalAndLocalPreview = useMemo(
+    () => previewHolidays.filter((h) => h.scope === 'regional' || h.scope === 'local'),
+    [previewHolidays]
+  );
+
   if (!isOpen) return null;
 
   const handleSave = () => {
     onSaveProfile({
       ...formData,
+      autonomousCommunity: formData.autonomousCommunity || activeRegionId,
+      locality: (formData.locality || '').trim(),
       prorratearPagasExtra: formData.prorrateoPagasExtra === 'tres_pagas',
     });
     onClose();
@@ -112,6 +153,111 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
                 onChange={(e) => setFormData({ ...formData, category: e.target.value })}
                 className="w-full py-2 px-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
+            </div>
+
+            {/* Localidad y Comunidad Autónoma para detectar festivos locales y regionales */}
+            <div className="p-3.5 bg-slate-50/90 border border-slate-200 rounded-2xl space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  <MapPin className="w-3.5 h-3.5 text-rose-600" />
+                  <span className="font-bold text-slate-900 text-xs">
+                    Localidad de Trabajo y Festivos Oficiales
+                  </span>
+                </div>
+                <span className="text-[10px] font-bold bg-rose-100 text-rose-800 px-2 py-0.5 rounded-full">
+                  Calendario
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-700 block mb-1">
+                    Comunidad Autónoma (Regionales)
+                  </label>
+                  <select
+                    value={activeRegionId}
+                    onChange={(e) => {
+                      const nextReg = e.target.value;
+                      setFormData({
+                        ...formData,
+                        autonomousCommunity: nextReg,
+                      });
+                    }}
+                    className="w-full py-2 px-3 rounded-xl border border-slate-200 bg-white font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    {SPANISH_AUTONOMOUS_COMMUNITIES.map((reg) => (
+                      <option key={reg.id} value={reg.id}>
+                        {reg.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-700 block mb-1">
+                    Localidad / Municipio (Locales) *
+                  </label>
+                  <input
+                    type="text"
+                    list="rutanomina-localities-list"
+                    value={formData.locality || ''}
+                    onChange={(e) => setFormData({ ...formData, locality: e.target.value })}
+                    placeholder="Ej: Zaragoza, Utebo, Calatayud..."
+                    className="w-full py-2 px-3 rounded-xl border border-slate-200 bg-white font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <datalist id="rutanomina-localities-list">
+                    {activeRegionObj.localities.map((loc) => (
+                      <option key={loc} value={loc} />
+                    ))}
+                  </datalist>
+                </div>
+              </div>
+
+              {/* Sugerencias rápidas de municipios de la comunidad seleccionada */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[10px] font-semibold text-slate-500 mr-0.5">Frecuentes:</span>
+                {activeRegionObj.localities.slice(0, 6).map((loc) => {
+                  const isSel = (formData.locality || '').trim().toLowerCase() === loc.toLowerCase();
+                  return (
+                    <button
+                      key={loc}
+                      type="button"
+                      onClick={() => setFormData({ ...formData, locality: loc })}
+                      className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition-colors ${
+                        isSel
+                          ? 'bg-orange-500 text-white border-orange-500'
+                          : 'bg-white text-slate-700 border-slate-200 hover:bg-orange-50 hover:border-orange-300'
+                      }`}
+                    >
+                      {loc}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="text-[11px] text-slate-600 bg-white rounded-xl p-2.5 border border-slate-200/80 space-y-1">
+                <p className="font-semibold text-slate-800">
+                  Festivos identificados ({effectiveRate.year || 2026}):{' '}
+                  <span className="text-rose-700">Nacionales</span> ·{' '}
+                  <span className="text-purple-700">Regionales ({activeRegionObj.name})</span>
+                  {formData.locality?.trim() ? (
+                    <>
+                      {' '}
+                      · <span className="text-orange-700">Locales ({formData.locality.trim()})</span>
+                    </>
+                  ) : null}
+                </p>
+                {regionalAndLocalPreview.length > 0 && (
+                  <p className="text-[10px] text-slate-500 leading-relaxed">
+                    {regionalAndLocalPreview
+                      .map((h) => `${h.date.slice(8, 10)}/${h.date.slice(5, 7)} ${h.name}`)
+                      .join(' · ')}
+                  </p>
+                )}
+                <p className="text-[10px] text-slate-400">
+                  Se destacarán en color distinto en el calendario. El Plus Festivo ({formatCurrency(effectiveRate.plusFestivoMayor4h ?? 40.80)}) se sigue activando manualmente día a día.
+                </p>
+              </div>
             </div>
           </div>
 

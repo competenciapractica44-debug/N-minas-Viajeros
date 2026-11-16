@@ -258,15 +258,9 @@ export function getExactOctoberAssignments(): DayAssignment[] {
       });
     }
 
-    // 12 de Octubre: Fiesta Nacional con Plus Festivo
+    // 12 de Octubre: Fiesta Nacional con Plus Festivo manual (marcado vía isHoliday para no duplicar)
     if (d === 12) {
       shiftCode = '6.D03';
-      extras.push({
-        id: 'pf-12',
-        name: 'Plus Festivo',
-        amount: 40.80,
-        quantity: 1,
-      });
     }
 
     // Día 14: Festivas (8,48 horas festivas a 13,62 €/h = 115,50 €)

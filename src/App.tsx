@@ -197,7 +197,7 @@ export default function App() {
             cleanedRates[yNum] = {
               ...DEFAULT_CONVENIO_ZARAGOZA.ratesByYear[2026],
               ...rawRate,
-              plusFestivoMayor4h: rawRate.plusFestivoMayor4h === 40.80 ? 42.80 : (rawRate.plusFestivoMayor4h ?? 42.80),
+              plusFestivoMayor4h: rawRate.plusFestivoMayor4h === 42.80 ? 40.80 : (rawRate.plusFestivoMayor4h ?? 40.80),
               plusVacacionesDia: rawRate.plusVacacionesDia && rawRate.plusVacacionesDia > 0 ? rawRate.plusVacacionesDia : 10.00,
               year: yNum,
             };
@@ -236,6 +236,8 @@ export default function App() {
         return {
           extrasCutoffMode: 'direxis_25_24',
           customCutoffStartDay: 25,
+          autonomousCommunity: 'aragon',
+          locality: '',
           ...parsed,
           hasVacationPlus: parsed.hasVacationPlus !== undefined ? parsed.hasVacationPlus : true,
         };
@@ -247,6 +249,8 @@ export default function App() {
       name: 'GARCIA MIANA, JORGE ADOLFO',
       nif: '29112260X',
       category: 'Conductor/a Perceptor/a',
+      autonomousCommunity: 'aragon',
+      locality: '',
       companyName: 'S.A. MASATS TRANSPORTES GENERALES, UNIP',
       cif: 'A63086797',
       irpfPercentage: 15.0,
@@ -435,7 +439,7 @@ export default function App() {
                 migratedRates[yNum] = {
                   ...DEFAULT_CONVENIO_ZARAGOZA.ratesByYear[2026],
                   ...r,
-                  plusFestivoMayor4h: r.plusFestivoMayor4h === 40.80 ? 42.80 : (r.plusFestivoMayor4h ?? 42.80),
+                  plusFestivoMayor4h: r.plusFestivoMayor4h === 42.80 ? 40.80 : (r.plusFestivoMayor4h ?? 40.80),
                   plusVacacionesDia: r.plusVacacionesDia && r.plusVacacionesDia > 0 ? r.plusVacacionesDia : 10.00,
                   year: yNum,
                 };
@@ -642,7 +646,7 @@ export default function App() {
               migratedRates[yNum] = {
                 ...DEFAULT_CONVENIO_ZARAGOZA.ratesByYear[2026],
                 ...r,
-                plusFestivoMayor4h: r.plusFestivoMayor4h === 40.80 ? 42.80 : (r.plusFestivoMayor4h ?? 42.80),
+                plusFestivoMayor4h: r.plusFestivoMayor4h === 42.80 ? 40.80 : (r.plusFestivoMayor4h ?? 40.80),
                 plusVacacionesDia: r.plusVacacionesDia && r.plusVacacionesDia > 0 ? r.plusVacacionesDia : 10.00,
                 year: yNum,
               };
@@ -998,6 +1002,7 @@ export default function App() {
             convenio={convenio}
             profile={profile}
             onEditShift={handleEditTurno}
+            onOpenProfile={() => setIsProfileModalOpen(true)}
           />
         )}
 

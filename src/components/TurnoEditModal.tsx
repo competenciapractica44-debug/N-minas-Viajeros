@@ -64,7 +64,7 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
       plusConductorPerceptorDiaReducido: 3.14,
       quebrantoMonedaDia: 1.89,
       plusRetenDia: 8.25,
-      plusFestivoMayor4h: 42.80,
+      plusFestivoMayor4h: 40.80,
       plusFestivoMenor4h: 30.60,
       plus24y31Diciembre: 30.60,
       dietaComidaCenaRegular: 15.00,
@@ -751,7 +751,7 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
                 </div>
               </div>
               <p className="text-[10.5px] text-slate-500 leading-tight">
-                * El Plus de Festivo (+{formatCurrency(effectiveYearRate.plusFestivoMayor4h ?? 42.80)}) no se incluye en el turno: según convenio se percibe en festivos oficiales (nacionales, regionales y locales) y se marca manualmente en el calendario.
+                * El Plus de Festivo (+{formatCurrency(effectiveYearRate.plusFestivoMayor4h ?? 40.80)}) no se incluye en el turno: según convenio se percibe en festivos oficiales (nacionales, regionales y locales) y se marca manualmente en el calendario.
               </p>
             </div>
           </div>

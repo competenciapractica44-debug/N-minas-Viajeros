@@ -22,6 +22,7 @@ import {
   Award,
   Search,
   X,
+  MapPin,
 } from 'lucide-react';
 import {
   DayAssignment,
@@ -33,6 +34,7 @@ import {
 import { formatCurrency } from '../utils/exporter';
 import { formatMinutesToHoursAndMinutes, computeShiftRateFromConvenio, calculateTotalHours } from '../utils/calculator';
 import { getEffectiveYearRate, getOfficialConvenioExtraAmount } from '../data/convenioZaragoza';
+import { getOfficialHolidaysForYear, DetectedHolidayInfo } from '../data/spanishHolidays';
 import { ConfirmModal } from './ConfirmModal';
 
 interface CalendarioViewProps {
@@ -46,6 +48,7 @@ interface CalendarioViewProps {
   convenio: ConvenioInfo;
   profile?: WorkerProfile;
   onEditShift?: (shift: ShiftDefinition) => void;
+  onOpenProfile?: () => void;
 }
 
 const MONTH_NAMES = [
@@ -64,6 +67,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
   convenio,
   profile,
   onEditShift,
+  onOpenProfile,
 }) => {
   const [selectedDayNumber, setSelectedDayNumber] = useState(1);
   const [isAddingExtraModal, setIsAddingExtraModal] = useState(false);
@@ -149,12 +153,33 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
   );
   const horaOrdinariaRate = activeYearRate.horaOrdinaria ?? 13.62;
   const plusRetenRate = activeYearRate.plusRetenDia ?? 8.25;
-  const plusFestivoRate = activeYearRate.plusFestivoMayor4h ?? 42.80;
+  const plusFestivoRate = activeYearRate.plusFestivoMayor4h ?? 40.80;
   const quebrantoRate = activeYearRate.quebrantoMonedaDia ?? 1.89;
   const plusConductorRate = activeYearRate.plusConductorPerceptorDia ?? 6.27;
   const medioPlusConductorRate =
     activeYearRate.plusConductorPerceptorDiaReducido ??
     parseFloat((plusConductorRate / 2).toFixed(2));
+
+  // Mapa anual de festivos oficiales (Nacionales, Regionales y Locales según ficha del chófer)
+  const officialHolidaysMap = useMemo(
+    () => getOfficialHolidaysForYear(selectedYear, profile?.autonomousCommunity || 'aragon', profile?.locality),
+    [selectedYear, profile?.autonomousCommunity, profile?.locality]
+  );
+
+  const selectedDayOfficialHoliday: DetectedHolidayInfo | null =
+    officialHolidaysMap.get(selectedDateStr) || null;
+
+  // El Plus Festivo es siempre MANUAL (se activa vía isHoliday o extra heredado, sin duplicar)
+  const hasManualPlusFestivo = Boolean(
+    currentAssignment.isHoliday ||
+    currentAssignment.extras?.some((e) => e.name.toLowerCase().includes('plus festivo'))
+  );
+
+  // Extras visibles debajo del panel sin duplicar el Plus Festivo
+  const visibleDayExtras = useMemo(
+    () => (currentAssignment.extras || []).filter((e) => !e.name.toLowerCase().includes('plus festivo')),
+    [currentAssignment.extras]
+  );
 
   // Helper: vacation plus (10€/day at 100%, proportional to part-time % e.g. 7.50€/day at 75%)
   const isJornada100 = !profile || profile.contractType !== 'tiempo_parcial' || (profile.partTimePercentage || 100) >= 100;
@@ -165,13 +190,13 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
 
   // Tipo de jornada sugerido según el día seleccionado en el calendario
   const selectedDayTypeSuggested = useMemo<'laborable' | 'sabado' | 'festivo'>(() => {
-    if (currentAssignment.isHoliday) return 'festivo';
+    if (hasManualPlusFestivo || selectedDayOfficialHoliday) return 'festivo';
     const dObj = new Date(selectedYear, selectedMonth - 1, selectedDayNumber);
     const dow = dObj.getDay();
     if (dow === 0) return 'festivo';
     if (dow === 6) return 'sabado';
     return 'laborable';
-  }, [selectedYear, selectedMonth, selectedDayNumber, currentAssignment.isHoliday]);
+  }, [selectedYear, selectedMonth, selectedDayNumber, hasManualPlusFestivo, selectedDayOfficialHoliday]);
 
   // Al cambiar de día, preseleccionar automáticamente el filtro acorde al día (L-V / Sáb / Dom-Fest)
   useEffect(() => {
@@ -426,7 +451,8 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
       const dStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
       const asg = assignments.find((a) => a.date === dStr);
       if (asg) {
-        if (asg.isHoliday) {
+        const dayHasPlusFestivoExtra = Boolean(asg.extras?.some((e) => e.name.toLowerCase().includes('plus festivo')));
+        if (asg.isHoliday || dayHasPlusFestivoExtra) {
           festivosCount++;
         }
         if (asg.shiftCode === 'D' || asg.isRest) {
@@ -446,6 +472,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
         }
         if (asg.extras) {
           asg.extras.forEach((e) => {
+            if (asg.isHoliday && e.name.toLowerCase().includes('plus festivo')) return;
             const convAmt = getOfficialConvenioExtraAmount(e.name, activeYearRate);
             const qty = e.quantity && e.quantity > 0 ? e.quantity : 1;
             const isHourlyOfficial =
@@ -583,20 +610,23 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
   const selectedDayTotal = useMemo(() => {
     let base = 0;
     const yearRate = activeYearRate;
-    const isHoliday = Boolean(currentAssignment.isHoliday);
+    const isHoliday = hasManualPlusFestivo;
 
     if (currentShift) {
       if (currentShift.code === 'D') {
-        base = 0;
+        base = isHoliday ? plusFestivoRate : 0;
       } else if (currentShift.code === 'V') {
         const baseDia = parseFloat((yearRate.salarioBaseDia * partTimeFactorCal).toFixed(2));
         const plusVac = appliesVacationPlus ? effectiveVacationPlusDia : 0;
-        base = baseDia + plusVac;
+        base = baseDia + plusVac + (isHoliday ? plusFestivoRate : 0);
       } else {
         const shiftCalc = computeShiftRateFromConvenio(currentShift, yearRate, { isHoliday });
         base = shiftCalc.totalRate;
       }
+    } else if (isHoliday) {
+      base = plusFestivoRate;
     }
+
     const autoQuebranto =
       dayPlusStatus.hasQuebranto && !dayPlusStatus.hasExplicitQuebranto ? quebrantoRate : 0;
     const autoConductorPlus =
@@ -609,11 +639,11 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
     const extrasSum =
       currentAssignment.extras?.reduce((sum, e) => {
         const lower = e.name.toLowerCase();
-        // Evitar doble cómputo si el turno ya incluye Plus Retén o el día ya tiene marcado Festivo
-        if ((lower.includes('reten') || lower.includes('retén')) && dayPlusStatus.hasRetenShift) {
+        // Evitar doble cómputo de Plus Festivo, Retén, Quebranto o Conductor
+        if (lower.includes('plus festivo')) {
           return sum;
         }
-        if (lower.includes('plus festivo') && isHoliday) {
+        if ((lower.includes('reten') || lower.includes('retén')) && dayPlusStatus.hasRetenShift) {
           return sum;
         }
         if (
@@ -639,7 +669,8 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
     currentShift,
     currentAssignment.extras,
     currentAssignment.lateFinishMinutes,
-    currentAssignment.isHoliday,
+    hasManualPlusFestivo,
+    plusFestivoRate,
     activeYearRate,
     partTimeFactorCal,
     effectiveVacationPlusDia,
@@ -706,11 +737,25 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
 
     if (!name) return;
 
-    const isAddingReten = name.toLowerCase().includes('reten') || name.toLowerCase().includes('retén');
+    const lowerName = name.toLowerCase();
+    // Si añaden Plus Festivo desde el modal, activamos isHoliday sin duplicar ítem en extras
+    if (lowerName.includes('plus festivo')) {
+      const cleaned = (currentAssignment.extras || []).filter((e) => !e.name.toLowerCase().includes('plus festivo'));
+      onUpdateAssignment(selectedDateStr, {
+        isHoliday: true,
+        extras: cleaned,
+      });
+      setIsAddingExtraModal(false);
+      setSelectedExtraConceptId('');
+      setCustomExtraName('');
+      return;
+    }
+
+    const isAddingReten = lowerName.includes('reten') || lowerName.includes('retén');
     const isAddingQuebrantoOrConductor =
-      name.toLowerCase().includes('quebranto') ||
-      name.toLowerCase().includes('plus conductor') ||
-      name.toLowerCase().includes('medio plus');
+      lowerName.includes('quebranto') ||
+      lowerName.includes('plus conductor') ||
+      lowerName.includes('medio plus');
 
     const currentExtras = currentAssignment.extras || [];
     const dayHasRetenShift = Boolean(
@@ -879,7 +924,14 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
             const shiftCode = asg?.shiftCode;
             const shiftDef = shiftCode ? shiftsMap.get(shiftCode) || shifts.find((s) => s.code === shiftCode) : null;
             const isSelected = selectedDayNumber === dayNum;
-            const hasExtras = (asg?.extras && asg.extras.length > 0) || Boolean(asg?.lateFinishMinutes && asg.lateFinishMinutes > 0);
+            const visibleCellExtrasCount = (asg?.extras || []).filter(
+              (e) => !e.name.toLowerCase().includes('plus festivo')
+            ).length;
+            const hasExtras = visibleCellExtrasCount > 0 || Boolean(asg?.lateFinishMinutes && asg.lateFinishMinutes > 0);
+            const dayHasManualHolidayPlus = Boolean(
+              asg?.isHoliday || asg?.extras?.some((e) => e.name.toLowerCase().includes('plus festivo'))
+            );
+            const detectedHoliday = officialHolidaysMap.get(dStr);
 
             const isRest = shiftCode === 'D' || asg?.isRest;
             const isVacation = shiftCode === 'V' || asg?.isVacation;
@@ -898,24 +950,74 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
               badgeColor = shiftDef.color;
             }
 
+            const holidayCellClass = detectedHoliday
+              ? detectedHoliday.scope === 'nacional'
+                ? 'bg-rose-50/90 border border-rose-300'
+                : detectedHoliday.scope === 'regional'
+                ? 'bg-purple-50/90 border border-purple-300'
+                : 'bg-orange-50/90 border border-orange-300'
+              : '';
+
+            const holidayNumClass = detectedHoliday
+              ? detectedHoliday.scope === 'nacional'
+                ? 'text-rose-700'
+                : detectedHoliday.scope === 'regional'
+                ? 'text-purple-700'
+                : 'text-orange-700'
+              : 'text-slate-700';
+
+            const holidayTagLabel =
+              detectedHoliday?.scope === 'nacional'
+                ? 'NAC'
+                : detectedHoliday?.scope === 'regional'
+                ? 'REG'
+                : detectedHoliday?.scope === 'local'
+                ? 'LOC'
+                : null;
+
+            const holidayTagClass =
+              detectedHoliday?.scope === 'nacional'
+                ? 'bg-rose-600 text-white'
+                : detectedHoliday?.scope === 'regional'
+                ? 'bg-purple-600 text-white'
+                : 'bg-orange-500 text-white';
+
             return (
               <button
                 key={dayNum}
                 onClick={() => setSelectedDayNumber(dayNum)}
+                title={
+                  detectedHoliday
+                    ? `${
+                        detectedHoliday.scope === 'nacional'
+                          ? 'Festivo Nacional'
+                          : detectedHoliday.scope === 'regional'
+                          ? 'Festivo Regional'
+                          : 'Festivo Local'
+                      }: ${detectedHoliday.name}${dayHasManualHolidayPlus ? ` · Plus Festivo manual activo (+${formatCurrency(plusFestivoRate)})` : ''}`
+                    : undefined
+                }
                 className={`h-14 sm:h-16 p-1 rounded-xl flex flex-col justify-between items-center transition-all relative ${
                   isSelected
-                    ? 'ring-2 ring-blue-600 bg-blue-50/40 shadow-xs z-10'
-                    : 'hover:bg-slate-50'
+                    ? `ring-2 ring-blue-600 shadow-xs z-10 ${detectedHoliday ? holidayCellClass : 'bg-blue-50/40'}`
+                    : `${holidayCellClass || 'hover:bg-slate-50'}`
                 }`}
               >
                 {/* Day number & indicators */}
                 <div className="w-full flex items-center justify-between px-1">
-                  <span className={`text-[11px] font-bold ${isSelected ? 'text-blue-700' : 'text-slate-700'}`}>
-                    {dayNum}
-                  </span>
                   <div className="flex items-center gap-0.5">
-                    {asg?.isHoliday && (
-                      <span className="text-[10px] leading-none" title="Festivo Oficial (Nacional / Regional / Local)">
+                    <span className={`text-[11px] font-bold ${isSelected ? 'text-blue-700' : holidayNumClass}`}>
+                      {dayNum}
+                    </span>
+                    {holidayTagLabel && (
+                      <span className={`text-[7px] font-black px-1 py-0.2 rounded leading-tight ${holidayTagClass}`}>
+                        {holidayTagLabel}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-0.5">
+                    {dayHasManualHolidayPlus && (
+                      <span className="text-[10px] leading-none" title={`Plus Festivo manual (+${formatCurrency(plusFestivoRate)})`}>
                         🎉
                       </span>
                     )}
@@ -940,6 +1042,47 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
             );
           })}
         </div>
+
+        {/* Leyenda de Festivos (Nacional / Regional / Local) y localidad configurada */}
+        <div className="mt-3 pt-2.5 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-600">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1 font-semibold">
+              <span className="w-2.5 h-2.5 rounded-xs bg-rose-100 border border-rose-400"></span>
+              Festivo Nacional
+            </span>
+            <span className="inline-flex items-center gap-1 font-semibold">
+              <span className="w-2.5 h-2.5 rounded-xs bg-purple-100 border border-purple-400"></span>
+              Regional
+            </span>
+            <span className="inline-flex items-center gap-1 font-semibold">
+              <span className="w-2.5 h-2.5 rounded-xs bg-orange-100 border border-orange-400"></span>
+              Local{profile?.locality?.trim() ? ` (${profile.locality.trim()})` : ''}
+            </span>
+            <span className="inline-flex items-center gap-1 font-semibold text-amber-800">
+              🎉 Plus Festivo manual (+{formatCurrency(plusFestivoRate)})
+            </span>
+          </div>
+
+          {onOpenProfile && (
+            <button
+              type="button"
+              onClick={onOpenProfile}
+              className={`inline-flex items-center gap-1 font-bold px-2 py-0.5 rounded-lg border transition-colors ${
+                profile?.locality?.trim()
+                  ? 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                  : 'bg-orange-50 border-orange-300 text-orange-800 hover:bg-orange-100'
+              }`}
+              title="Configurar localidad y comunidad autónoma en la ficha del chófer para identificar festivos locales y regionales"
+            >
+              <MapPin className="w-3 h-3" />
+              <span>
+                {profile?.locality?.trim()
+                  ? profile.locality.trim()
+                  : 'Indicar localidad en ficha'}
+              </span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Selected Day Details Panel matching screenshot 3 */}
@@ -949,9 +1092,29 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
             <h3 className="text-base sm:text-lg font-bold text-slate-900 leading-tight">
               {formattedDayTitle}
             </h3>
-            <p className="text-xs text-slate-500 mt-0.5">
-              {currentAssignment.customLine || 'Sin línea/coche indicado'}
-            </p>
+            <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+              <p className="text-xs text-slate-500">
+                {currentAssignment.customLine || 'Sin línea/coche indicado'}
+              </p>
+              {selectedDayOfficialHoliday && (
+                <span
+                  className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${
+                    selectedDayOfficialHoliday.scope === 'nacional'
+                      ? 'bg-rose-50 text-rose-800 border-rose-200'
+                      : selectedDayOfficialHoliday.scope === 'regional'
+                      ? 'bg-purple-50 text-purple-800 border-purple-200'
+                      : 'bg-orange-50 text-orange-800 border-orange-200'
+                  }`}
+                >
+                  {selectedDayOfficialHoliday.scope === 'nacional'
+                    ? 'Festivo Nacional'
+                    : selectedDayOfficialHoliday.scope === 'regional'
+                    ? `Festivo Regional`
+                    : `Festivo Local`}
+                  : {selectedDayOfficialHoliday.name}
+                </span>
+              )}
+            </div>
           </div>
 
           <div className="flex items-center gap-1.5">
@@ -1049,7 +1212,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
           ) : (
             (() => {
               const activeRate = activeYearRate;
-              const isHoliday = Boolean(currentAssignment.isHoliday);
+              const isHoliday = hasManualPlusFestivo;
               const shiftRateCalc = computeShiftRateFromConvenio(currentShift, activeRate, { isHoliday });
 
               return (
@@ -1129,24 +1292,33 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
               </button>
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
-              {/* Botón manual para marcar Festivo Oficial (Nacional, Autonómico o Local) */}
+              {/* Botón único y manual para aplicar o quitar Plus Festivo (40,80 €), sin duplicar en extras */}
               <button
                 type="button"
                 onClick={() => {
+                  const nextActive = !hasManualPlusFestivo;
+                  const cleanedExtras = (currentAssignment.extras || []).filter(
+                    (e) => !e.name.toLowerCase().includes('plus festivo')
+                  );
                   onUpdateAssignment(selectedDateStr, {
-                    isHoliday: !currentAssignment.isHoliday,
+                    isHoliday: nextActive,
+                    extras: cleanedExtras,
                   });
                 }}
                 className={`text-xs font-bold px-2.5 py-1 rounded-lg border flex items-center gap-1.5 transition-all ${
-                  currentAssignment.isHoliday
+                  hasManualPlusFestivo
                     ? 'bg-amber-100 border-amber-400 text-amber-900 ring-1 ring-amber-300 shadow-2xs'
                     : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-amber-50 hover:border-amber-200 hover:text-amber-800'
                 }`}
-                title={`Marcar o desmarcar manualmente si este día es festivo nacional, autonómico o local para cobrar el Plus Festivo (+${formatCurrency(plusFestivoRate)})`}
+                title={`Aplicar o quitar manualmente el Plus Festivo (+${formatCurrency(plusFestivoRate)}) cuando trabajes en festivo`}
               >
                 <span>🎉</span>
-                <span>{currentAssignment.isHoliday ? `Festivo (+${formatCurrency(plusFestivoRate)})` : 'Festivo oficial'}</span>
-                {currentAssignment.isHoliday && (
+                <span>
+                  {hasManualPlusFestivo
+                    ? `Plus Festivo (+${formatCurrency(plusFestivoRate)})`
+                    : `Plus Festivo (+${formatCurrency(plusFestivoRate)})`}
+                </span>
+                {hasManualPlusFestivo && (
                   <Check className="w-3 h-3 text-amber-800 stroke-[3]" />
                 )}
               </button>
@@ -1474,10 +1646,10 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
             </div>
           ) : null}
 
-          {/* Lista de otros extras asignados */}
-          {currentAssignment.extras && currentAssignment.extras.length > 0 ? (
+          {/* Lista de otros extras asignados (sin duplicar el Plus Festivo manual) */}
+          {visibleDayExtras.length > 0 ? (
             <div className="space-y-2">
-              {currentAssignment.extras.map((extra) => {
+              {visibleDayExtras.map((extra) => {
                 const convAmt = getOfficialConvenioExtraAmount(extra.name, activeYearRate);
                 const qty = extra.quantity && extra.quantity > 0 ? extra.quantity : 1;
                 const isHourlyOfficial =
@@ -1518,7 +1690,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
             </div>
           ) : (
             !isLateSectionOpen && !(currentAssignment.lateFinishMinutes && currentAssignment.lateFinishMinutes > 0) && (
-              <p className="text-xs text-slate-400 italic">Sin extras asignados para este día.</p>
+              <p className="text-xs text-slate-400 italic">Sin extras adicionales asignados para este día.</p>
             )
           )}
 
