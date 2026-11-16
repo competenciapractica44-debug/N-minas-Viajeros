@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { X, Clock, Plus, Minus, Check, Sparkles, ArrowLeft, Trash2, Moon, AlertCircle, ShieldCheck } from 'lucide-react';
-import { ShiftDefinition, ShiftModality, ConvenioYearRate } from '../types';
+import { ShiftDefinition, ShiftModality, ConvenioYearRate, DayType } from '../types';
 import { calculateNightHours, calculateTotalHours } from '../utils/calculator';
 import { formatCurrency } from '../utils/exporter';
 import { ConfirmModal } from './ConfirmModal';
@@ -46,10 +46,8 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
   const [secondEndTime, setSecondEndTime] = useState('19:00');
 
   // Retribución
-  const [includePlusPuntualidad, setIncludePlusPuntualidad] = useState(false);
-  const [plusPuntualidadVal, setPlusPuntualidadVal] = useState(12.00);
   const [includePlusNocturnidad, setIncludePlusNocturnidad] = useState(false);
-  const [isHolidayRate, setIsHolidayRate] = useState(false);
+  const [dayType, setDayType] = useState<DayType>('laborable');
   const [hasPlusReten, setHasPlusReten] = useState(false);
 
   // Effective year rates from Convenio (defaults to 2026: 13.62 €/h, nocturnidad 2.48 €/h)
@@ -102,11 +100,11 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
               shiftToEdit.title.toLowerCase().includes('reten')
             )
       );
-      if (shiftToEdit.dayType === 'festivo') {
-        setIsHolidayRate(true);
-      }
+      setDayType(shiftToEdit.dayType || 'laborable');
       if (shiftToEdit.fixedRate) {
         setCustomGrossRate(shiftToEdit.fixedRate);
+      } else {
+        setCustomGrossRate(null);
       }
     } else {
       // Default clean state
@@ -118,6 +116,7 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
       setIsPartida(false);
       setStartTime('06:30');
       setEndTime('14:45');
+      setDayType('laborable');
       setHasPlusReten(false);
       setCustomGrossRate(null);
     }
@@ -168,10 +167,6 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
       total += nightHours * (effectiveYearRate.plusNocturnidadHora ?? 2.48);
     }
 
-    if (includePlusPuntualidad) {
-      total += plusPuntualidadVal;
-    }
-
     // El Plus de Festivo no se incluye en la tarifa del turno (se cobra en festivos oficiales y se marca manualmente)
 
     // Plus de retén: se añade si el turno es de retén y excluye quebranto y plus conductor
@@ -185,9 +180,7 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
     effectiveYearRate,
     includePlusNocturnidad,
     nightHours,
-    includePlusPuntualidad,
-    plusPuntualidadVal,
-    isHolidayRate,
+    dayType,
     hasPlusReten,
   ]);
 
@@ -213,8 +206,27 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
 
     const isUnder4Hours = !hasPlusReten && drivingMinutes > 0 && drivingMinutes < 240;
 
+    const dayLabel =
+      dayType === 'festivo'
+        ? 'Domingos y Festivos'
+        : dayType === 'sabado'
+        ? 'Sábados'
+        : dayType === 'todos'
+        ? 'Cualquier día (L-D)'
+        : 'L-V Laborable';
+
+    const dayBadge =
+      dayType === 'sabado'
+        ? 'Servicio Sábado'
+        : dayType === 'festivo'
+        ? 'Domingos y Festivos'
+        : dayType === 'todos'
+        ? 'Todos los días'
+        : 'Laborable';
+
     const badges = [
       isPartida ? 'Servicio Partido' : modality === 'nocturno' ? 'Nocturnidad fija' : 'Servicio Ordinario',
+      dayBadge,
     ];
     if (hasPlusReten) {
       badges.push(`Plus Retén (+${formatCurrency(effectiveYearRate.plusRetenDia ?? 8.25)})`);
@@ -224,12 +236,18 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
       badges.push(`1/2 Plus Conductor (<4h · ${formatCurrency(effectiveYearRate.plusConductorPerceptorDiaReducido ?? 3.14)})`);
     }
 
+    const rawTitle = title.trim() || `Servicio ${code}`;
+    const normalizedTitle = rawTitle.replace(
+      /\((L-V Laborable|Sábados|Domingos y Festivos|Cualquier día \(L-D\))\)\s*$/i,
+      `(${dayLabel})`
+    );
+
     const savedShift: ShiftDefinition = {
       id: shiftToEdit ? shiftToEdit.id : `custom-${Date.now()}`,
       code: code.trim().toUpperCase() || '6V.L01',
-      title: title.trim() || `Servicio ${code}`,
+      title: normalizedTitle,
       category: cat,
-      dayType: isHolidayRate ? 'festivo' : 'laborable',
+      dayType,
       modality: isPartida ? 'partido' : modality,
       terminal: terminal.trim() || (hasPlusReten ? 'Cochera / Guardia Retén' : 'Cochera Central'),
       startTime,
@@ -635,20 +653,6 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
                 </div>
               </div>
 
-              {/* Plus puntualidad opcional */}
-              <label className="flex items-center justify-between text-slate-700 py-1 cursor-pointer">
-                <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={includePlusPuntualidad}
-                    onChange={(e) => setIncludePlusPuntualidad(e.target.checked)}
-                    className="rounded text-blue-600"
-                  />
-                  <span>Plus puntualidad e inicio temprano</span>
-                </div>
-                <span className="font-semibold text-emerald-600 font-mono">+{formatCurrency(plusPuntualidadVal)}</span>
-              </label>
-
               {/* Plus Retén (8,25 €) - Excluye Quebranto y Plus Conductor */}
               <div className={`p-3 rounded-xl border transition-all ${
                 hasPlusReten
@@ -724,34 +728,47 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
             </div>
 
             {/* Tipo de jornada del servicio */}
-            <div className="p-3 bg-slate-100 rounded-2xl text-xs space-y-1.5">
-              <div className="flex items-center justify-between">
-                <span className="font-semibold text-slate-700">Tipo de jornada:</span>
-                <div className="flex items-center gap-3">
-                  <label className="flex items-center gap-1.5 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="rateType"
-                      checked={!isHolidayRate}
-                      onChange={() => setIsHolidayRate(false)}
-                      className="text-blue-600"
-                    />
-                    <span>Laborable / Sábado</span>
-                  </label>
-                  <label className="flex items-center gap-1.5 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="rateType"
-                      checked={isHolidayRate}
-                      onChange={() => setIsHolidayRate(true)}
-                      className="text-blue-600"
-                    />
-                    <span>Domingos y Festivos</span>
-                  </label>
+            <div className="p-3 bg-slate-100 rounded-2xl text-xs space-y-2">
+              <div className="flex flex-col gap-2">
+                <span className="font-semibold text-slate-700">Tipo de jornada según el día:</span>
+                <div className={`grid gap-1.5 ${shiftToEdit?.dayType === 'todos' ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'}`}>
+                  {[
+                    { id: 'laborable' as DayType, label: 'Lunes a Viernes' },
+                    { id: 'sabado' as DayType, label: 'Sábados' },
+                    { id: 'festivo' as DayType, label: 'Domingos / Festivos' },
+                    ...(shiftToEdit?.dayType === 'todos'
+                      ? [{ id: 'todos' as DayType, label: 'Cualquier día' }]
+                      : []),
+                  ].map((option) => {
+                    const isSelected = dayType === option.id;
+                    return (
+                      <label
+                        key={option.id}
+                        className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl border text-[11px] font-semibold cursor-pointer transition-all text-center ${
+                          isSelected
+                            ? option.id === 'festivo'
+                              ? 'bg-rose-600 text-white border-rose-600 shadow-xs'
+                              : option.id === 'sabado'
+                              ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                              : 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                            : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="rateType"
+                          checked={isSelected}
+                          onChange={() => setDayType(option.id)}
+                          className="sr-only"
+                        />
+                        <span>{option.label}</span>
+                      </label>
+                    );
+                  })}
                 </div>
               </div>
               <p className="text-[10.5px] text-slate-500 leading-tight">
-                * El Plus de Festivo (+{formatCurrency(effectiveYearRate.plusFestivoMayor4h ?? 40.80)}) no se incluye en el turno: según convenio se percibe en festivos oficiales (nacionales, regionales y locales) y se marca manualmente en el calendario.
+                * Selecciona si el turno corresponde a <strong>Lunes a Viernes</strong>, <strong>Sábados</strong> o <strong>Domingos / Festivos</strong> para ubicarlo en su pestaña correcta. El Plus de Festivo (+{formatCurrency(effectiveYearRate.plusFestivoMayor4h ?? 40.80)}) se añade manualmente en el calendario.
               </p>
             </div>
           </div>

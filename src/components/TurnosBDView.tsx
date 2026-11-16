@@ -62,26 +62,30 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
     };
     shifts.forEach((s) => {
       counts.todos++;
-      if (s.dayType === 'laborable') {
+      if (s.dayType === 'todos') {
+        // 'D' (Descanso/Fiesta) y 'V' (Vacaciones) aplican a todos los días
         counts.laborable++;
+        counts.sabado++;
+        counts.festivo++;
+      } else if (s.dayType === 'laborable') {
+        counts.laborable++;
+      } else if (s.dayType === 'sabado') {
+        counts.sabado++;
+      } else if (s.dayType === 'festivo') {
+        counts.festivo++;
       } else if (
-        s.dayType === 'sabado' ||
         s.title.toLowerCase().includes('sábado') ||
         (s.badges && s.badges.some((b) => b.toLowerCase().includes('sábado')))
       ) {
         counts.sabado++;
       } else if (
-        s.dayType === 'festivo' ||
         s.title.toLowerCase().includes('festivo') ||
         s.title.toLowerCase().includes('domingo') ||
         (s.badges && s.badges.some((b) => b.toLowerCase().includes('festivo') || b.toLowerCase().includes('domingo')))
       ) {
         counts.festivo++;
-      } else if (s.dayType === 'todos') {
-        // 'D' (Descanso/Fiesta) counts for all day types
+      } else {
         counts.laborable++;
-        counts.sabado++;
-        counts.festivo++;
       }
     });
     return counts;
@@ -97,21 +101,23 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
     };
     shifts.forEach((s) => {
       let matchesDay = true;
-      if (selectedDayType === 'laborable') {
-        matchesDay = s.dayType === 'laborable' || s.dayType === 'todos';
-      } else if (selectedDayType === 'sabado') {
-        matchesDay =
-          s.dayType === 'sabado' ||
-          s.dayType === 'todos' ||
-          s.title.toLowerCase().includes('sábado') ||
-          (s.badges && s.badges.some((b) => b.toLowerCase().includes('sábado')));
-      } else if (selectedDayType === 'festivo') {
-        matchesDay =
-          s.dayType === 'festivo' ||
-          s.dayType === 'todos' ||
-          s.title.toLowerCase().includes('festivo') ||
-          s.title.toLowerCase().includes('domingo') ||
-          (s.badges && s.badges.some((b) => b.toLowerCase().includes('festivo') || b.toLowerCase().includes('domingo')));
+      if (selectedDayType !== 'todos') {
+        if (s.dayType === 'todos') {
+          matchesDay = true;
+        } else if (s.dayType) {
+          matchesDay = s.dayType === selectedDayType;
+        } else if (selectedDayType === 'sabado') {
+          matchesDay =
+            s.title.toLowerCase().includes('sábado') ||
+            (s.badges && s.badges.some((b) => b.toLowerCase().includes('sábado')));
+        } else if (selectedDayType === 'festivo') {
+          matchesDay =
+            s.title.toLowerCase().includes('festivo') ||
+            s.title.toLowerCase().includes('domingo') ||
+            (s.badges && s.badges.some((b) => b.toLowerCase().includes('festivo') || b.toLowerCase().includes('domingo')));
+        } else {
+          matchesDay = false;
+        }
       }
 
       if (!matchesDay) return;
@@ -133,21 +139,23 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
         s.title.toLowerCase().includes(searchTerm.toLowerCase());
 
       let matchesDay = true;
-      if (selectedDayType === 'laborable') {
-        matchesDay = s.dayType === 'laborable' || s.dayType === 'todos';
-      } else if (selectedDayType === 'sabado') {
-        matchesDay =
-          s.dayType === 'sabado' ||
-          s.dayType === 'todos' ||
-          s.title.toLowerCase().includes('sábado') ||
-          (s.badges && s.badges.some((b) => b.toLowerCase().includes('sábado')));
-      } else if (selectedDayType === 'festivo') {
-        matchesDay =
-          s.dayType === 'festivo' ||
-          s.dayType === 'todos' ||
-          s.title.toLowerCase().includes('festivo') ||
-          s.title.toLowerCase().includes('domingo') ||
-          (s.badges && s.badges.some((b) => b.toLowerCase().includes('festivo') || b.toLowerCase().includes('domingo')));
+      if (selectedDayType !== 'todos') {
+        if (s.dayType === 'todos') {
+          matchesDay = true;
+        } else if (s.dayType) {
+          matchesDay = s.dayType === selectedDayType;
+        } else if (selectedDayType === 'sabado') {
+          matchesDay =
+            s.title.toLowerCase().includes('sábado') ||
+            (s.badges && s.badges.some((b) => b.toLowerCase().includes('sábado')));
+        } else if (selectedDayType === 'festivo') {
+          matchesDay =
+            s.title.toLowerCase().includes('festivo') ||
+            s.title.toLowerCase().includes('domingo') ||
+            (s.badges && s.badges.some((b) => b.toLowerCase().includes('festivo') || b.toLowerCase().includes('domingo')));
+        } else {
+          matchesDay = false;
+        }
       }
 
       let matchesTime = true;

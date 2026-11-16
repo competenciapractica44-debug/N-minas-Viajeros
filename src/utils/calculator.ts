@@ -346,6 +346,8 @@ export function calculateMonthlyPayroll(
   let computedFullConductorCount = 0;
   let computedMedioPlusCount = 0;
   let computedQuebrantoCount = 0;
+  let computedPuntualidadCount = 0;
+  let explicitPuntualidadCountCotejo = 0;
 
   // Acumuladores para modo cotejo exacto Octubre 2026
   const retenDaysSetCotejo = new Set<string>();
@@ -367,6 +369,7 @@ export function calculateMonthlyPayroll(
     let dayMedioPlusQty = 0;
     let dayFullConductorQty = 0;
     let dayPlusFestivoQty = 0;
+    let dayPuntualidadQty = 0;
 
     for (const extra of dayExtras) {
       const lower = extra.name.toLowerCase();
@@ -381,6 +384,8 @@ export function calculateMonthlyPayroll(
         dayQuebrantoQty += qty;
       } else if (lower.includes('plus conductor')) {
         dayFullConductorQty += qty;
+      } else if (lower.includes('puntualidad') || lower.includes('inicio temprano')) {
+        dayPuntualidadQty += qty;
       }
     }
     return {
@@ -389,6 +394,7 @@ export function calculateMonthlyPayroll(
       dayMedioPlusQty,
       dayFullConductorQty,
       dayPlusFestivoQty,
+      dayPuntualidadQty,
     };
   };
 
@@ -510,7 +516,9 @@ export function calculateMonthlyPayroll(
       l.includes('medio plus') ||
       l.includes('plus festivo') ||
       l.includes('quebranto') ||
-      l.includes('plus conductor')
+      l.includes('plus conductor') ||
+      l.includes('puntualidad') ||
+      l.includes('inicio temprano')
     );
   };
 
@@ -550,6 +558,7 @@ export function calculateMonthlyPayroll(
         dayMedioPlusQty,
         dayFullConductorQty,
         dayPlusFestivoQty,
+        dayPuntualidadQty,
       } = extractDayPlusQuantities(dayExtras);
 
       const isVacationDay = Boolean(assignment.isVacation || shiftCode === 'V');
@@ -807,6 +816,17 @@ export function calculateMonthlyPayroll(
         }
       }
 
+      // Plus puntualidad e inicio temprano opcional (solo si está habilitado en ficha del usuario)
+      if (profile.hasPunctualityEarlyStartPlus === true && dayPuntualidadQty > 0) {
+        computedPuntualidadCount += dayPuntualidadQty;
+        pushValidExtraDetail({
+          date: dateStr,
+          name: 'Plus puntualidad e inicio temprano',
+          amount: dayPuntualidadQty * (yearRate.plusPuntualidadDia ?? 12.00),
+          notes: 'Opcional Convenio (marcado en calendario)',
+        });
+      }
+
       // Otros extras (Horas festivas, Complementarias, Dietas, Fuera de convenio) dentro del corte
       for (const extra of dayExtras) {
         const lower = extra.name.toLowerCase();
@@ -980,6 +1000,13 @@ export function calculateMonthlyPayroll(
                   explicitPlusConductorCountCotejo += qty;
                 }
                 resolvedGrossExtraAmount = isRetenOnThisDay ? 0 : parseFloat((qty * (yearRate.plusConductorPerceptorDia ?? 6.27)).toFixed(2));
+              } else if (lower.includes('puntualidad') || lower.includes('inicio temprano')) {
+                if (profile.hasPunctualityEarlyStartPlus === true) {
+                  explicitPuntualidadCountCotejo += qty;
+                  resolvedGrossExtraAmount = parseFloat((qty * (yearRate.plusPuntualidadDia ?? 12.00)).toFixed(2));
+                } else {
+                  resolvedGrossExtraAmount = 0;
+                }
               }
             } else if (lower.includes('festiva')) {
               const h = extra.quantity !== undefined && extra.quantity > 0
@@ -1074,6 +1101,7 @@ export function calculateMonthlyPayroll(
           dayMedioPlusQty,
           dayFullConductorQty,
           dayPlusFestivoQty,
+          dayPuntualidadQty,
         } = extractDayPlusQuantities(dayExtras);
 
         if (!isExactOctoberCotejo) {
@@ -1166,8 +1194,13 @@ export function calculateMonthlyPayroll(
           }
         }
 
+        if (profile.hasPunctualityEarlyStartPlus === true && dayPuntualidadQty > 0) {
+          pendingNextMonthExtrasCount += dayPuntualidadQty;
+          pendingNextMonthExtrasTotal += parseFloat((dayPuntualidadQty * (yearRate.plusPuntualidadDia ?? 12.00)).toFixed(2));
+        }
+
         for (const extra of dayExtras) {
-          if (!isExactOctoberCotejo && isShiftInherentExtraName(extra.name)) continue;
+          if (isShiftInherentExtraName(extra.name)) continue;
           pendingNextMonthExtrasCount++;
           const qty = extra.quantity !== undefined && extra.quantity > 0 ? extra.quantity : 1;
           const convUnit = getOfficialConvenioExtraAmount(extra.name, yearRate);
@@ -1241,6 +1274,16 @@ export function calculateMonthlyPayroll(
   const plusRetenUnitRate = yearRate.plusRetenDia ?? 8.25;
   const plusRetenAmount = parseFloat(
     (finalRetenCount * plusRetenUnitRate).toFixed(2)
+  );
+
+  // 4b. Plus puntualidad e inicio temprano (solo si está habilitado en ficha del usuario)
+  const finalPuntualidadCount =
+    profile.hasPunctualityEarlyStartPlus === true
+      ? (isExactOctoberCotejo ? explicitPuntualidadCountCotejo : computedPuntualidadCount)
+      : 0;
+  const plusPuntualidadUnitRate = yearRate.plusPuntualidadDia ?? 12.00;
+  const plusPuntualidadAmount = parseFloat(
+    (finalPuntualidadCount * plusPuntualidadUnitRate).toFixed(2)
   );
 
   // Horas Convenio objetivo (Art. 14, escalado por % de jornada parcial o completa)
@@ -1393,6 +1436,7 @@ export function calculateMonthlyPayroll(
       medioPlusConductorAmount +
       horasFestivasAmount +
       plusRetenAmount +
+      plusPuntualidadAmount +
       plusConductorPerceptor +
       prorrataPagasExtra +
       pagaExtraIntegraMes +
@@ -1527,6 +1571,20 @@ export function calculateMonthlyPayroll(
       unit: 'días',
       unitPrice: plusConductorUnitRate,
       amount: plusConductorPerceptor,
+      category: 'plus',
+      isOfficial: true,
+    });
+  }
+
+  if (finalPuntualidadCount > 0 && plusPuntualidadAmount > 0) {
+    lines.push({
+      id: 'plus-puntualidad',
+      name: 'Plus puntualidad e inicio temprano',
+      quantity: finalPuntualidadCount,
+      quantityLabel: `${finalPuntualidadCount.toFixed(2).replace('.', ',')}`,
+      unit: 'días',
+      unitPrice: plusPuntualidadUnitRate,
+      amount: plusPuntualidadAmount,
       category: 'plus',
       isOfficial: true,
     });
@@ -1705,6 +1763,7 @@ export function calculateMonthlyPayroll(
     plusRetenCount: finalRetenCount,
     plusConductorCount: finalPlusConductorCount,
     medioPlusConductorCount: finalMedioPlusCount,
+    plusPuntualidadCount: finalPuntualidadCount,
     prorrataDays: prorrataQuantity,
 
     // Extras Cutoff Configuration info
@@ -1727,6 +1786,7 @@ export function calculateMonthlyPayroll(
     plusFestivos: parseFloat(festivoPluses.toFixed(2)),
     horasFestivasAmount: parseFloat(horasFestivasAmount.toFixed(2)),
     plusRetenAmount: parseFloat(plusRetenAmount.toFixed(2)),
+    plusPuntualidadAmount: parseFloat(plusPuntualidadAmount.toFixed(2)),
     prorrataPagasExtra,
     pagaExtraIntegraMes,
     pagaExtraIntegraNombre,

@@ -34,6 +34,7 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
     extrasCutoffMode: profile.extrasCutoffMode || 'direxis_25_24',
     customCutoffStartDay: profile.customCutoffStartDay || 25,
     hasVacationPlus: profile.hasVacationPlus !== undefined ? profile.hasVacationPlus : true,
+    hasPunctualityEarlyStartPlus: profile.hasPunctualityEarlyStartPlus === true,
   }));
 
   useEffect(() => {
@@ -47,6 +48,7 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
         extrasCutoffMode: profile.extrasCutoffMode || 'direxis_25_24',
         customCutoffStartDay: profile.customCutoffStartDay || 25,
         hasVacationPlus: profile.hasVacationPlus !== undefined ? profile.hasVacationPlus : true,
+        hasPunctualityEarlyStartPlus: profile.hasPunctualityEarlyStartPlus === true,
       });
     }
   }, [isOpen, profile]);
@@ -685,6 +687,33 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
                   Cobro de billetes a bordo / Quebranto de moneda (Art. 20: {formatCurrency(effectiveRate.quebrantoMonedaDia ?? 1.89)}/día bruto)
                 </span>
               </label>
+
+              {/* Opción Plus de Puntualidad e Inicio Temprano (habilita selector por días en el calendario) */}
+              <div className="p-3 bg-slate-50/90 rounded-2xl border border-slate-200/80 space-y-1 transition-all">
+                <label className="flex items-start gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={formData.hasPunctualityEarlyStartPlus === true}
+                    onChange={(e) =>
+                      setFormData({ ...formData, hasPunctualityEarlyStartPlus: e.target.checked })
+                    }
+                    className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4 shrink-0"
+                  />
+                  <div className="space-y-0.5">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="font-bold text-slate-900 text-xs">
+                        Habilitar Plus de Puntualidad e Inicio Temprano ({formatCurrency(effectiveRate.plusPuntualidadDia ?? 12.00)}/día)
+                      </span>
+                      <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded">
+                        Opcional · Por días
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 leading-normal">
+                      Recogido en convenio pero desactivado por defecto. Si lo marcas, aparecerá un botón en cada día del calendario para aplicarlo únicamente en las jornadas necesarias.
+                    </p>
+                  </div>
+                </label>
+              </div>
             </div>
           </div>
         </div>

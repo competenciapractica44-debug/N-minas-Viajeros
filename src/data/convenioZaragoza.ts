@@ -31,6 +31,7 @@ export const DEFAULT_CONVENIO_ZARAGOZA: ConvenioInfo = {
       dietaPernoctaRegular: 12.27,
       dietaPernoctaDiscrecional: 16.25,
       plusVacacionesDia: 10.00,
+      plusPuntualidadDia: 12.00,
       horasJornadaAnual: 1776,
     },
   },
@@ -59,6 +60,7 @@ export function generateProrrogaYearRate(baseRate: ConvenioYearRate, newYear: nu
     dietaPernoctaRegular: parseFloat((baseRate.dietaPernoctaRegular * factor).toFixed(2)),
     dietaPernoctaDiscrecional: parseFloat((baseRate.dietaPernoctaDiscrecional * factor).toFixed(2)),
     plusVacacionesDia: parseFloat((baseRate.plusVacacionesDia * factor).toFixed(2)),
+    plusPuntualidadDia: parseFloat(((baseRate.plusPuntualidadDia ?? 12.0) * factor).toFixed(2)),
     plusRetenDia: parseFloat(((baseRate.plusRetenDia ?? 8.25) * factor).toFixed(2)),
     prorrataPagaDia: parseFloat(((baseRate.prorrataPagaDia ?? 3.28) * factor).toFixed(2)),
     horasJornadaAnual: baseRate.horasJornadaAnual,
@@ -109,6 +111,9 @@ export function getOfficialConvenioExtraAmount(name: string, yearRate: ConvenioY
   }
   if (lower.includes('plus festivo')) {
     return yearRate.plusFestivoMayor4h ?? 40.80;
+  }
+  if (lower.includes('puntualidad') || lower.includes('inicio temprano')) {
+    return yearRate.plusPuntualidadDia ?? 12.00;
   }
   if (lower.includes('festiva') || lower.includes('complementaria')) {
     return yearRate.horaOrdinaria ?? 13.62;

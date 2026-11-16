@@ -240,6 +240,7 @@ export default function App() {
           locality: '',
           ...parsed,
           hasVacationPlus: parsed.hasVacationPlus !== undefined ? parsed.hasVacationPlus : true,
+          hasPunctualityEarlyStartPlus: parsed.hasPunctualityEarlyStartPlus === true,
         };
       }
     } catch (e) {
@@ -263,6 +264,7 @@ export default function App() {
       hasMonetaryQuebranto: true,
       hasConductorPerceptorPlus: true,
       hasVacationPlus: true,
+      hasPunctualityEarlyStartPlus: false,
       salaryBaseRateMode: 'convenio_53_18',
       unionFeeDeduction: 0,
       advancePayment: 0,
@@ -420,6 +422,7 @@ export default function App() {
             setProfile({
               ...driveProfile,
               hasVacationPlus: driveProfile.hasVacationPlus !== undefined ? driveProfile.hasVacationPlus : true,
+              hasPunctualityEarlyStartPlus: driveProfile.hasPunctualityEarlyStartPlus === true,
             });
           }
         } else {
@@ -663,6 +666,7 @@ export default function App() {
           const normalizedDriveProfile: WorkerProfile = {
             ...driveProfile,
             hasVacationPlus: driveProfile.hasVacationPlus !== undefined ? driveProfile.hasVacationPlus : true,
+            hasPunctualityEarlyStartPlus: driveProfile.hasPunctualityEarlyStartPlus === true,
           };
           if (JSON.stringify(normalizedDriveProfile) !== JSON.stringify(cur.profile)) {
             isApplyingRemoteSyncRef.current = true;

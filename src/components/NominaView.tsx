@@ -1042,6 +1042,18 @@ export const NominaView: React.FC<NominaViewProps> = ({
               </div>
             )}
 
+            {payroll.plusPuntualidadCount > 0 && payroll.plusPuntualidadAmount > 0 && (
+              <div className="flex items-center justify-between pt-2">
+                <div>
+                  <p className="font-semibold text-slate-800">Plus Puntualidad e Inicio Temprano</p>
+                  <p className="text-[10px] text-slate-400">
+                    {payroll.plusPuntualidadCount} {payroll.plusPuntualidadCount === 1 ? 'día marcado' : 'días marcados'} × {formatCurrency(activeYearRate.plusPuntualidadDia ?? 12.00)}/día
+                  </p>
+                </div>
+                <span className="font-bold font-mono text-emerald-700">+{formatCurrency(payroll.plusPuntualidadAmount)}</span>
+              </div>
+            )}
+
             {payroll.prorrataPagasExtra > 0 && (
               <div className="flex items-center justify-between pt-2">
                 <div>

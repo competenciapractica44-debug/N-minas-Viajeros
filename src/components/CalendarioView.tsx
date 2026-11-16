@@ -159,6 +159,8 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
   const medioPlusConductorRate =
     activeYearRate.plusConductorPerceptorDiaReducido ??
     parseFloat((plusConductorRate / 2).toFixed(2));
+  const plusPuntualidadRate = activeYearRate.plusPuntualidadDia ?? 12.00;
+  const isPuntualidadEnabledInProfile = profile?.hasPunctualityEarlyStartPlus === true;
 
   // Mapa anual de festivos oficiales (Nacionales, Regionales y Locales según ficha del chófer)
   const officialHolidaysMap = useMemo(
@@ -207,20 +209,21 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
   const matchesDayCategory = (s: ShiftDefinition, filter: 'todos' | 'laborable' | 'sabado' | 'festivo') => {
     if (filter === 'todos') return true;
     if (s.dayType === 'todos') return true;
-    if (filter === 'laborable') return s.dayType === 'laborable';
+    if (s.dayType) return s.dayType === filter;
     if (filter === 'sabado') {
       return (
-        s.dayType === 'sabado' ||
         s.title.toLowerCase().includes('sábado') ||
         (s.badges && s.badges.some((b) => b.toLowerCase().includes('sábado')))
       );
     }
-    return (
-      s.dayType === 'festivo' ||
-      s.title.toLowerCase().includes('festivo') ||
-      s.title.toLowerCase().includes('domingo') ||
-      (s.badges && s.badges.some((b) => b.toLowerCase().includes('festivo') || b.toLowerCase().includes('domingo')))
-    );
+    if (filter === 'festivo') {
+      return (
+        s.title.toLowerCase().includes('festivo') ||
+        s.title.toLowerCase().includes('domingo') ||
+        (s.badges && s.badges.some((b) => b.toLowerCase().includes('festivo') || b.toLowerCase().includes('domingo')))
+      );
+    }
+    return false;
   };
 
   // Botones de acceso rápido contextuales (D, V + 4 turnos frecuentes/acordes al día)
@@ -472,12 +475,14 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
         }
         if (asg.extras) {
           asg.extras.forEach((e) => {
-            if (asg.isHoliday && e.name.toLowerCase().includes('plus festivo')) return;
+            const lowerName = e.name.toLowerCase();
+            if (asg.isHoliday && lowerName.includes('plus festivo')) return;
+            if (!isPuntualidadEnabledInProfile && (lowerName.includes('puntualidad') || lowerName.includes('inicio temprano'))) return;
             const convAmt = getOfficialConvenioExtraAmount(e.name, activeYearRate);
             const qty = e.quantity && e.quantity > 0 ? e.quantity : 1;
             const isHourlyOfficial =
-              e.name.toLowerCase().includes('festiva') ||
-              e.name.toLowerCase().includes('complementaria');
+              lowerName.includes('festiva') ||
+              lowerName.includes('complementaria');
             const effectiveAmt =
               convAmt !== null
                 ? (isHourlyOfficial && e.quantity === undefined ? e.amount : parseFloat((qty * convAmt).toFixed(2)))
@@ -500,7 +505,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
       extrasTotal,
       monthWorkedHours: Math.round(monthWorkedHours * 100) / 100,
     };
-  }, [assignments, daysInMonth, selectedYear, selectedMonth, horaOrdinariaRate, activeYearRate, shiftsMap, shifts]);
+  }, [assignments, daysInMonth, selectedYear, selectedMonth, horaOrdinariaRate, activeYearRate, shiftsMap, shifts, isPuntualidadEnabledInProfile]);
 
   const convenioAnnualTargetCal = parseFloat(
     (((activeYearRate.horasJornadaAnual && activeYearRate.horasJornadaAnual > 0 ? activeYearRate.horasJornadaAnual : 1776)) * partTimeFactorCal).toFixed(2)
@@ -647,6 +652,12 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
           return sum;
         }
         if (
+          !isPuntualidadEnabledInProfile &&
+          (lower.includes('puntualidad') || lower.includes('inicio temprano'))
+        ) {
+          return sum;
+        }
+        if (
           dayPlusStatus.isRetenOnDay &&
           (lower.includes('quebranto') || lower.includes('plus conductor') || lower.includes('1/2') || lower.includes('medio plus'))
         ) {
@@ -680,6 +691,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
     quebrantoRate,
     plusConductorRate,
     medioPlusConductorRate,
+    isPuntualidadEnabledInProfile,
   ]);
 
   // Date formatted in human Spanish
@@ -1367,6 +1379,52 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                   <Check className="w-3 h-3 text-amber-800 stroke-[3]" />
                 )}
               </button>
+
+              {/* Botón opcional diario para Plus de Puntualidad e Inicio Temprano (solo visible si se habilitó en ficha) */}
+              {isPuntualidadEnabledInProfile && (() => {
+                const hasPunctualityOnDay = (currentAssignment.extras || []).some((e) => {
+                  const l = e.name.toLowerCase();
+                  return l.includes('puntualidad') || l.includes('inicio temprano');
+                });
+                return (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const currentExtras = currentAssignment.extras || [];
+                      if (hasPunctualityOnDay) {
+                        const filtered = currentExtras.filter((e) => {
+                          const l = e.name.toLowerCase();
+                          return !l.includes('puntualidad') && !l.includes('inicio temprano');
+                        });
+                        onUpdateAssignment(selectedDateStr, { extras: filtered });
+                      } else {
+                        onUpdateAssignment(selectedDateStr, {
+                          extras: [
+                            ...currentExtras,
+                            {
+                              id: `dayextra-puntualidad-${Date.now()}`,
+                              name: 'Plus puntualidad e inicio temprano',
+                              amount: plusPuntualidadRate,
+                            },
+                          ],
+                        });
+                      }
+                    }}
+                    className={`text-xs font-bold px-2.5 py-1 rounded-lg border flex items-center gap-1.5 transition-all ${
+                      hasPunctualityOnDay
+                        ? 'bg-emerald-100 border-emerald-400 text-emerald-900 ring-1 ring-emerald-300 shadow-2xs'
+                        : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-emerald-50 hover:border-emerald-200 hover:text-emerald-800'
+                    }`}
+                    title={`Aplicar o quitar Plus de Puntualidad e Inicio Temprano (+${formatCurrency(plusPuntualidadRate)}) en este día`}
+                  >
+                    <Clock className="w-3.5 h-3.5 text-emerald-700" />
+                    <span>Plus Puntualidad (+{formatCurrency(plusPuntualidadRate)})</span>
+                    {hasPunctualityOnDay && (
+                      <Check className="w-3 h-3 text-emerald-800 stroke-[3]" />
+                    )}
+                  </button>
+                );
+              })()}
 
               {/* Reflejo de Quebranto de Moneda cuando el turno lo lleva aparejado */}
               {dayPlusStatus.hasQuebranto && (

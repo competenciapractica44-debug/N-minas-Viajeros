@@ -147,6 +147,14 @@ const CONCEPTS_METADATA: ConceptDefinition[] = [
     description: 'Incentivo de 10,00 €/día de vacaciones retribuidas para contratos al 100% de jornada.',
   },
   {
+    key: 'plusPuntualidadDia',
+    label: 'Plus Puntualidad e Inicio Temprano (Opcional)',
+    article: 'Convenio Colectivo',
+    unit: '€ / día activado',
+    section: 'plus',
+    description: 'Concepto recogido en convenio (12,00 €/día por defecto). Solo se habilita en el calendario si se activa en la ficha del conductor.',
+  },
+  {
     key: 'plusFestivoMayor4h',
     label: 'Plus Festivos y Domingos (> 4h)',
     article: 'Art. 17 Convenio',

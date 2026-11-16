@@ -90,6 +90,7 @@ export interface ConvenioYearRate {
   dietaPernoctaRegular: number;
   dietaPernoctaDiscrecional: number;
   plusVacacionesDia: number;
+  plusPuntualidadDia?: number;
   salarioBaseDiaMasats?: number;
   plusRetenDia?: number;
   prorrataPagaDia?: number;
@@ -132,6 +133,7 @@ export interface WorkerProfile {
   hasConductorPerceptorPlus: boolean;
   hasVacationPlus?: boolean; // Activar automáticamente el plus de vacaciones Art. 9 (10 €/día al 100%, proporcional al % de jornada) en días 'V'
   hasVacationPlus100Percent?: boolean; // legacy compatibility
+  hasPunctualityEarlyStartPlus?: boolean; // Habilitar opción diaria de Plus puntualidad e inicio temprano en calendario
   salaryBaseRateMode?: 'convenio_53_18' | 'masats_39_89'; // 53.18 € Convenio Zaragoza o 39.89 € Recibo Masats
   unionFeeDeduction: number; // e.g. 0.00
   advancePayment: number; // anticipos
@@ -196,6 +198,7 @@ export interface PayrollBreakdown {
   plusRetenCount: number;
   plusConductorCount: number;
   medioPlusConductorCount: number;
+  plusPuntualidadCount: number;
   prorrataDays: number;
 
   // Devengos
@@ -209,6 +212,7 @@ export interface PayrollBreakdown {
   plusFestivos: number;
   horasFestivasAmount: number;
   plusRetenAmount: number;
+  plusPuntualidadAmount: number;
   prorrataPagasExtra: number;
   pagaExtraIntegraMes: number; // Paga completa de Julio o Diciembre si aplica
   pagaExtraIntegraNombre?: string; // 'Paga Extra de Julio' | 'Paga Extra de Navidad (Diciembre)'
