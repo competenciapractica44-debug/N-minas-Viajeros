@@ -473,11 +473,12 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
 
     const hasRetenShift = Boolean(
       currentShift &&
-      (currentShift.hasPlusReten ||
-        currentShift.code.includes('.LR') ||
-        currentShift.code.includes('.R0') ||
-        currentShift.title.toLowerCase().includes('retén') ||
-        currentShift.title.toLowerCase().includes('reten'))
+      (currentShift.hasPlusReten !== undefined
+        ? currentShift.hasPlusReten
+        : (currentShift.code.includes('.LR') ||
+          currentShift.code.includes('.R0') ||
+          currentShift.title.toLowerCase().includes('retén') ||
+          currentShift.title.toLowerCase().includes('reten')))
     );
     const hasRetenExtra = dayExtras.some((e) => {
       const l = e.name.toLowerCase();
@@ -509,7 +510,10 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
 
     const hasQuebranto =
       !isRetenOnDay &&
-      ((isWorkingShift && profile?.hasMonetaryQuebranto !== false) || hasExplicitQuebranto);
+      ((isWorkingShift &&
+        profile?.hasMonetaryQuebranto !== false &&
+        currentShift?.hasQuebrantoMoneda !== false) ||
+        hasExplicitQuebranto);
 
     const hasHalfConductorPlus =
       !isRetenOnDay &&
@@ -517,6 +521,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
       (hasExplicitMedioPlus ||
         (isWorkingShift &&
           profile?.hasConductorPerceptorPlus !== false &&
+          currentShift?.hasConductorPerceptor !== false &&
           effectiveShiftHours > 0 &&
           effectiveShiftHours < 4));
 
@@ -526,9 +531,11 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
       (hasExplicitFullConductor ||
         (isWorkingShift &&
           profile?.hasConductorPerceptorPlus !== false &&
+          currentShift?.hasConductorPerceptor !== false &&
           (effectiveShiftHours >= 4 || effectiveShiftHours === 0)));
 
     return {
+      hasRetenShift,
       isRetenOnDay,
       hasQuebranto,
       hasHalfConductorPlus,
@@ -580,11 +587,23 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
 
     const extrasSum =
       currentAssignment.extras?.reduce((sum, e) => {
+        const lower = e.name.toLowerCase();
+        // Evitar doble cómputo si el turno ya incluye Plus Retén o el día ya tiene marcado Festivo
+        if ((lower.includes('reten') || lower.includes('retén')) && dayPlusStatus.hasRetenShift) {
+          return sum;
+        }
+        if (lower.includes('plus festivo') && isHoliday) {
+          return sum;
+        }
+        if (
+          dayPlusStatus.isRetenOnDay &&
+          (lower.includes('quebranto') || lower.includes('plus conductor') || lower.includes('1/2') || lower.includes('medio plus'))
+        ) {
+          return sum;
+        }
         const convAmt = getOfficialConvenioExtraAmount(e.name, yearRate);
         const qty = e.quantity && e.quantity > 0 ? e.quantity : 1;
-        const isHourlyOfficial =
-          e.name.toLowerCase().includes('festiva') ||
-          e.name.toLowerCase().includes('complementaria');
+        const isHourlyOfficial = lower.includes('festiva') || lower.includes('complementaria');
         const effectiveAmt =
           convAmt !== null
             ? (isHourlyOfficial && e.quantity === undefined ? e.amount : parseFloat((qty * convAmt).toFixed(2)))
@@ -624,19 +643,20 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
   const handleAssignShift = (code: string) => {
     const shift = shiftsMap.get(code) || shifts.find((s) => s.code === code);
     const isReten = Boolean(
-      shift?.hasPlusReten ||
-      code.includes('.LR') ||
-      code.includes('.R0') ||
-      shift?.title.toLowerCase().includes('retén') ||
-      shift?.title.toLowerCase().includes('reten')
+      shift?.hasPlusReten !== undefined
+        ? shift.hasPlusReten
+        : (code.includes('.LR') ||
+          code.includes('.R0') ||
+          shift?.title.toLowerCase().includes('retén') ||
+          shift?.title.toLowerCase().includes('reten'))
     );
 
     let updatedExtras = currentAssignment.extras || [];
-    // Si el turno asignado es de retén, quitar el quebranto de moneda y el plus conductor perceptor
+    // Si el turno asignado es de retén, quitar el quebranto de moneda y el plus conductor perceptor (y retén manual duplicado)
     if (isReten) {
       updatedExtras = updatedExtras.filter((e) => {
         const l = e.name.toLowerCase();
-        return !l.includes('quebranto') && !l.includes('plus conductor') && !l.includes('medio plus');
+        return !l.includes('quebranto') && !l.includes('plus conductor') && !l.includes('medio plus') && !l.includes('reten') && !l.includes('retén');
       });
     }
 
@@ -672,11 +692,13 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
 
     const currentExtras = currentAssignment.extras || [];
     const dayHasRetenShift = Boolean(
-      currentShift?.hasPlusReten ||
-      currentShift?.code.includes('.LR') ||
-      currentShift?.code.includes('.R0') ||
-      currentShift?.title.toLowerCase().includes('retén') ||
-      currentShift?.title.toLowerCase().includes('reten')
+      currentShift &&
+      (currentShift.hasPlusReten !== undefined
+        ? currentShift.hasPlusReten
+        : (currentShift.code.includes('.LR') ||
+          currentShift.code.includes('.R0') ||
+          currentShift.title.toLowerCase().includes('retén') ||
+          currentShift.title.toLowerCase().includes('reten')))
     );
     const dayHasRetenExtra = currentExtras.some(
       (e) => e.name.toLowerCase().includes('reten') || e.name.toLowerCase().includes('retén')
@@ -1107,7 +1129,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                       (e) => !e.name.toLowerCase().includes('reten') && !e.name.toLowerCase().includes('retén')
                     );
                     onUpdateAssignment(selectedDateStr, { extras: filtered });
-                  } else {
+                  } else if (!dayPlusStatus.hasRetenShift) {
                     // Quitar quebranto y plus conductor al añadir retén
                     const filtered = currentExtras.filter((e) => {
                       const l = e.name.toLowerCase();
@@ -2061,7 +2083,12 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
         cancelText="Volver"
         isDestructive={true}
         onConfirm={() => {
-          onUpdateAssignment(selectedDateStr, { shiftCode: undefined, isRest: false });
+          onUpdateAssignment(selectedDateStr, {
+            shiftCode: undefined,
+            isRest: false,
+            isVacation: false,
+            isSickLeave: false,
+          });
           setShowRemoveShiftConfirm(false);
         }}
         onCancel={() => setShowRemoveShiftConfirm(false)}

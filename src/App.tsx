@@ -318,6 +318,11 @@ export default function App() {
   const [driveSyncError, setDriveSyncError] = useState<string | null>(null);
   const hasInitialDriveSyncDoneRef = React.useRef(false);
   const syncPromiseRef = React.useRef<Promise<void> | null>(null);
+  const hasPendingLocalSyncRef = React.useRef(false);
+  const isApplyingRemoteSyncRef = React.useRef(false);
+  const [payrollCalcNonce, setPayrollCalcNonce] = useState(0);
+  const [lastPayrollCalculatedAt, setLastPayrollCalculatedAt] = useState<Date>(() => new Date());
+  const [isRefreshingForNomina, setIsRefreshingForNomina] = useState(false);
   const latestStateRef = React.useRef({ shifts, profile, convenio, assignments, extras });
   latestStateRef.current = { shifts, profile, convenio, assignments, extras };
 
@@ -442,7 +447,14 @@ export default function App() {
         if (asignacionesFile) {
           const driveAsignaciones = await readDriveJsonFile<DayAssignment[]>(token, asignacionesFile.id);
           if (driveAsignaciones && Array.isArray(driveAsignaciones) && driveAsignaciones.length > 0) {
-            setAssignments(driveAsignaciones);
+            isApplyingRemoteSyncRef.current = true;
+            setAssignments(
+              driveAsignaciones.map((a) => ({
+                ...a,
+                shiftCode: mapLegacyShiftCode(a.shiftCode),
+                extras: Array.isArray(a.extras) ? a.extras : [],
+              }))
+            );
           }
         } else {
           await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'cuadrante_asignaciones.json', currentSnapshot.assignments);
@@ -465,10 +477,12 @@ export default function App() {
 
         setLastSyncTime(new Date());
         hasInitialDriveSyncDoneRef.current = true;
+        hasPendingLocalSyncRef.current = false;
       } catch (err: any) {
         console.error('Error sincronizando con Google Drive:', err);
         setDriveSyncError(err?.message || 'Error al sincronizar con Google Drive.');
       } finally {
+        isApplyingRemoteSyncRef.current = false;
         setIsDriveSyncing(false);
         syncPromiseRef.current = null;
       }
@@ -478,12 +492,17 @@ export default function App() {
     return run;
   };
 
-  // Auto-guardado en Drive ante cualquier variación tras sincronización inicial
+  // Auto-guardado en Drive de la configuración y calendario (NUNCA guarda nóminas automáticamente)
   useEffect(() => {
     if (!currentUser || !accessToken || !driveFolders || !hasInitialDriveSyncDoneRef.current) {
       return;
     }
+    if (isApplyingRemoteSyncRef.current) {
+      isApplyingRemoteSyncRef.current = false;
+      return;
+    }
 
+    hasPendingLocalSyncRef.current = true;
     const timer = setTimeout(async () => {
       try {
         await Promise.all([
@@ -493,6 +512,7 @@ export default function App() {
           saveOrUpdateDriveJsonFile(accessToken, driveFolders.nominasFolderId, 'cuadrante_asignaciones.json', assignments),
           saveOrUpdateDriveJsonFile(accessToken, driveFolders.nominasFolderId, 'catalogo_extras.json', extras),
         ]);
+        hasPendingLocalSyncRef.current = false;
         setLastSyncTime(new Date());
       } catch (err) {
         console.error('Error auto-guardando en Google Drive:', err);
@@ -537,6 +557,125 @@ export default function App() {
     }
   };
 
+  // Recalcular nómina siempre de nuevo desde los datos del calendario (sin guardar nómina automáticamente)
+  const recalculatePayrollFromCalendar = async (pullDriveCalendarIfIdle = true) => {
+    // 1. Recálculo inmediato con los datos actuales del calendario en memoria
+    setPayrollCalcNonce((n) => n + 1);
+    setLastPayrollCalculatedAt(new Date());
+
+    // 2. Si Google Drive está conectado y no hay cambios locales pendientes de subir, comprobar datos actualizados del calendario en Drive
+    const token = accessToken || getCachedAccessToken();
+    if (
+      pullDriveCalendarIfIdle &&
+      currentUser &&
+      token &&
+      driveFolders &&
+      !hasPendingLocalSyncRef.current &&
+      !syncPromiseRef.current
+    ) {
+      setIsRefreshingForNomina(true);
+      try {
+        const [asignacionesFile, turnosFile, convenioFile, choferFile] = await Promise.all([
+          findFileInFolder(token, 'cuadrante_asignaciones.json', driveFolders.nominasFolderId),
+          findFileInFolder(token, 'turnos_base.json', driveFolders.nominasFolderId),
+          findFileInFolder(token, 'convenio_2026.json', driveFolders.nominasFolderId),
+          findFileInFolder(token, 'chofer_config.json', driveFolders.nominasFolderId),
+        ]);
+
+        if (hasPendingLocalSyncRef.current) {
+          return;
+        }
+
+        const [driveAsignaciones, driveTurnos, driveConvenio, driveProfile] = await Promise.all([
+          asignacionesFile ? readDriveJsonFile<DayAssignment[]>(token, asignacionesFile.id) : Promise.resolve(null),
+          turnosFile ? readDriveJsonFile<ShiftDefinition[]>(token, turnosFile.id) : Promise.resolve(null),
+          convenioFile ? readDriveJsonFile<ConvenioInfo>(token, convenioFile.id) : Promise.resolve(null),
+          choferFile ? readDriveJsonFile<WorkerProfile>(token, choferFile.id) : Promise.resolve(null),
+        ]);
+
+        if (hasPendingLocalSyncRef.current) {
+          return;
+        }
+
+        const cur = latestStateRef.current;
+        let updatedAny = false;
+
+        if (driveAsignaciones && Array.isArray(driveAsignaciones)) {
+          const normalizedAssignments = driveAsignaciones.map((a) => ({
+            ...a,
+            shiftCode: mapLegacyShiftCode(a.shiftCode),
+            extras: Array.isArray(a.extras) ? a.extras : [],
+          }));
+          if (JSON.stringify(normalizedAssignments) !== JSON.stringify(cur.assignments)) {
+            isApplyingRemoteSyncRef.current = true;
+            setAssignments(normalizedAssignments);
+            updatedAny = true;
+          }
+        }
+        if (driveTurnos && Array.isArray(driveTurnos) && driveTurnos.length > 0) {
+          const cleanedShifts = driveTurnos.map((s) =>
+            s.code.includes('/L')
+              ? {
+                  ...s,
+                  code: s.code.replace(/\/L/g, ''),
+                  title: s.title ? s.title.replace(/\/L/g, '') : `Servicio ${s.code.replace(/\/L/g, '')}`,
+                }
+              : s
+          );
+          if (JSON.stringify(cleanedShifts) !== JSON.stringify(cur.shifts)) {
+            isApplyingRemoteSyncRef.current = true;
+            setShifts(cleanedShifts);
+            updatedAny = true;
+          }
+        }
+        if (driveConvenio && driveConvenio.ratesByYear) {
+          const migratedRates: Record<number, ConvenioYearRate> = {};
+          for (const [k, v] of Object.entries(driveConvenio.ratesByYear)) {
+            const yNum = Number(k);
+            if (yNum >= 2026 && v) {
+              const r = v as ConvenioYearRate;
+              migratedRates[yNum] = {
+                ...DEFAULT_CONVENIO_ZARAGOZA.ratesByYear[2026],
+                ...r,
+                plusFestivoMayor4h: r.plusFestivoMayor4h === 40.80 ? 42.80 : (r.plusFestivoMayor4h ?? 42.80),
+                year: yNum,
+              };
+            }
+          }
+          const normalizedConvenio = { ...driveConvenio, ratesByYear: migratedRates };
+          if (JSON.stringify(normalizedConvenio) !== JSON.stringify(cur.convenio)) {
+            isApplyingRemoteSyncRef.current = true;
+            setConvenio(normalizedConvenio);
+            updatedAny = true;
+          }
+        }
+        if (driveProfile && driveProfile.name) {
+          if (JSON.stringify(driveProfile) !== JSON.stringify(cur.profile)) {
+            isApplyingRemoteSyncRef.current = true;
+            setProfile(driveProfile);
+            updatedAny = true;
+          }
+        }
+        if (updatedAny) {
+          setPayrollCalcNonce((n) => n + 1);
+          setLastPayrollCalculatedAt(new Date());
+        }
+      } catch (err) {
+        console.error('Error leyendo datos actualizados del calendario en Drive:', err);
+      } finally {
+        setIsRefreshingForNomina(false);
+      }
+    }
+  };
+
+  const handleSelectTab = (tab: string) => {
+    const nextTab = tab as 'turnos' | 'calendario' | 'nomina' | 'extras';
+    setCurrentTab(nextTab);
+    if (nextTab === 'nomina') {
+      void recalculatePayrollFromCalendar(true);
+    }
+  };
+
   // Map of shifts for fast lookup
   const shiftsMap = useMemo(() => {
     const map = new Map<string, ShiftDefinition>();
@@ -549,7 +688,7 @@ export default function App() {
     return getEffectiveYearRate(convenio, selectedYear);
   }, [convenio, selectedYear]);
 
-  // Computed Monthly Payroll
+  // Computed Monthly Payroll (recalculada siempre en vivo desde el calendario y sin autoguardado)
   const monthlyPayroll = useMemo(() => {
     return calculateMonthlyPayroll(
       assignments,
@@ -559,7 +698,7 @@ export default function App() {
       selectedYear,
       selectedMonth
     );
-  }, [assignments, shiftsMap, currentYearRate, profile, selectedYear, selectedMonth]);
+  }, [assignments, shiftsMap, currentYearRate, profile, selectedYear, selectedMonth, payrollCalcNonce]);
 
   // Computed 12-Month Salary Evolution across the selected year
   const yearlyEvolution = useMemo(() => {
@@ -570,7 +709,11 @@ export default function App() {
       convenio,
       profile
     );
-  }, [selectedYear, assignments, shiftsMap, convenio, profile]);
+  }, [selectedYear, assignments, shiftsMap, convenio, profile, payrollCalcNonce]);
+
+  useEffect(() => {
+    setLastPayrollCalculatedAt(new Date());
+  }, [assignments, shifts, convenio, profile, selectedYear, selectedMonth]);
 
   // Turno actions
   const handleOpenNewTurno = () => {
@@ -761,7 +904,7 @@ export default function App() {
       {/* Top Header */}
       <Header
         currentTab={currentTab}
-        onSelectTab={(tab) => setCurrentTab(tab as any)}
+        onSelectTab={handleSelectTab}
         selectedMonth={selectedMonth}
         selectedYear={selectedYear}
         onChangeMonth={(y, m) => {
@@ -864,6 +1007,9 @@ export default function App() {
             onSyncRealPayslip={handleSyncRealPayslip}
             isDriveConnected={!!currentUser}
             onOpenDriveNominasModal={() => setIsDriveNominasModalOpen(true)}
+            lastCalculatedAt={lastPayrollCalculatedAt}
+            isRecalculating={isRefreshingForNomina}
+            onRecalculate={() => void recalculatePayrollFromCalendar(true)}
           />
         )}
 
@@ -884,7 +1030,7 @@ export default function App() {
       {/* Fixed Bottom Navigation matching screenshot */}
       <BottomNav
         currentTab={currentTab}
-        onSelectTab={(tab) => setCurrentTab(tab as any)}
+        onSelectTab={handleSelectTab}
         extrasCount={extras.filter((e) => e.active).length}
       />
 

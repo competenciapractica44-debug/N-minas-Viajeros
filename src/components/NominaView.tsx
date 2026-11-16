@@ -17,6 +17,7 @@ import {
   ArrowRightLeft,
   X,
   Cloud,
+  RefreshCw,
 } from 'lucide-react';
 import {
   PayrollBreakdown,
@@ -44,6 +45,9 @@ interface NominaViewProps {
   onSyncRealPayslip?: () => void;
   isDriveConnected?: boolean;
   onOpenDriveNominasModal?: () => void;
+  lastCalculatedAt?: Date;
+  isRecalculating?: boolean;
+  onRecalculate?: () => void;
 }
 
 export const NominaView: React.FC<NominaViewProps> = ({
@@ -61,6 +65,9 @@ export const NominaView: React.FC<NominaViewProps> = ({
   onSyncRealPayslip,
   isDriveConnected,
   onOpenDriveNominasModal,
+  lastCalculatedAt,
+  isRecalculating,
+  onRecalculate,
 }) => {
   const [showExtrasDetails, setShowExtrasDetails] = useState(false);
   const [showRealPayslipModal, setShowRealPayslipModal] = useState(false);
@@ -194,6 +201,34 @@ export const NominaView: React.FC<NominaViewProps> = ({
             <span className="text-slate-400 text-[11px] block">Horas Nocturnas (22-06h)</span>
             <span className="font-bold text-amber-300 font-mono text-sm">{payroll.nightHours} horas</span>
           </div>
+        </div>
+
+        {/* Live recalculation & no-auto-save confirmation strip */}
+        <div className="mt-4 pt-3 border-t border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[11px]">
+          <div className="flex items-center gap-2 text-slate-300">
+            <span className={`w-2 h-2 rounded-full shrink-0 ${isRecalculating ? 'bg-amber-400 animate-ping' : 'bg-emerald-400'}`}></span>
+            <span>
+              {isRecalculating
+                ? 'Sincronizando y recalculando nómina con los datos del calendario...'
+                : `Calculada en vivo desde el calendario (${
+                    lastCalculatedAt
+                      ? lastCalculatedAt.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                      : 'ahora'
+                  }) · No se guarda hasta que elijas archivarla o descargarla`}
+            </span>
+          </div>
+          {onRecalculate && (
+            <button
+              type="button"
+              onClick={onRecalculate}
+              disabled={isRecalculating}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white font-semibold border border-white/15 transition-colors self-start sm:self-auto shrink-0 disabled:opacity-60 cursor-pointer"
+              title="Volver a calcular ahora con los últimos datos del calendario"
+            >
+              <RefreshCw className={`w-3 h-3 ${isRecalculating ? 'animate-spin' : ''}`} />
+              <span>Recalcular</span>
+            </button>
+          )}
         </div>
       </div>
 

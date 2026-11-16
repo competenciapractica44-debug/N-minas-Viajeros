@@ -92,13 +92,16 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
       setEndTime(shiftToEdit.endTime);
       setSecondStartTime(shiftToEdit.secondStartTime || '15:00');
       setSecondEndTime(shiftToEdit.secondEndTime || '19:00');
-      setHasPlusReten(Boolean(
-        shiftToEdit.hasPlusReten ||
-        shiftToEdit.code.includes('.LR') ||
-        shiftToEdit.code.includes('.R0') ||
-        shiftToEdit.title.toLowerCase().includes('retén') ||
-        shiftToEdit.title.toLowerCase().includes('reten')
-      ));
+      setHasPlusReten(
+        shiftToEdit.hasPlusReten !== undefined
+          ? shiftToEdit.hasPlusReten
+          : Boolean(
+              shiftToEdit.code.includes('.LR') ||
+              shiftToEdit.code.includes('.R0') ||
+              shiftToEdit.title.toLowerCase().includes('retén') ||
+              shiftToEdit.title.toLowerCase().includes('reten')
+            )
+      );
       if (shiftToEdit.dayType === 'festivo') {
         setIsHolidayRate(true);
       }
