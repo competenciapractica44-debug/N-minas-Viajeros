@@ -793,10 +793,11 @@ export function exportToExcel(
   // =========================================================================
   const extrasTitle = [`DETALLE DE PLUSES Y VARIABLES EN CORTE (${payroll.extrasCutoffPeriod})`, '', '', ''];
   const extrasHeader = ['Fecha', 'Concepto / Particularidad', 'Notas / Observaciones', 'Importe Bruto (€)'];
+  const nonZeroExtrasForSheet = payroll.extrasItemsList.filter((e) => e.amount > 0);
   const extrasRows =
-    payroll.extrasItemsList.length > 0
-      ? payroll.extrasItemsList.map((e) => [e.date, e.name, e.notes || '-', e.amount])
-      : [['-', 'Sin apuntes extra registrados en el período de corte', '-', 0]];
+    nonZeroExtrasForSheet.length > 0
+      ? nonZeroExtrasForSheet.map((e) => [e.date, e.name, e.notes || '-', e.amount])
+      : [['-', 'Sin pluses variables ni apuntes extra (> 0 €) registrados en el período de corte', '-', 0]];
 
   const sheet3AoA: Array<Array<string | number>> = [extrasTitle, extrasHeader, ...extrasRows];
   const wsExtras = XLSX.utils.aoa_to_sheet(sheet3AoA);

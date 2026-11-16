@@ -134,6 +134,36 @@ export const NominaView: React.FC<NominaViewProps> = ({
     });
   });
 
+  const nonZeroExtrasItems = payroll.extrasItemsList.filter((item) => item.amount > 0);
+  const nonZeroExtrasTotal = parseFloat(
+    nonZeroExtrasItems.reduce((acc, item) => acc + item.amount, 0).toFixed(2)
+  );
+  const groupedExtrasByDay = Array.from(
+    nonZeroExtrasItems.reduce((map, item) => {
+      const existing = map.get(item.date);
+      if (existing) {
+        existing.items.push(item);
+        existing.dayTotal = parseFloat((existing.dayTotal + item.amount).toFixed(2));
+      } else {
+        map.set(item.date, {
+          date: item.date,
+          dayTotal: parseFloat(item.amount.toFixed(2)),
+          items: [item],
+        });
+      }
+      return map;
+    }, new Map<string, { date: string; dayTotal: number; items: typeof nonZeroExtrasItems }>()).values()
+  ).sort((a, b) => a.date.localeCompare(b.date));
+
+  const formatShortDateES = (dateStr: string) => {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    if (!y || !m || !d) return dateStr;
+    const monthsShort = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+    const weekDaysShort = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+    const wd = weekDaysShort[new Date(y, m - 1, d).getDay()];
+    return `${wd} ${String(d).padStart(2, '0')} ${monthsShort[m - 1] || ''}`;
+  };
+
   return (
     <div className="max-w-4xl mx-auto px-4 py-4 pb-28 space-y-4">
       {/* Hero Card: Líquido Total a Percibir (Net Pay) */}
@@ -940,7 +970,7 @@ export const NominaView: React.FC<NominaViewProps> = ({
               </div>
             )}
 
-            {payroll.medioPlusConductorCount > 0 && (
+            {payroll.medioPlusConductorCount > 0 && payroll.medioPlusConductorAmount > 0 && (
               <div className="flex items-center justify-between pt-2">
                 <div>
                   <p className="font-semibold text-slate-800">1/2 Plus Conductor</p>
@@ -988,7 +1018,7 @@ export const NominaView: React.FC<NominaViewProps> = ({
               </div>
             )}
 
-            {payroll.horasFestivas > 0 && (
+            {payroll.horasFestivas > 0 && payroll.horasFestivasAmount > 0 && (
               <div className="flex items-center justify-between pt-2">
                 <div>
                   <p className="font-semibold text-slate-800">Festivas (Horas)</p>
@@ -1000,7 +1030,7 @@ export const NominaView: React.FC<NominaViewProps> = ({
               </div>
             )}
 
-            {payroll.plusRetenCount > 0 && (
+            {payroll.plusRetenCount > 0 && payroll.plusRetenAmount > 0 && (
               <div className="flex items-center justify-between pt-2">
                 <div>
                   <p className="font-semibold text-slate-800">Plus Retén</p>
@@ -1058,34 +1088,40 @@ export const NominaView: React.FC<NominaViewProps> = ({
               </div>
             )}
 
-            {(payroll.totalExtrasFueraConvenio > 0 || payroll.extrasItemsList.length > 0) && (
-              <div className="pt-2 bg-amber-50/50 p-2.5 rounded-xl border border-amber-200/60 space-y-2">
-                <div className="flex items-center justify-between">
+            {(payroll.totalExtrasFueraConvenio > 0 || nonZeroExtrasItems.length > 0) && (
+              <div className="pt-2 bg-amber-50/50 p-3 rounded-xl border border-amber-200/70 space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <div className="flex items-center gap-1.5">
-                      <p className="font-semibold text-amber-900">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <p className="font-semibold text-amber-950">
                         {payroll.totalExtrasFueraConvenio > 0
                           ? 'Complementos y Extras Fuera de Convenio'
-                          : 'Registro de Extras y Variables del Período'}
+                          : 'Detalle Diario de Pluses y Extras del Período'}
                       </p>
-                      <span className="text-[10px] font-bold bg-amber-100 text-amber-800 px-1.5 py-0.2 rounded">
-                        {payroll.extrasItemsList.length} {payroll.extrasItemsList.length === 1 ? 'apunte' : 'apuntes'}
+                      <span className="text-[10px] font-bold bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded">
+                        {nonZeroExtrasItems.length} {nonZeroExtrasItems.length === 1 ? 'concepto' : 'conceptos'} · {groupedExtrasByDay.length} {groupedExtrasByDay.length === 1 ? 'día' : 'días'}
                       </span>
                     </div>
-                    <p className="text-[10px] text-amber-700">
-                      Corte: <strong>{payroll.extrasCutoffPeriod}</strong>
+                    <p className="text-[10px] text-amber-800 mt-0.5">
+                      Corte: <strong>{payroll.extrasCutoffPeriod}</strong> · Solo importes &gt; 0,00 €
                     </p>
                   </div>
-                  <div className="flex items-center gap-2">
-                    {payroll.totalExtrasFueraConvenio > 0 && (
-                      <span className="font-bold font-mono text-amber-800">+{formatCurrency(payroll.totalExtrasFueraConvenio)}</span>
+                  <div className="flex items-center gap-2 ml-auto">
+                    {payroll.totalExtrasFueraConvenio > 0 ? (
+                      <span className="font-bold font-mono text-amber-900">
+                        +{formatCurrency(payroll.totalExtrasFueraConvenio)}
+                      </span>
+                    ) : (
+                      <span className="font-bold font-mono text-emerald-800 text-[11px]">
+                        Σ {formatCurrency(nonZeroExtrasTotal)}
+                      </span>
                     )}
-                    {payroll.extrasItemsList.length > 0 && (
+                    {nonZeroExtrasItems.length > 0 && (
                       <button
                         type="button"
                         onClick={() => setShowExtrasDetails(!showExtrasDetails)}
-                        className="text-amber-800 hover:text-amber-950 p-0.5 rounded transition-colors flex items-center gap-1 text-[10px] font-bold"
-                        title={showExtrasDetails ? 'Ocultar desglose' : 'Ver desglose'}
+                        className="text-amber-900 hover:text-amber-950 bg-amber-100/70 hover:bg-amber-200/70 px-2 py-1 rounded-lg transition-colors flex items-center gap-1 text-[10px] font-bold cursor-pointer"
+                        title={showExtrasDetails ? 'Ocultar desglose por días' : 'Ver desglose por días'}
                       >
                         <span>{showExtrasDetails ? 'Ocultar' : 'Detalle'}</span>
                         {showExtrasDetails ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
@@ -1094,22 +1130,55 @@ export const NominaView: React.FC<NominaViewProps> = ({
                   </div>
                 </div>
 
-                {/* Desglose de extras incluidos en el período de corte */}
-                {showExtrasDetails && payroll.extrasItemsList.length > 0 && (
-                  <div className="pt-2 border-t border-amber-200/60 space-y-1.5 text-[11px] animate-fadeIn">
-                    {payroll.extrasItemsList.map((item, idx) => (
-                      <div key={idx} className="flex items-center justify-between py-0.5 text-slate-700 border-b border-amber-100/60 last:border-0">
-                        <div className="flex items-center gap-1.5 truncate max-w-[210px] sm:max-w-xs">
-                          <span className="font-mono text-[10px] font-bold text-amber-800 bg-amber-100/70 px-1 rounded shrink-0">
-                            {item.date.slice(5)}
+                {/* Desglose fiable por día (agrupa varios extras/pluses en el mismo día y omite importes 0,00 €) */}
+                {showExtrasDetails && groupedExtrasByDay.length > 0 && (
+                  <div className="pt-2.5 border-t border-amber-200/70 space-y-2 text-[11px] animate-fadeIn">
+                    {groupedExtrasByDay.map((dayGroup) => (
+                      <div
+                        key={dayGroup.date}
+                        className="bg-white/85 rounded-lg border border-amber-200/60 px-2.5 py-2 space-y-1.5"
+                      >
+                        <div className="flex items-center justify-between border-b border-amber-100 pb-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-mono text-[10px] font-bold text-amber-900 bg-amber-100 px-1.5 py-0.5 rounded">
+                              {formatShortDateES(dayGroup.date)}
+                            </span>
+                            {dayGroup.items.length > 1 && (
+                              <span className="text-[9px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200/70 px-1.5 py-0.5 rounded">
+                                {dayGroup.items.length} extras en el día
+                              </span>
+                            )}
+                          </div>
+                          <span className="font-mono font-extrabold text-[11px] text-slate-900">
+                            Total día: +{formatCurrency(dayGroup.dayTotal)}
                           </span>
-                          <span className="truncate">{item.name}</span>
                         </div>
-                        <span className="font-mono font-bold text-emerald-800 shrink-0">
-                          +{formatCurrency(item.amount)}
-                        </span>
+
+                        <div className="space-y-1">
+                          {dayGroup.items.map((item, idx) => (
+                            <div
+                              key={`${dayGroup.date}-${idx}`}
+                              className="flex items-start justify-between gap-2 text-slate-700"
+                            >
+                              <div className="min-w-0">
+                                <p className="font-medium text-slate-800 leading-snug">{item.name}</p>
+                                {item.notes && (
+                                  <p className="text-[10px] text-slate-400 leading-tight">{item.notes}</p>
+                                )}
+                              </div>
+                              <span className="font-mono font-bold text-emerald-700 shrink-0">
+                                +{formatCurrency(item.amount)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     ))}
+
+                    <div className="flex items-center justify-between pt-1.5 px-1 text-[10px] text-amber-900 font-bold border-t border-amber-200/60">
+                      <span>Suma total verificada de pluses diarios y extras en corte</span>
+                      <span className="font-mono text-xs text-emerald-800">+{formatCurrency(nonZeroExtrasTotal)}</span>
+                    </div>
                   </div>
                 )}
               </div>

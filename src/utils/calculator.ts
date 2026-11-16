@@ -459,6 +459,26 @@ export function calculateMonthlyPayroll(
             const effectiveHolidayAmt =
               effectiveTotalHours > 4 ? yearRate.plusFestivoMayor4h : yearRate.plusFestivoMenor4h;
             festivoPluses += effectiveHolidayAmt;
+            if (effectiveHolidayAmt > 0) {
+              extrasItemsList.push({
+                date: dateStr,
+                name: 'Plus Festivo (Art. 17)',
+                amount: parseFloat(effectiveHolidayAmt.toFixed(2)),
+                notes: `Festivo trabajado (${shiftDef.code})`,
+              });
+            }
+          }
+
+          if (effectiveNightHours > 0) {
+            const nAmt = parseFloat((effectiveNightHours * (yearRate.plusNocturnidadHora ?? 2.48)).toFixed(2));
+            if (nAmt > 0) {
+              extrasItemsList.push({
+                date: dateStr,
+                name: `Plus nocturnidad (${effectiveNightHours.toFixed(2).replace('.', ',')} h)`,
+                amount: nAmt,
+                notes: `Turno ${shiftDef.code}`,
+              });
+            }
           }
         }
       }
@@ -494,6 +514,21 @@ export function calculateMonthlyPayroll(
     );
   };
 
+  const pushValidExtraDetail = (detail: PayrollExtraItemDetail) => {
+    const roundedAmt = parseFloat((detail.amount || 0).toFixed(2));
+    if (roundedAmt > 0) {
+      extrasItemsList.push({
+        ...detail,
+        amount: roundedAmt,
+      });
+    }
+  };
+
+  const isAutoVacationPlusActive = profile.hasVacationPlus !== false;
+  const basePlusVacacionesDiaForDetail =
+    yearRate.plusVacacionesDia && yearRate.plusVacacionesDia > 0 ? yearRate.plusVacacionesDia : 10.00;
+  const plusVacacionesDiaForDetail = parseFloat((basePlusVacacionesDiaForDetail * partTimeFactor).toFixed(2));
+
   // =========================================================================
   // 2. PERÍODO DE CORTE DE VARIABLES Y EXTRAS (ej. 25 mes anterior al 24 mes actual)
   // =========================================================================
@@ -520,6 +555,14 @@ export function calculateMonthlyPayroll(
       const isVacationDay = Boolean(assignment.isVacation || shiftCode === 'V');
       if (isVacationDay) {
         cutoffVacationPlusDays++;
+        if (isAutoVacationPlusActive && plusVacacionesDiaForDetail > 0) {
+          pushValidExtraDetail({
+            date: dateStr,
+            name: 'Plus de Vacaciones (Art. 9)',
+            amount: plusVacacionesDiaForDetail,
+            notes: partTimeFactor < 1 ? `Proporcional al ${Math.round(partTimeFactor * 100)}%` : 'Jornada 100%',
+          });
+        }
       }
 
       const isRestOrOff = Boolean(
@@ -550,32 +593,55 @@ export function calculateMonthlyPayroll(
         const isPaidHolidayDay = isHoliday || dayPlusFestivoQty > 0;
         if (isPaidHolidayDay) {
           holidayShiftHours += effectiveTotalHours;
+          if (effectiveTotalHours > 0) {
+            pushValidExtraDetail({
+              date: dateStr,
+              name: `Horas festivas (${effectiveTotalHours.toFixed(2).replace('.', ',')} h)`,
+              amount: effectiveTotalHours * (yearRate.horaOrdinaria ?? 13.62),
+              notes: `Turno ${shiftDef.code} en festivo (excluidas de convenio)`,
+            });
+          }
         } else {
           ordinaryShiftHours += effectiveTotalHours;
         }
 
-        // Retén, Quebranto y Plus Conductor (entero o 1/2)
+        if (effectiveNightHours > 0) {
+          pushValidExtraDetail({
+            date: dateStr,
+            name: `Plus nocturnidad (${effectiveNightHours.toFixed(2).replace('.', ',')} h)`,
+            amount: effectiveNightHours * (yearRate.plusNocturnidadHora ?? 2.48),
+            notes: `Turno ${shiftDef.code}`,
+          });
+        }
+
+        // Retén, Quebranto y Plus Conductor (entero o 1/2) — solo se detallan si > 0 €
         const isRetenDay = Boolean(calc.hasReten) || dayRetenQty > 0;
         if (isRetenDay) {
           const retenQtyForDay = dayRetenQty > 0 ? dayRetenQty : 1;
           computedRetenCount += retenQtyForDay;
-          if (dayRetenQty > 0) {
-            extrasItemsList.push({
-              date: dateStr,
-              name: 'Plus retén',
-              amount: parseFloat((retenQtyForDay * (yearRate.plusRetenDia ?? 8.25)).toFixed(2)),
-            });
-          }
+          pushValidExtraDetail({
+            date: dateStr,
+            name: 'Plus retén',
+            amount: retenQtyForDay * (yearRate.plusRetenDia ?? 8.25),
+            notes: dayRetenQty > 0 ? 'Manual' : `Turno ${shiftDef.code}`,
+          });
         } else {
           if (dayQuebrantoQty > 0) {
             computedQuebrantoCount += dayQuebrantoQty;
-            extrasItemsList.push({
+            pushValidExtraDetail({
               date: dateStr,
               name: 'Quebranto de moneda',
-              amount: parseFloat((dayQuebrantoQty * (yearRate.quebrantoMonedaDia ?? 1.89)).toFixed(2)),
+              amount: dayQuebrantoQty * (yearRate.quebrantoMonedaDia ?? 1.89),
+              notes: 'Manual',
             });
           } else if (profile.hasMonetaryQuebranto !== false && shiftDef.hasQuebrantoMoneda !== false) {
             computedQuebrantoCount += 1;
+            pushValidExtraDetail({
+              date: dateStr,
+              name: 'Quebranto de moneda',
+              amount: yearRate.quebrantoMonedaDia ?? 1.89,
+              notes: `Turno ${shiftDef.code}`,
+            });
           }
 
           const redRate =
@@ -583,23 +649,44 @@ export function calculateMonthlyPayroll(
             parseFloat(((yearRate.plusConductorPerceptorDia ?? 6.27) / 2).toFixed(2));
           if (dayMedioPlusQty > 0) {
             computedMedioPlusCount += dayMedioPlusQty;
-            extrasItemsList.push({
+            pushValidExtraDetail({
               date: dateStr,
               name: '1/2 Plus conductor',
-              amount: parseFloat((dayMedioPlusQty * redRate).toFixed(2)),
+              amount: dayMedioPlusQty * redRate,
+              notes: 'Manual',
             });
-          } else if (dayFullConductorQty > 0) {
+          }
+          if (dayFullConductorQty > 0) {
             computedFullConductorCount += dayFullConductorQty;
-            extrasItemsList.push({
+            pushValidExtraDetail({
               date: dateStr,
               name: 'Plus conductor',
-              amount: parseFloat((dayFullConductorQty * (yearRate.plusConductorPerceptorDia ?? 6.27)).toFixed(2)),
+              amount: dayFullConductorQty * (yearRate.plusConductorPerceptorDia ?? 6.27),
+              notes: 'Manual',
             });
-          } else if (profile.hasConductorPerceptorPlus !== false && shiftDef.hasConductorPerceptor !== false) {
+          }
+          if (
+            dayMedioPlusQty === 0 &&
+            dayFullConductorQty === 0 &&
+            profile.hasConductorPerceptorPlus !== false &&
+            shiftDef.hasConductorPerceptor !== false
+          ) {
             if (effectiveTotalHours > 0 && effectiveTotalHours < 4) {
               computedMedioPlusCount += 1;
+              pushValidExtraDetail({
+                date: dateStr,
+                name: '1/2 Plus conductor',
+                amount: redRate,
+                notes: `Turno ${shiftDef.code} (<4h)`,
+              });
             } else {
               computedFullConductorCount += 1;
+              pushValidExtraDetail({
+                date: dateStr,
+                name: 'Plus conductor',
+                amount: yearRate.plusConductorPerceptorDia ?? 6.27,
+                notes: `Turno ${shiftDef.code}`,
+              });
             }
           }
         }
@@ -607,13 +694,15 @@ export function calculateMonthlyPayroll(
         // Tarifa especial de turno personalizado
         if (shiftDef.isCustom && shiftDef.fixedRate && shiftDef.fixedRate > calc.totalRate) {
           const excess = parseFloat((shiftDef.fixedRate - calc.totalRate).toFixed(2));
-          customShiftExcess += excess;
-          customShiftItems.push({
-            date: dateStr,
-            name: `Tarifa especial ${shiftDef.title || shiftDef.code}`,
-            amount: excess,
-            notes: 'Complemento de turno personalizado pactado',
-          });
+          if (excess > 0) {
+            customShiftExcess += excess;
+            customShiftItems.push({
+              date: dateStr,
+              name: `Tarifa especial ${shiftDef.title || shiftDef.code}`,
+              amount: excess,
+              notes: 'Complemento de turno personalizado pactado',
+            });
+          }
         }
 
         // Plus Festivo (Art. 17) dentro del período de corte
@@ -623,56 +712,73 @@ export function calculateMonthlyPayroll(
           const effectiveHolidayAmt =
             effectiveTotalHours > 4 ? yearRate.plusFestivoMayor4h : yearRate.plusFestivoMenor4h;
           festivoPluses += effectiveHolidayAmt;
+          pushValidExtraDetail({
+            date: dateStr,
+            name: 'Plus Festivo (Art. 17)',
+            amount: effectiveHolidayAmt,
+            notes: `Festivo trabajado (${shiftDef.code})`,
+          });
         } else if (dayPlusFestivoQty > 0) {
           cutoffHolidayCount += dayPlusFestivoQty;
           holidayDaysSet.add(dateStr);
           const festAmt = parseFloat((dayPlusFestivoQty * (yearRate.plusFestivoMayor4h ?? 40.80)).toFixed(2));
           festivoPluses += festAmt;
-          extrasItemsList.push({
+          pushValidExtraDetail({
             date: dateStr,
-            name: 'Plus Festivo',
+            name: 'Plus Festivo (Art. 17)',
             amount: festAmt,
+            notes: 'Manual',
           });
         }
 
         // Plus especial 24/31 de diciembre si cae dentro del período de corte
         if ((cM === 12 && (cD === 24 || cD === 31)) && effectiveNightHours > 0) {
           festivoPluses += yearRate.plus24y31Diciembre;
+          pushValidExtraDetail({
+            date: dateStr,
+            name: 'Plus especial 24/31 Diciembre',
+            amount: yearRate.plus24y31Diciembre,
+          });
         }
       } else {
         // Día sin turno laboral (descanso, vacaciones o libre) pero con pluses manuales añadidos dentro del corte
         if (dayRetenQty > 0) {
           computedRetenCount += dayRetenQty;
-          extrasItemsList.push({
+          pushValidExtraDetail({
             date: dateStr,
             name: 'Plus retén',
-            amount: parseFloat((dayRetenQty * (yearRate.plusRetenDia ?? 8.25)).toFixed(2)),
+            amount: dayRetenQty * (yearRate.plusRetenDia ?? 8.25),
+            notes: 'Manual',
           });
         } else {
           if (dayQuebrantoQty > 0) {
             computedQuebrantoCount += dayQuebrantoQty;
-            extrasItemsList.push({
+            pushValidExtraDetail({
               date: dateStr,
               name: 'Quebranto de moneda',
-              amount: parseFloat((dayQuebrantoQty * (yearRate.quebrantoMonedaDia ?? 1.89)).toFixed(2)),
+              amount: dayQuebrantoQty * (yearRate.quebrantoMonedaDia ?? 1.89),
+              notes: 'Manual',
             });
           }
+          const redRate =
+            yearRate.plusConductorPerceptorDiaReducido ??
+            parseFloat(((yearRate.plusConductorPerceptorDia ?? 6.27) / 2).toFixed(2));
           if (dayMedioPlusQty > 0) {
             computedMedioPlusCount += dayMedioPlusQty;
-            const redRate =
-              yearRate.plusConductorPerceptorDiaReducido ??
-              parseFloat(((yearRate.plusConductorPerceptorDia ?? 6.27) / 2).toFixed(2));
-            extrasItemsList.push({
+            pushValidExtraDetail({
               date: dateStr,
               name: '1/2 Plus conductor',
-              amount: parseFloat((dayMedioPlusQty * redRate).toFixed(2)),
+              amount: dayMedioPlusQty * redRate,
+              notes: 'Manual',
             });
-          } else if (dayFullConductorQty > 0) {
+          }
+          if (dayFullConductorQty > 0) {
             computedFullConductorCount += dayFullConductorQty;
-            extrasItemsList.push({
+            pushValidExtraDetail({
               date: dateStr,
               name: 'Plus conductor',
-              amount: parseFloat((dayFullConductorQty * (yearRate.plusConductorPerceptorDia ?? 6.27)).toFixed(2)),
+              amount: dayFullConductorQty * (yearRate.plusConductorPerceptorDia ?? 6.27),
+              notes: 'Manual',
             });
           }
         }
@@ -681,15 +787,22 @@ export function calculateMonthlyPayroll(
           holidayDaysSet.add(dateStr);
           const festAmt = parseFloat((yearRate.plusFestivoMayor4h ?? 40.80).toFixed(2));
           festivoPluses += festAmt;
+          pushValidExtraDetail({
+            date: dateStr,
+            name: 'Plus Festivo (Art. 17)',
+            amount: festAmt,
+            notes: 'Manual',
+          });
         } else if (dayPlusFestivoQty > 0) {
           cutoffHolidayCount += dayPlusFestivoQty;
           holidayDaysSet.add(dateStr);
           const festAmt = parseFloat((dayPlusFestivoQty * (yearRate.plusFestivoMayor4h ?? 40.80)).toFixed(2));
           festivoPluses += festAmt;
-          extrasItemsList.push({
+          pushValidExtraDetail({
             date: dateStr,
-            name: 'Plus Festivo',
+            name: 'Plus Festivo (Art. 17)',
             amount: festAmt,
+            notes: 'Manual',
           });
         }
       }
@@ -719,25 +832,27 @@ export function calculateMonthlyPayroll(
           if (convenioUnitRate !== null) {
             resolvedGrossExtraAmount = parseFloat((qty * convenioUnitRate).toFixed(2));
           }
-          generalExtrasTotal += resolvedGrossExtraAmount;
-          generalExtrasItems.push({
-            id: `extra-gen-${dateStr}-${extra.name}`,
-            name: extra.name,
-            quantity: qty,
-            quantityLabel: `${qty}`,
-            unit: 'servicio',
-            unitPrice: qty > 0 ? parseFloat((resolvedGrossExtraAmount / qty).toFixed(2)) : resolvedGrossExtraAmount,
-            amount: resolvedGrossExtraAmount,
-            category: 'extra',
-            isOfficial: false,
-          });
+          if (resolvedGrossExtraAmount > 0) {
+            generalExtrasTotal += resolvedGrossExtraAmount;
+            generalExtrasItems.push({
+              id: `extra-gen-${dateStr}-${extra.id || extra.name}`,
+              name: extra.name,
+              quantity: qty,
+              quantityLabel: `${qty}`,
+              unit: 'servicio',
+              unitPrice: qty > 0 ? parseFloat((resolvedGrossExtraAmount / qty).toFixed(2)) : resolvedGrossExtraAmount,
+              amount: resolvedGrossExtraAmount,
+              category: 'extra',
+              isOfficial: false,
+            });
+          }
         }
 
-        if (lower.includes('dieta')) {
+        if (lower.includes('dieta') && resolvedGrossExtraAmount > 0) {
           dietasExentas += resolvedGrossExtraAmount;
         }
 
-        extrasItemsList.push({
+        pushValidExtraDetail({
           date: dateStr,
           name: extra.name,
           amount: resolvedGrossExtraAmount,
@@ -757,7 +872,7 @@ export function calculateMonthlyPayroll(
 
         if (isPaidHolidayDay) {
           holidayShiftHours += lateHoursDay;
-          extrasItemsList.push({
+          pushValidExtraDetail({
             date: dateStr,
             name: `Terminado más tarde en festivo: +${durationFormatted}${reasonText}`,
             amount: computedLateAmount,
@@ -765,7 +880,7 @@ export function calculateMonthlyPayroll(
           });
         } else {
           totalLateFinishMinutes += assignment.lateFinishMinutes;
-          extrasItemsList.push({
+          pushValidExtraDetail({
             date: dateStr,
             name: `Terminado más tarde: +${durationFormatted}${reasonText}`,
             amount: computedLateAmount,
@@ -882,25 +997,27 @@ export function calculateMonthlyPayroll(
               if (convenioUnitRate !== null) {
                 resolvedGrossExtraAmount = parseFloat((qty * convenioUnitRate).toFixed(2));
               }
-              generalExtrasTotal += resolvedGrossExtraAmount;
-              generalExtrasItems.push({
-                id: `extra-gen-${assignment.date}-${extra.name}`,
-                name: extra.name,
-                quantity: qty,
-                quantityLabel: `${qty}`,
-                unit: 'servicio',
-                unitPrice: qty > 0 ? parseFloat((resolvedGrossExtraAmount / qty).toFixed(2)) : resolvedGrossExtraAmount,
-                amount: resolvedGrossExtraAmount,
-                category: 'extra',
-                isOfficial: false,
-              });
+              if (resolvedGrossExtraAmount > 0) {
+                generalExtrasTotal += resolvedGrossExtraAmount;
+                generalExtrasItems.push({
+                  id: `extra-gen-${assignment.date}-${extra.id || extra.name}`,
+                  name: extra.name,
+                  quantity: qty,
+                  quantityLabel: `${qty}`,
+                  unit: 'servicio',
+                  unitPrice: qty > 0 ? parseFloat((resolvedGrossExtraAmount / qty).toFixed(2)) : resolvedGrossExtraAmount,
+                  amount: resolvedGrossExtraAmount,
+                  category: 'extra',
+                  isOfficial: false,
+                });
+              }
             }
 
-            if (lower.includes('dieta')) {
+            if (lower.includes('dieta') && resolvedGrossExtraAmount > 0) {
               dietasExentas += resolvedGrossExtraAmount;
             }
 
-            extrasItemsList.push({
+            pushValidExtraDetail({
               date: assignment.date,
               name: extra.name,
               amount: resolvedGrossExtraAmount,
@@ -917,7 +1034,7 @@ export function calculateMonthlyPayroll(
 
           const durationFormatted = formatMinutesToHoursAndMinutes(assignment.lateFinishMinutes);
           const reasonText = assignment.lateFinishReason ? ` (${assignment.lateFinishReason})` : '';
-          extrasItemsList.push({
+          pushValidExtraDetail({
             date: assignment.date,
             name: `Terminado más tarde: +${durationFormatted}${reasonText}`,
             amount: computedLateAmount,
@@ -1253,7 +1370,6 @@ export function calculateMonthlyPayroll(
   }
 
   // Retribución de Vacaciones según Art. 9 Convenio Colectivo Transporte de Zaragoza (proporcional al % de jornada: 10€/día al 100%, 7,50€/día al 75%)
-  const isAutoVacationPlusActive = profile.hasVacationPlus !== false;
   const basePlusVacacionesDia =
     yearRate.plusVacacionesDia && yearRate.plusVacacionesDia > 0 ? yearRate.plusVacacionesDia : 10.00;
   const plusVacacionesDia = parseFloat((basePlusVacacionesDia * partTimeFactor).toFixed(2));
@@ -1300,7 +1416,7 @@ export function calculateMonthlyPayroll(
     },
   ];
 
-  if (holidayDays > 0 || festivoPluses > 0) {
+  if (festivoPluses > 0) {
     const festivoQty = holidayDays || 1;
     const festivoRate = holidayDays > 0
       ? parseFloat((festivoPluses / holidayDays).toFixed(2))
@@ -1318,7 +1434,7 @@ export function calculateMonthlyPayroll(
     });
   }
 
-  if (finalQuebrantoCount > 0) {
+  if (finalQuebrantoCount > 0 && plusQuebrantoMoneda > 0) {
     lines.push({
       id: 'quebranto-moneda',
       name: 'Quebranto de moneda',
@@ -1332,7 +1448,7 @@ export function calculateMonthlyPayroll(
     });
   }
 
-  if (finalComplementariasHours > 0) {
+  if (finalComplementariasHours > 0 && importeHorasExtra > 0) {
     lines.push({
       id: 'horas-complementarias',
       name: 'Hores Complementarias',
@@ -1346,7 +1462,7 @@ export function calculateMonthlyPayroll(
     });
   }
 
-  if (roundedNightHours > 0) {
+  if (roundedNightHours > 0 && effectiveNocturnidad > 0) {
     lines.push({
       id: 'plus-nocturnidad',
       name: 'Plus nocturnidad',
@@ -1360,7 +1476,7 @@ export function calculateMonthlyPayroll(
     });
   }
 
-  if (finalMedioPlusCount > 0) {
+  if (finalMedioPlusCount > 0 && medioPlusConductorAmount > 0) {
     lines.push({
       id: 'medio-plus-conductor',
       name: '1/2 Plus conductor',
@@ -1374,7 +1490,7 @@ export function calculateMonthlyPayroll(
     });
   }
 
-  if (finalFestivasHours > 0) {
+  if (finalFestivasHours > 0 && horasFestivasAmount > 0) {
     lines.push({
       id: 'festivas',
       name: 'Festivas',
@@ -1388,7 +1504,7 @@ export function calculateMonthlyPayroll(
     });
   }
 
-  if (finalRetenCount > 0) {
+  if (finalRetenCount > 0 && plusRetenAmount > 0) {
     lines.push({
       id: 'plus-reten',
       name: 'Plus reten',
@@ -1402,7 +1518,7 @@ export function calculateMonthlyPayroll(
     });
   }
 
-  if (finalPlusConductorCount > 0) {
+  if (finalPlusConductorCount > 0 && plusConductorPerceptor > 0) {
     lines.push({
       id: 'plus-conductor',
       name: 'Plus conductor',
@@ -1595,7 +1711,9 @@ export function calculateMonthlyPayroll(
     extrasCutoffMode: cutoffMode,
     extrasCutoffPeriod: cutoffRange.periodText,
     extrasCutoffLabel: cutoffRange.label,
-    extrasItemsList,
+    extrasItemsList: extrasItemsList
+      .filter((item) => item.amount > 0)
+      .sort((a, b) => a.date.localeCompare(b.date)),
     pendingNextMonthExtrasCount,
     pendingNextMonthExtrasTotal: parseFloat(pendingNextMonthExtrasTotal.toFixed(2)),
 
