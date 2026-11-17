@@ -185,6 +185,14 @@ export interface PayrollBreakdown {
   extrasCutoffLabel: string; // e.g. "Ciclo Direxis Zaragoza (25 al 24)"
   extrasCutoffStartDate: string; // "YYYY-MM-DD" inclusive
   extrasCutoffEndDate: string; // "YYYY-MM-DD" inclusive
+  prevMonthCutoffStartDate?: string; // "YYYY-MM-DD" inclusive (when cutoff starts in previous month)
+  prevMonthCutoffEndDate?: string; // "YYYY-MM-DD" inclusive (last day of previous month)
+  currentMonthCutoffStartDate: string; // "YYYY-MM-DD" inclusive (1st of calculated month)
+  currentMonthCutoffEndDate: string; // "YYYY-MM-DD" inclusive
+  prevMonthCutoffTotal: number; // Sum of extrasItemsList in prev month stretch
+  currentMonthCutoffTotal: number; // Sum of extrasItemsList in current month stretch
+  prevMonthCutoffWorkedDays: number; // Worked shift days in prev month stretch
+  currentMonthCutoffWorkedDays: number; // Worked shift days in current month stretch
   extrasItemsList: PayrollExtraItemDetail[];
   pendingNextMonthExtrasCount?: number; // Extras after cutoff in the current month
   pendingNextMonthExtrasTotal?: number;

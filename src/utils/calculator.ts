@@ -330,6 +330,17 @@ export function calculateMonthlyPayroll(
   const cutoffMode = profile.extrasCutoffMode || 'direxis_25_24';
   const customStartDay = profile.customCutoffStartDay || 25;
   const cutoffRange = getExtrasDateRange(year, month, cutoffMode, customStartDay);
+  const monthStartDateStr = `${year}-${String(month).padStart(2, '0')}-01`;
+  const spansPreviousMonth = cutoffRange.startDateStr < monthStartDateStr;
+  const prevMonthNum = month === 1 ? 12 : month - 1;
+  const prevYearNum = month === 1 ? year - 1 : year;
+  const prevMonthLastDay = new Date(year, month - 1, 0).getDate();
+  const prevMonthCutoffStartDate = spansPreviousMonth ? cutoffRange.startDateStr : undefined;
+  const prevMonthCutoffEndDate = spansPreviousMonth
+    ? `${prevYearNum}-${String(prevMonthNum).padStart(2, '0')}-${String(prevMonthLastDay).padStart(2, '0')}`
+    : undefined;
+  const currentMonthCutoffStartDate = spansPreviousMonth ? monthStartDateStr : cutoffRange.startDateStr;
+  const currentMonthCutoffEndDate = cutoffRange.endDateStr;
 
   const isMasatsMode = profile.salaryBaseRateMode === 'masats_39_89';
   // Detectar si estamos ante el cuadrante de cotejo exacto de la nómina escaneada de Octubre 2026
@@ -356,6 +367,8 @@ export function calculateMonthlyPayroll(
   let computedQuebrantoCount = 0;
   let computedPuntualidadCount = 0;
   let explicitPuntualidadCountCotejo = 0;
+  let prevMonthCutoffWorkedDays = 0;
+  let currentMonthCutoffWorkedDays = 0;
 
   // Acumuladores para modo cotejo exacto Octubre 2026
   const retenDaysSetCotejo = new Set<string>();
@@ -600,6 +613,11 @@ export function calculateMonthlyPayroll(
           : undefined;
 
       if (shiftDef && shiftDef.code !== 'D') {
+        if (dateStr < monthStartDateStr) {
+          prevMonthCutoffWorkedDays++;
+        } else {
+          currentMonthCutoffWorkedDays++;
+        }
         const calc = computeShiftRateFromConvenio(shiftDef, yearRate, { isHoliday, isSunday });
         let effectiveTotalHours = calc.totalHours;
         let effectiveNightHours = calc.nightHours;
@@ -1785,6 +1803,37 @@ export function calculateMonthlyPayroll(
     extrasCutoffLabel: cutoffRange.label,
     extrasCutoffStartDate: cutoffRange.startDateStr,
     extrasCutoffEndDate: cutoffRange.endDateStr,
+    prevMonthCutoffStartDate,
+    prevMonthCutoffEndDate,
+    currentMonthCutoffStartDate,
+    currentMonthCutoffEndDate,
+    prevMonthCutoffTotal: parseFloat(
+      extrasItemsList
+        .filter(
+          (item) =>
+            item.amount > 0 &&
+            Boolean(prevMonthCutoffStartDate && prevMonthCutoffEndDate) &&
+            item.date >= prevMonthCutoffStartDate! &&
+            item.date <= prevMonthCutoffEndDate!
+        )
+        .reduce((sum, item) => sum + item.amount, 0)
+        .toFixed(2)
+    ),
+    currentMonthCutoffTotal: parseFloat(
+      extrasItemsList
+        .filter(
+          (item) =>
+            item.amount > 0 &&
+            item.date >= currentMonthCutoffStartDate &&
+            item.date <= currentMonthCutoffEndDate
+        )
+        .reduce((sum, item) => sum + item.amount, 0)
+        .toFixed(2)
+    ),
+    prevMonthCutoffWorkedDays,
+    currentMonthCutoffWorkedDays: isExactOctoberCotejo
+      ? workedDays
+      : currentMonthCutoffWorkedDays,
     extrasItemsList: extrasItemsList
       .filter(
         (item) =>
@@ -1868,8 +1917,21 @@ export function calculateYearlySalaryEvolution(
 
   for (let m = 1; m <= 12; m++) {
     const monthPrefix = `${year}-${String(m).padStart(2, '0')}-`;
-    const monthAssignments = assignments.filter((a) => a.date.startsWith(monthPrefix));
-    const hasLoggedShifts = monthAssignments.some((a) => a.shiftCode && a.shiftCode !== 'D');
+    const cutoffRangeM = getExtrasDateRange(
+      year,
+      m,
+      profile.extrasCutoffMode || 'direxis_25_24',
+      profile.customCutoffStartDay || 25
+    );
+    const hasLoggedShifts = assignments.some(
+      (a) =>
+        (a.date.startsWith(monthPrefix) ||
+          (a.date >= cutoffRangeM.startDateStr && a.date <= cutoffRangeM.endDateStr)) &&
+        ((a.shiftCode && a.shiftCode !== 'D') ||
+          Boolean(a.extras && a.extras.length > 0) ||
+          Boolean(a.lateFinishMinutes && a.lateFinishMinutes > 0) ||
+          Boolean(a.isHoliday))
+    );
 
     let payroll: PayrollBreakdown;
     let isProjected = false;
@@ -1887,12 +1949,6 @@ export function calculateYearlySalaryEvolution(
       isProjected = true;
       // Generate standard representative schedule covering both the cutoff range and natural month (Mon-Fri 6V.L01)
       const daysInM = new Date(year, m, 0).getDate();
-      const cutoffRangeM = getExtrasDateRange(
-        year,
-        m,
-        profile.extrasCutoffMode || 'direxis_25_24',
-        profile.customCutoffStartDay || 25
-      );
       const monthDates = getDateRangeStrings(
         `${year}-${String(m).padStart(2, '0')}-01`,
         `${year}-${String(m).padStart(2, '0')}-${String(daysInM).padStart(2, '0')}`

@@ -193,8 +193,14 @@ export function buildPDFDoc(
     doc.line(125, sigY + 12, 185, sigY + 12);
   }
 
-  // Page 2: Detailed list of days & shifts
-  const assignedDays = assignments.filter((a) => a.shiftCode && a.shiftCode !== 'D');
+  // Page 2: Detailed list of days & shifts within the active payroll window (cutoff start .. end of calculated month)
+  const monthStartStr = `${payroll.year}-${String(payroll.month).padStart(2, '0')}-01`;
+  const monthEndStr = `${payroll.year}-${String(payroll.month).padStart(2, '0')}-${String(payroll.totalDays).padStart(2, '0')}`;
+  const pdfWindowStart = payroll.extrasCutoffStartDate < monthStartStr ? payroll.extrasCutoffStartDate : monthStartStr;
+  const pdfWindowEnd = payroll.extrasCutoffEndDate > monthEndStr ? payroll.extrasCutoffEndDate : monthEndStr;
+  const assignedDays = assignments.filter(
+    (a) => a.date >= pdfWindowStart && a.date <= pdfWindowEnd && a.shiftCode && a.shiftCode !== 'D'
+  );
   if (assignedDays.length > 0) {
     doc.addPage();
     doc.setFillColor(30, 58, 138);
@@ -202,19 +208,25 @@ export function buildPDFDoc(
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(11);
     doc.setFont('helvetica', 'bold');
-    doc.text(`ANEXO: DETALLE DE PARTES Y SERVICIOS REALIZADOS · ${monthName.toUpperCase()} ${payroll.year}`, 14, 11);
+    doc.text(`ANEXO: DETALLE DE PARTES Y SERVICIOS · ${monthName.toUpperCase()} ${payroll.year} (CORTE ${payroll.extrasCutoffPeriod.toUpperCase()})`, 14, 11);
 
     const cuadranteRows = assignments
+      .filter((a) => a.date >= pdfWindowStart && a.date <= pdfWindowEnd)
       .sort((a, b) => a.date.localeCompare(b.date))
       .map((item) => {
         const shift = shiftsMap.get(item.shiftCode || '') || Array.from(shiftsMap.values()).find((s) => s.code === item.shiftCode);
-        const dayNum = item.date.split('-')[2];
+        const [, mm, dd] = item.date.split('-');
+        const dateBadge = item.date < monthStartStr
+          ? `${dd}/${mm} (Ant.)`
+          : item.date > payroll.extrasCutoffEndDate
+          ? `${dd}/${mm} (Sig.)`
+          : `${dd}/${mm}`;
         const extrasStr = item.extras && item.extras.length > 0
           ? item.extras.map((e) => `${e.name} (+${e.amount}€)`).join('; ')
           : '-';
 
         return [
-          `Día ${dayNum}`,
+          dateBadge,
           item.shiftCode || 'Descanso',
           shift?.terminal || shift?.title || (item.shiftCode === 'D' ? 'Descanso Semanal' : '-'),
           shift ? `${shift.startTime} - ${shift.endTime}` : '-',
@@ -716,7 +728,13 @@ export function exportToExcel(
     'Tarifa Estimada (€)',
   ];
 
-  const sortedAssignments = [...assignments].sort((a, b) => a.date.localeCompare(b.date));
+  const monthStartStrExcel = `${payroll.year}-${String(payroll.month).padStart(2, '0')}-01`;
+  const monthEndStrExcel = `${payroll.year}-${String(payroll.month).padStart(2, '0')}-${String(payroll.totalDays).padStart(2, '0')}`;
+  const excelWindowStart = payroll.extrasCutoffStartDate < monthStartStrExcel ? payroll.extrasCutoffStartDate : monthStartStrExcel;
+  const excelWindowEnd = payroll.extrasCutoffEndDate > monthEndStrExcel ? payroll.extrasCutoffEndDate : monthEndStrExcel;
+  const sortedAssignments = [...assignments]
+    .filter((a) => a.date >= excelWindowStart && a.date <= excelWindowEnd)
+    .sort((a, b) => a.date.localeCompare(b.date));
   const cuadranteRows = sortedAssignments.map((item) => {
     const shift = shiftsMap.get(item.shiftCode || '') || Array.from(shiftsMap.values()).find((s) => s.code === item.shiftCode);
     const extraParts: string[] = [];
@@ -789,31 +807,37 @@ export function exportToExcel(
   XLSX.utils.book_append_sheet(wb, wsCuadrante, 'Partes y Turnos');
 
   // =========================================================================
-  // HOJA 3: EXTRAS Y VARIABLES DEL PERÍODO (Detalle por fecha dentro del corte)
+  // HOJA 3: EXTRAS Y VARIABLES DEL PERÍODO (Diferenciando tramo mes anterior vs actual)
   // =========================================================================
-  const extrasTitle = [`DETALLE DE PLUSES Y VARIABLES EN CORTE (${payroll.extrasCutoffPeriod})`, '', '', ''];
-  const extrasHeader = ['Fecha', 'Concepto / Particularidad', 'Notas / Observaciones', 'Importe Bruto (€)'];
+  const extrasTitle = [`DETALLE DE PLUSES Y VARIABLES EN CORTE (${payroll.extrasCutoffPeriod})`, '', '', '', ''];
+  const extrasHeader = ['Fecha', 'Tramo del Período', 'Concepto / Particularidad', 'Notas / Observaciones', 'Importe Bruto (€)'];
   const nonZeroExtrasForSheet = payroll.extrasItemsList.filter((e) => e.amount > 0);
   const extrasRows =
     nonZeroExtrasForSheet.length > 0
-      ? nonZeroExtrasForSheet.map((e) => [e.date, e.name, e.notes || '-', e.amount])
-      : [['-', 'Sin pluses variables ni apuntes extra (> 0 €) registrados en el período de corte', '-', 0]];
+      ? nonZeroExtrasForSheet.map((e) => [
+          e.date,
+          e.date < monthStartStrExcel ? 'Mes anterior (corte)' : `${monthName} (en curso)`,
+          e.name,
+          e.notes || '-',
+          e.amount,
+        ])
+      : [['-', '-', 'Sin pluses variables ni apuntes extra (> 0 €) registrados en el período de corte', '-', 0]];
 
   const sheet3AoA: Array<Array<string | number>> = [extrasTitle, extrasHeader, ...extrasRows];
   const wsExtras = XLSX.utils.aoa_to_sheet(sheet3AoA);
-  wsExtras['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 3 } }];
-  styleRange(wsExtras, 0, 0, 0, 3, () => STYLE_TITLE_BANNER);
-  styleRange(wsExtras, 1, 0, 1, 3, (_r, c) =>
-    makeTableColHeaderStyle('FEF3C7', c === 3 ? 'right' : c === 0 ? 'center' : 'left')
+  wsExtras['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }];
+  styleRange(wsExtras, 0, 0, 0, 4, () => STYLE_TITLE_BANNER);
+  styleRange(wsExtras, 1, 0, 1, 4, (_r, c) =>
+    makeTableColHeaderStyle('FEF3C7', c === 4 ? 'right' : c === 0 ? 'center' : 'left')
   );
-  styleRange(wsExtras, 2, 0, 1 + extrasRows.length, 3, (r, c) =>
+  styleRange(wsExtras, 2, 0, 1 + extrasRows.length, 4, (r, c) =>
     makeDataCellStyle((r - 2) % 2 === 1, {
-      align: c === 3 ? 'right' : c === 0 ? 'center' : 'left',
-      bold: c === 3,
-      numFmt: c === 3 ? CURRENCY_FMT : undefined,
+      align: c === 4 ? 'right' : c === 0 ? 'center' : 'left',
+      bold: c === 4,
+      numFmt: c === 4 ? CURRENCY_FMT : undefined,
     })
   );
-  wsExtras['!cols'] = autoFitColumns(sheet3AoA, [14, 42, 42, 20], [16, 54, 56, 24]);
+  wsExtras['!cols'] = autoFitColumns(sheet3AoA, [14, 22, 40, 40, 20], [16, 26, 52, 54, 24]);
   wsExtras['!rows'] = [{ hpt: 28 }, { hpt: 24 }, ...extrasRows.map(() => ({ hpt: 20 }))];
   XLSX.utils.book_append_sheet(wb, wsExtras, 'Extras del Período');
 
