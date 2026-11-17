@@ -9,13 +9,6 @@ import {
   CalendarRange,
   ChevronDown,
   ChevronUp,
-  Scale,
-  Eye,
-  CheckCircle2,
-  Sparkles,
-  Layers,
-  ArrowRightLeft,
-  X,
   Cloud,
   RefreshCw,
 } from 'lucide-react';
@@ -25,7 +18,6 @@ import {
   ConvenioInfo,
   MonthlySalaryEvolution,
 } from '../types';
-import { REAL_OCTOBER_PAYSLIP } from '../data/realOctoberPayslip';
 import { getEffectiveYearRate } from '../data/convenioZaragoza';
 import { formatCurrency } from '../utils/exporter';
 import { YearlySalaryChart } from './YearlySalaryChart';
@@ -42,7 +34,6 @@ interface NominaViewProps {
   onUpdateProfile: (partial: Partial<WorkerProfile>) => void;
   onExportPDF: () => void;
   onExportExcel: () => void;
-  onSyncRealPayslip?: () => void;
   isDriveConnected?: boolean;
   onOpenDriveNominasModal?: () => void;
   lastCalculatedAt?: Date;
@@ -62,7 +53,6 @@ export const NominaView: React.FC<NominaViewProps> = ({
   onUpdateProfile,
   onExportPDF,
   onExportExcel,
-  onSyncRealPayslip,
   isDriveConnected,
   onOpenDriveNominasModal,
   lastCalculatedAt,
@@ -70,10 +60,7 @@ export const NominaView: React.FC<NominaViewProps> = ({
   onRecalculate,
 }) => {
   const [showExtrasDetails, setShowExtrasDetails] = useState(false);
-  const [showRealPayslipModal, setShowRealPayslipModal] = useState(false);
-  const [comparisonTab, setComparisonTab] = useState<'tabla_oficial' | 'cotejo_real'>('tabla_oficial');
 
-  const isOctober2026 = selectedYear === 2026 && selectedMonth === 10;
   const isPartTime = profile.contractType === 'tiempo_parcial';
   const currentJornadaPercentage = isPartTime
     ? (profile.partTimePercentage !== undefined && profile.partTimePercentage > 0
@@ -122,17 +109,6 @@ export const NominaView: React.FC<NominaViewProps> = ({
       });
     }
   };
-
-  // Helper comparison calculations for October
-  const realOctoberDevengos = REAL_OCTOBER_PAYSLIP.devengos;
-  const appDevengosMap = new Map<string, { cuantia: number; precio: number; devengos: number }>();
-  payroll.lines.forEach((line) => {
-    appDevengosMap.set(line.name.trim().toLowerCase(), {
-      cuantia: line.quantity,
-      precio: line.unitPrice,
-      devengos: line.amount,
-    });
-  });
 
   const nonZeroExtrasItems = payroll.extrasItemsList
     .filter(
@@ -363,63 +339,7 @@ export const NominaView: React.FC<NominaViewProps> = ({
         </div>
       </div>
 
-      {/* Switcher Banner: Vista Oficial con Nº de Veces (Cuantía) vs Cotejo con Nómina Real */}
-      <div className="bg-white rounded-2xl p-3 border border-slate-200 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-3">
-        <div className="flex items-center gap-2 w-full sm:w-auto">
-          <button
-            type="button"
-            onClick={() => setComparisonTab('tabla_oficial')}
-            className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
-              comparisonTab === 'tabla_oficial'
-                ? 'bg-blue-600 text-white shadow-2xs'
-                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-            }`}
-          >
-            <Layers className="w-4 h-4" />
-            <span>Recibo Oficial (Cuantía y Precio)</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setComparisonTab('cotejo_real')}
-            className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
-              comparisonTab === 'cotejo_real'
-                ? 'bg-emerald-600 text-white shadow-2xs'
-                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-            }`}
-          >
-            <Scale className="w-4 h-4 text-emerald-300" />
-            <span>Cotejo con Nómina Escaneada {isOctober2026 ? '(Octubre)' : ''}</span>
-          </button>
-        </div>
-
-        {/* Salario Base Selector & Real Image Trigger */}
-        <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
-          <button
-            type="button"
-            onClick={() => setShowRealPayslipModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200/80 transition-colors"
-            title="Ver foto de la nómina real de octubre"
-          >
-            <Eye className="w-3.5 h-3.5 text-blue-600" />
-            <span className="hidden sm:inline">Ver Foto Nómina</span>
-            <span className="sm:hidden">Foto</span>
-          </button>
-
-          {isOctober2026 && onSyncRealPayslip && (
-            <button
-              type="button"
-              onClick={onSyncRealPayslip}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white shadow-2xs transition-colors"
-              title="Cargar los 12 conceptos y cuantías exactas de la nómina real de octubre"
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>Cargar Nómina Exacta</span>
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Salario Base Mode Selector Pill (Convenio 53.18 vs Masats 39.89) */}
+      {/* Salario Base Mode Selector Pill (Convenio 53.18 vs Tarifa alternativa) */}
       <div className="bg-gradient-to-r from-blue-50/70 to-indigo-50/70 border border-blue-200 rounded-2xl p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
         <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-2xs">
@@ -463,9 +383,8 @@ export const NominaView: React.FC<NominaViewProps> = ({
         </div>
       </div>
 
-      {/* Main View Mode 1: TABLA OFICIAL CON CUANTÍA Y PRECIO */}
-      {comparisonTab === 'tabla_oficial' && (
-        <div className="bg-white rounded-3xl border border-slate-200/90 shadow-xs overflow-hidden">
+      {/* Main View: TABLA OFICIAL CON CUANTÍA Y PRECIO */}
+      <div className="bg-white rounded-3xl border border-slate-200/90 shadow-xs overflow-hidden">
           {/* Header of the Official Payslip Table */}
           <div className="p-4 sm:p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-slate-50/50">
             <div>
@@ -564,178 +483,6 @@ export const NominaView: React.FC<NominaViewProps> = ({
             </table>
           </div>
         </div>
-      )}
-
-      {/* Main View Mode 2: COTEJO Y COMPARATIVA CON NÓMINA REAL ESCANEADA */}
-      {comparisonTab === 'cotejo_real' && (
-        <div className="bg-white rounded-3xl border border-slate-200/90 shadow-xs overflow-hidden space-y-4 p-4 sm:p-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
-            <div>
-              <div className="flex items-center gap-2">
-                <Scale className="w-5 h-5 text-emerald-600" />
-                <h3 className="text-sm font-bold text-slate-900">
-                  Cotejo Línea por Línea: Nómina Real Escaneada vs Nómina Calculada
-                </h3>
-              </div>
-              <p className="text-[11px] text-slate-500 mt-0.5">
-                Comparativa directa entre el recibo de Octubre 2026 de Jorge Adolfo Garcia Miana y los cálculos de la aplicación.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setShowRealPayslipModal(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-50 text-blue-700 hover:bg-blue-100 text-xs font-semibold border border-blue-200 transition-colors shrink-0"
-            >
-              <Eye className="w-3.5 h-3.5" />
-              <span>Ver imagen escaneada</span>
-            </button>
-          </div>
-
-          {/* Side by side comparison table */}
-          <div className="overflow-x-auto border border-slate-200 rounded-2xl">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="bg-slate-100 text-slate-700 font-bold text-[11px] border-b border-slate-200 uppercase tracking-wider">
-                  <th className="p-3">Concepto</th>
-                  <th className="p-3 text-center bg-slate-200/60">
-                    Nómina Real (Foto)
-                    <span className="block text-[10px] font-normal text-slate-500">Cuantía x Precio = Total</span>
-                  </th>
-                  <th className="p-3 text-center bg-blue-50/80">
-                    Nómina Calculada (App)
-                    <span className="block text-[10px] font-normal text-blue-600">Cuantía x Precio = Total</span>
-                  </th>
-                  <th className="p-3 text-right">Diferencia</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 font-sans">
-                {realOctoberDevengos.map((realItem, idx) => {
-                  const appMatch = appDevengosMap.get(realItem.concepto.trim().toLowerCase());
-                  const appDevengo = appMatch ? appMatch.devengos : 0;
-                  const diff = parseFloat((appDevengo - realItem.devengos).toFixed(2));
-                  const isExact = Math.abs(diff) < 0.05;
-
-                  return (
-                    <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                      <td className="p-3 font-semibold text-slate-900">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-slate-400 font-mono text-[10px]">*</span>
-                          <span>{realItem.concepto}</span>
-                        </div>
-                      </td>
-
-                      {/* Real Payslip Data */}
-                      <td className="p-3 text-center bg-slate-50 font-mono text-slate-800">
-                        <span className="font-bold text-slate-900">
-                          {realItem.cuantia.toFixed(2).replace('.', ',')}
-                        </span>{' '}
-                        <span className="text-slate-500 text-[10px]">x {realItem.precio.toFixed(2)}€</span>
-                        <span className="block font-extrabold text-slate-900">
-                          = {formatCurrency(realItem.devengos)}
-                        </span>
-                      </td>
-
-                      {/* App Calculated Data */}
-                      <td className="p-3 text-center bg-blue-50/30 font-mono">
-                        {appMatch ? (
-                          <>
-                            <span className="font-bold text-blue-900">
-                              {appMatch.cuantia.toFixed(2).replace('.', ',')}
-                            </span>{' '}
-                            <span className="text-slate-500 text-[10px]">x {appMatch.precio.toFixed(2)}€</span>
-                            <span className="block font-extrabold text-blue-800">
-                              = {formatCurrency(appDevengo)}
-                            </span>
-                          </>
-                        ) : (
-                          <span className="text-slate-400 text-xs italic">No computado en mes</span>
-                        )}
-                      </td>
-
-                      {/* Diff Badge */}
-                      <td className="p-3 text-right font-mono">
-                        {isExact ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[11px] font-bold border border-emerald-200">
-                            <CheckCircle2 className="w-3 h-3" />
-                            0,00 €
-                          </span>
-                        ) : (
-                          <span
-                            className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-bold border ${
-                              diff > 0
-                                ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
-                                : 'bg-amber-50 text-amber-700 border-amber-200'
-                            }`}
-                          >
-                            {diff > 0 ? `+${formatCurrency(diff)}` : formatCurrency(diff)}
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-              <tfoot>
-                {/* Total Devengado Comparison */}
-                <tr className="bg-slate-100 font-bold text-xs border-t-2 border-slate-300">
-                  <td className="p-3 text-slate-800 uppercase">Total Bruto Devengado</td>
-                  <td className="p-3 text-center font-mono text-sm text-slate-900">
-                    {formatCurrency(REAL_OCTOBER_PAYSLIP.totales.totalDevengado)}
-                  </td>
-                  <td className="p-3 text-center font-mono text-sm text-blue-900">
-                    {formatCurrency(payroll.totalDevengado)}
-                  </td>
-                  <td className="p-3 text-right font-mono text-sm">
-                    {Math.abs(payroll.totalDevengado - REAL_OCTOBER_PAYSLIP.totales.totalDevengado) < 0.05 ? (
-                      <span className="text-emerald-700">0,00 €</span>
-                    ) : (
-                      <span
-                        className={
-                          payroll.totalDevengado > REAL_OCTOBER_PAYSLIP.totales.totalDevengado
-                            ? 'text-indigo-700'
-                            : 'text-amber-700'
-                        }
-                      >
-                        {formatCurrency(payroll.totalDevengado - REAL_OCTOBER_PAYSLIP.totales.totalDevengado)}
-                      </span>
-                    )}
-                  </td>
-                </tr>
-
-                {/* Líquido Neto Comparison */}
-                <tr className="bg-emerald-50 font-bold text-xs border-t border-emerald-200 text-emerald-950">
-                  <td className="p-3 uppercase">Líquido a Percibir (Neto)</td>
-                  <td className="p-3 text-center font-mono text-sm text-emerald-900">
-                    {formatCurrency(REAL_OCTOBER_PAYSLIP.totales.liquidoPercibir)}
-                  </td>
-                  <td className="p-3 text-center font-mono text-sm text-emerald-900">
-                    {formatCurrency(payroll.liquidoPercibir)}
-                  </td>
-                  <td className="p-3 text-right font-mono text-sm text-emerald-800">
-                    {Math.abs(payroll.liquidoPercibir - REAL_OCTOBER_PAYSLIP.totales.liquidoPercibir) < 0.05 ? (
-                      <span className="inline-flex items-center gap-1 font-extrabold text-emerald-700">
-                        <CheckCircle2 className="w-3.5 h-3.5" /> Coincide
-                      </span>
-                    ) : (
-                      <span>{formatCurrency(payroll.liquidoPercibir - REAL_OCTOBER_PAYSLIP.totales.liquidoPercibir)}</span>
-                    )}
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-
-          <div className="bg-blue-50/50 rounded-2xl p-3 border border-blue-100 text-xs text-blue-900 space-y-1">
-            <p className="font-semibold flex items-center gap-1.5">
-              <Sparkles className="w-4 h-4 text-blue-600" />
-              ¿Por qué el Salario Base tiene 2 modalidades posibles?
-            </p>
-            <p className="text-[11px] text-blue-800 leading-relaxed">
-              En las tablas oficiales del <strong>Convenio Colectivo de Zaragoza</strong> el salario base diario para el año 2026 es de <strong>53,18 €/día</strong> (lo que genera <strong>1.648,58 €</strong> por los 31 días de octubre). Sin embargo, el recibo impreso de Masats aplica una base de <strong>39,89 €/día</strong> (<strong>1.236,59 €</strong>) y distribuye el resto mediante complementos salariales y prorratas independientes. Puedes alternar entre ambas modalidades con el selector superior para ajustarte a tu caso exacto.
-            </p>
-          </div>
-        </div>
-      )}
 
       {/* Visualización de Datos Recharts: Evolución Anual del Salario Neto */}
       <YearlySalaryChart
@@ -762,21 +509,21 @@ export const NominaView: React.FC<NominaViewProps> = ({
               </span>
             </div>
             <div className="flex items-center gap-3 pt-2">
-              <span className="text-[10px] text-slate-400 font-mono">2%</span>
+              <span className="text-[10px] text-slate-400 font-mono">0%</span>
               <input
                 type="range"
-                min={2}
-                max={28}
+                min={0}
+                max={35}
                 step={0.5}
                 value={profile.irpfPercentage}
-                onChange={(e) => onUpdateProfile({ irpfPercentage: parseFloat(e.target.value) || 2 })}
+                onChange={(e) => onUpdateProfile({ irpfPercentage: parseFloat(e.target.value) || 0 })}
                 className="w-full accent-blue-600 cursor-pointer"
               />
-              <span className="text-[10px] text-slate-400 font-mono">28%</span>
+              <span className="text-[10px] text-slate-400 font-mono">35%</span>
             </div>
           </div>
           <p className="text-[11px] text-slate-500 pt-1">
-            Ajusta tu porcentaje de retención para calcular el impacto inmediato en el líquido mensual a percibir (15,0% en recibo Masats).
+            Ajusta tu porcentaje de retención para calcular el impacto inmediato en el líquido mensual a percibir.
           </p>
         </div>
 
@@ -1337,75 +1084,6 @@ export const NominaView: React.FC<NominaViewProps> = ({
           Incluye cotizaciones empresariales a la Seguridad Social (23,60% CC + 5,50% Desempleo + 0,60% FP + 0,20% FOGASA + MEI).
         </p>
       </div>
-
-      {/* Modal / Lightbox to inspect the real scanned October payslip photo */}
-      {showRealPayslipModal && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 animate-fadeIn">
-          <div className="bg-white rounded-3xl max-w-4xl w-full max-h-[92vh] flex flex-col shadow-2xl overflow-hidden">
-            {/* Modal Header */}
-            <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold flex items-center gap-2">
-                  <FileText className="w-4 h-4 text-emerald-400" />
-                  Nómina Real Digitalizada · Octubre 2026
-                </h3>
-                <p className="text-xs text-slate-300">
-                  S.A. MASATS TRANSPORTES GENERALES, UNIP · GARCIA MIANA, JORGE ADOLFO
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowRealPayslipModal(false)}
-                className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Modal Content: Scanned Image View */}
-            <div className="flex-1 overflow-auto p-4 bg-slate-100 flex flex-col items-center justify-center">
-              <img
-                src="/assets/aistudio/image_6bf52a84.png"
-                alt="Nómina real escaneada Octubre 2026 S.A. Masats"
-                className="max-w-full max-h-[65vh] object-contain rounded-xl shadow-md border border-slate-300"
-              />
-              <div className="mt-3 text-center text-xs text-slate-600 max-w-lg">
-                Recibo original escaneado con los 12 conceptos retributivos, cuantía, precio unitario e importes brutos devengados y deducciones.
-              </div>
-            </div>
-
-            {/* Modal Footer with quick actions */}
-            <div className="p-3 bg-white border-t border-slate-200 flex items-center justify-between gap-2">
-              <div className="text-xs text-slate-500 hidden sm:block">
-                Total Líquido: <strong>1.683,27 €</strong> · Total Devengos: <strong>2.144,30 €</strong>
-              </div>
-              <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
-                {onSyncRealPayslip && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onSyncRealPayslip();
-                      setShowRealPayslipModal(false);
-                      setComparisonTab('cotejo_real');
-                    }}
-                    className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl shadow-xs transition-colors"
-                  >
-                    <Sparkles className="w-4 h-4" />
-                    <span>Cargar estos datos en la aplicación</span>
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => setShowRealPayslipModal(false)}
-                  className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold rounded-xl transition-colors"
-                >
-                  Cerrar
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

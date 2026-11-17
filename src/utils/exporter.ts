@@ -80,8 +80,8 @@ export function buildPDFDoc(
   doc.setFont('helvetica', 'bold');
   doc.text('DATOS DE LA EMPRESA', 18, 32);
   doc.setFont('helvetica', 'normal');
-  doc.text(`Razón Social: ${profile.companyName || 'DIREXIS ZARAGOZA S.A.'}`, 18, 38);
-  doc.text(`CIF: ${profile.cif || 'A-50123456'}`, 18, 43);
+  doc.text(`Razón Social: ${profile.companyName?.trim() || 'Sin especificar'}`, 18, 38);
+  doc.text(`CIF: ${profile.cif?.trim() || 'Sin especificar'}`, 18, 43);
   doc.text(`Convenio: BOPZ 182 / Código 50001135011982`, 18, 48);
 
   // Box 2: Trabajador
@@ -90,8 +90,8 @@ export function buildPDFDoc(
   doc.setFont('helvetica', 'bold');
   doc.text('DATOS DEL TRABAJADOR', 112, 32);
   doc.setFont('helvetica', 'normal');
-  doc.text(`Nombre: ${profile.name || 'Conductor Profesional'}`, 112, 38);
-  doc.text(`NIF/NIE: ${profile.nif || '12345678-Z'}`, 112, 43);
+  doc.text(`Nombre: ${profile.name?.trim() || 'Sin especificar'}`, 112, 38);
+  doc.text(`NIF/NIE: ${profile.nif?.trim() || 'Sin especificar'}`, 112, 43);
   doc.text(`Jornada (${jornadaPct}%): ${formatHoursLabel(payroll.convenioAnnualHoursTarget)} h/año (${formatHoursLabel(payroll.convenioMonthlyHoursTarget)} h/mes)`, 112, 48);
 
   // Key KPI summary strip
@@ -510,9 +510,9 @@ export function exportToExcel(
   pushRow1(['', '', '', ''], 10);
 
   // Bloque datos empresa y trabajador
-  const rMetaStart = pushRow1(['Empresa:', profile.companyName || 'DIREXIS ZARAGOZA S.A.', 'CIF:', profile.cif || 'A-50123456'], 22);
-  pushRow1(['Trabajador:', profile.name || 'Conductor Profesional', 'NIF / NIE:', profile.nif || '12345678-Z'], 22);
-  pushRow1(['Categoría Profesional:', profile.category || 'Conductor/a Perceptor/a', 'Convenio Aplicable:', 'BOPZ 182 · Zaragoza'], 22);
+  const rMetaStart = pushRow1(['Empresa:', profile.companyName?.trim() || 'Sin especificar', 'CIF:', profile.cif?.trim() || 'Sin especificar'], 22);
+  pushRow1(['Trabajador:', profile.name?.trim() || 'Sin especificar', 'NIF / NIE:', profile.nif?.trim() || 'Sin especificar'], 22);
+  pushRow1(['Categoría Profesional:', profile.category?.trim() || 'Conductor/a Perceptor/a', 'Convenio Aplicable:', 'BOPZ 182 · Zaragoza'], 22);
   pushRow1(['Contrato y Jornada:', contractLabel, 'Régimen Pagas Extras:', prorrateoLabel], 22);
   const rMetaEnd = pushRow1(['Mes / Año Liquidación:', `${monthName} ${payroll.year}`, 'Fecha de Emisión:', new Date().toLocaleDateString('es-ES')], 22);
   pushRow1(['', '', '', ''], 12);

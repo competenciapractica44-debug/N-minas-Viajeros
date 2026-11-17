@@ -1,7 +1,7 @@
 import { ExtraConcept } from '../types';
 
 export const DEFAULT_EXTRAS: ExtraConcept[] = [
-  // Conceptos oficiales homologados con la Nómina Real de Transporte
+  // Conceptos oficiales vinculados al Convenio Colectivo de Zaragoza
   {
     id: 'extra-reten',
     name: 'Plus retén',

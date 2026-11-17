@@ -1,8 +1,9 @@
 import React from 'react';
-import { FileText, Table, Calendar, ShieldAlert, User as UserIcon, Download } from 'lucide-react';
+import { FileText, Table, Calendar, ShieldAlert, User as UserIcon } from 'lucide-react';
 import { ConvenioInfo, WorkerProfile, PayrollBreakdown } from '../types';
 import { User as FirebaseUser } from 'firebase/auth';
 import { DriveSyncBadge } from './DriveSyncBadge';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface HeaderProps {
   currentTab: string;
@@ -71,9 +72,11 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
         {/* Brand Zone */}
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-sm font-bold text-lg tracking-wider">
-            RN
-          </div>
+          <img
+            src="/pwa-192x192.png"
+            alt="Icono RutaNómina"
+            className="w-9 h-9 rounded-xl shadow-sm object-cover shrink-0 border border-slate-200"
+          />
           <div>
             <div className="flex items-center gap-2">
               <span className="font-bold text-slate-900 tracking-tight text-base sm:text-lg">
@@ -81,7 +84,7 @@ export const Header: React.FC<HeaderProps> = ({
               </span>
               <span className="hidden sm:inline-block text-xs text-slate-400 font-medium">·</span>
               <span className="hidden sm:inline-block text-xs text-slate-500 font-medium">
-                {profile.companyName || 'Direxis Zaragoza'}
+                {profile.companyName?.trim() || 'Transporte de Viajeros'}
               </span>
             </div>
             <p className="text-[11px] text-slate-400 -mt-0.5 capitalize">
@@ -133,6 +136,8 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Action Controls & Profile */}
         <div className="flex items-center gap-2">
+          <PWAInstallButton />
+
           {/* Google Drive Status & User Badge */}
           <DriveSyncBadge
             user={user}
@@ -167,11 +172,15 @@ export const Header: React.FC<HeaderProps> = ({
             className="flex items-center gap-2 p-1 pl-2 sm:pl-2.5 bg-slate-100 hover:bg-slate-200/70 rounded-full border border-slate-200 transition-colors"
             title="Configuración de trabajador y empresa"
           >
-            <span className="text-xs font-medium text-slate-700 max-w-[80px] sm:max-w-[100px] truncate hidden sm:inline">
-              {profile.name.split(' ')[0]}
+            <span className="text-xs font-medium text-slate-700 max-w-[90px] sm:max-w-[110px] truncate hidden sm:inline">
+              {profile.name?.trim() ? profile.name.trim().split(' ')[0] : 'Mi Perfil'}
             </span>
             <div className="w-7 h-7 rounded-full bg-slate-800 text-white flex items-center justify-center text-xs font-semibold">
-              {profile.name ? profile.name.charAt(0).toUpperCase() : 'C'}
+              {profile.name?.trim() ? (
+                profile.name.trim().charAt(0).toUpperCase()
+              ) : (
+                <UserIcon className="w-3.5 h-3.5" />
+              )}
             </div>
           </button>
         </div>

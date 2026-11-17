@@ -22,7 +22,6 @@ import { DEFAULT_EXTRAS } from './data/defaultExtras';
 import { DEFAULT_CONVENIO_ZARAGOZA, getEffectiveYearRate } from './data/convenioZaragoza';
 import { calculateMonthlyPayroll, calculateYearlySalaryEvolution } from './utils/calculator';
 import { exportToPDF, exportToPDFBlob, exportToExcel } from './utils/exporter';
-import { getExactOctoberAssignments } from './data/realOctoberPayslip';
 
 import { User as FirebaseUser } from 'firebase/auth';
 import { initAuth, logout, getCachedAccessToken } from './services/authService';
@@ -40,6 +39,7 @@ import { GoogleLoginModal } from './components/GoogleLoginModal';
 import { DriveNominasModal } from './components/DriveNominasModal';
 import { PublicFooter, PublicLegalPage } from './components/PublicFooter';
 import { LegalPageView } from './components/LegalPageView';
+import { OfflineIndicator } from './components/OfflineIndicator';
 
 function getPublicPageFromUrl(): PublicLegalPage | null {
   if (typeof window === 'undefined') return null;
@@ -55,6 +55,30 @@ const MONTH_NAMES = [
   'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
   'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
 ];
+
+const EMPTY_WORKER_PROFILE: WorkerProfile = {
+  name: '',
+  nif: '',
+  category: '',
+  autonomousCommunity: 'aragon',
+  locality: '',
+  companyName: '',
+  cif: '',
+  irpfPercentage: 0,
+  contractType: 'indefinido',
+  partTimePercentage: 100,
+  prorrateoPagasExtra: 'tres_pagas',
+  prorratearPagasExtra: true,
+  extrasCutoffMode: 'direxis_25_24',
+  customCutoffStartDay: 25,
+  hasMonetaryQuebranto: true,
+  hasConductorPerceptorPlus: true,
+  hasVacationPlus: true,
+  hasPunctualityEarlyStartPlus: false,
+  salaryBaseRateMode: 'convenio_53_18',
+  unionFeeDeduction: 0,
+  advancePayment: 0,
+};
 
 const DELETED_MOCK_CODES = new Set([
   'M1', 'T1', 'T2', 'T3', 'T4', 'T5', 'N1', 'DISC', 'M2', 'R', 'S1', 'S2', 'F1', 'F2', 'SP1'
@@ -82,32 +106,15 @@ export default function App() {
     return now.getFullYear() < 2026 ? 1 : now.getMonth() + 1;
   });
 
-  // Persistent Shifts (Exclusively official Direxis parts without /L + Retén configurations)
+  // Turnos iniciales: cargados directamente del JSON base de turnos de la aplicación
   const [shifts, setShifts] = useState<ShiftDefinition[]>(() => {
     try {
-      const saved = localStorage.getItem('rutanomina_shifts_v10') || localStorage.getItem('rutanomina_shifts_v9');
+      const saved = localStorage.getItem('rutanomina_shifts_v11');
       if (saved) {
         const parsed: ShiftDefinition[] = JSON.parse(saved);
-        const cleaned = parsed
-          .filter((s) => !DELETED_MOCK_CODES.has(s.code) && s.category !== 'partido' && s.modality !== 'partido')
-          .map((s) => {
-            // Eliminar automáticamente cualquier "/L" de códigos y títulos
-            if (s.code.includes('/L')) {
-              const cleanCode = s.code.replace(/\/L/g, '');
-              return {
-                ...s,
-                code: cleanCode,
-                title: s.title ? s.title.replace(/\/L/g, '') : `Servicio ${cleanCode}`,
-              };
-            }
-            return s;
-          });
-        const hasDescanso = cleaned.some((s) => s.code === 'D');
-        if (!hasDescanso) {
-          const dDef = ALL_INITIAL_SHIFTS.find((s) => s.code === 'D');
-          if (dDef) cleaned.unshift(dDef);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
         }
-        if (cleaned.length >= 90) return cleaned;
       }
     } catch (e) {
       console.error(e);
@@ -117,24 +124,21 @@ export default function App() {
 
   useEffect(() => {
     try {
-      localStorage.setItem('rutanomina_shifts_v10', JSON.stringify(shifts));
+      localStorage.setItem('rutanomina_shifts_v11', JSON.stringify(shifts));
     } catch (e) {
       console.error(e);
     }
   }, [shifts]);
 
-  // Persistent Extras (Fuera de Convenio y Conceptos Oficiales)
+  // Conceptos vinculados al convenio (sin extras ficticios precargados)
   const [extras, setExtras] = useState<ExtraConcept[]>(() => {
     try {
-      const saved = localStorage.getItem('rutanomina_extras_v2') || localStorage.getItem('rutanomina_extras_v1');
+      const saved = localStorage.getItem('rutanomina_extras_v3');
       if (saved) {
         const parsed: ExtraConcept[] = JSON.parse(saved);
-        const hasReten = parsed.some((e) => e.id === 'extra-reten' || e.name.toLowerCase().includes('reten') || e.name.toLowerCase().includes('retén'));
-        if (!hasReten) {
-          const defaultReten = DEFAULT_EXTRAS.find((e) => e.id === 'extra-reten');
-          if (defaultReten) return [defaultReten, ...parsed];
+        if (Array.isArray(parsed)) {
+          return parsed;
         }
-        return parsed;
       }
     } catch (e) {
       console.error(e);
@@ -144,16 +148,16 @@ export default function App() {
 
   useEffect(() => {
     try {
-      localStorage.setItem('rutanomina_extras_v2', JSON.stringify(extras));
+      localStorage.setItem('rutanomina_extras_v3', JSON.stringify(extras));
     } catch (e) {
       console.error(e);
     }
   }, [extras]);
 
-  // Persistent Calendar Assignments (starts blank by default; filled by user or Google Drive backup)
+  // Calendario limpio al inicio; lo rellena el usuario o se recupera de Google Drive
   const [assignments, setAssignments] = useState<DayAssignment[]>(() => {
     try {
-      const saved = localStorage.getItem('rutanomina_assignments_v6');
+      const saved = localStorage.getItem('rutanomina_assignments_v7');
       if (saved) {
         const parsed: DayAssignment[] = JSON.parse(saved);
         if (Array.isArray(parsed)) {
@@ -177,16 +181,16 @@ export default function App() {
 
   useEffect(() => {
     try {
-      localStorage.setItem('rutanomina_assignments_v6', JSON.stringify(assignments));
+      localStorage.setItem('rutanomina_assignments_v7', JSON.stringify(assignments));
     } catch (e) {
       console.error(e);
     }
   }, [assignments]);
 
-  // Persistent Convenio (starting in 2026, ensuring all fields are populated)
+  // Convenio Colectivo inicial cargado desde el JSON oficial de 2026
   const [convenio, setConvenio] = useState<ConvenioInfo>(() => {
     try {
-      const saved = localStorage.getItem('rutanomina_convenio_v3') || localStorage.getItem('rutanomina_convenio_v2');
+      const saved = localStorage.getItem('rutanomina_convenio_v4');
       if (saved) {
         const parsed: ConvenioInfo = JSON.parse(saved);
         const cleanedRates: Record<number, ConvenioYearRate> = {};
@@ -221,23 +225,20 @@ export default function App() {
 
   useEffect(() => {
     try {
-      localStorage.setItem('rutanomina_convenio_v3', JSON.stringify(convenio));
+      localStorage.setItem('rutanomina_convenio_v4', JSON.stringify(convenio));
     } catch (e) {
       console.error(e);
     }
   }, [convenio]);
 
-  // Worker Profile
+  // Perfil del trabajador limpio al inicio; el usuario lo introduce la primera vez
   const [profile, setProfile] = useState<WorkerProfile>(() => {
     try {
-      const saved = localStorage.getItem('rutanomina_profile_v1');
+      const saved = localStorage.getItem('rutanomina_profile_v2');
       if (saved) {
         const parsed = JSON.parse(saved);
         return {
-          extrasCutoffMode: 'direxis_25_24',
-          customCutoffStartDay: 25,
-          autonomousCommunity: 'aragon',
-          locality: '',
+          ...EMPTY_WORKER_PROFILE,
           ...parsed,
           hasVacationPlus: parsed.hasVacationPlus !== undefined ? parsed.hasVacationPlus : true,
           hasPunctualityEarlyStartPlus: parsed.hasPunctualityEarlyStartPlus === true,
@@ -246,69 +247,23 @@ export default function App() {
     } catch (e) {
       console.error(e);
     }
-    return {
-      name: 'GARCIA MIANA, JORGE ADOLFO',
-      nif: '29112260X',
-      category: 'Conductor/a Perceptor/a',
-      autonomousCommunity: 'aragon',
-      locality: '',
-      companyName: 'S.A. MASATS TRANSPORTES GENERALES, UNIP',
-      cif: 'A63086797',
-      irpfPercentage: 15.0,
-      contractType: 'indefinido',
-      partTimePercentage: 100,
-      prorrateoPagasExtra: 'tres_pagas',
-      prorratearPagasExtra: true,
-      extrasCutoffMode: 'direxis_25_24',
-      customCutoffStartDay: 25,
-      hasMonetaryQuebranto: true,
-      hasConductorPerceptorPlus: true,
-      hasVacationPlus: true,
-      hasPunctualityEarlyStartPlus: false,
-      salaryBaseRateMode: 'convenio_53_18',
-      unionFeeDeduction: 0,
-      advancePayment: 0,
-    };
+    return EMPTY_WORKER_PROFILE;
   });
 
   useEffect(() => {
     try {
-      localStorage.setItem('rutanomina_profile_v1', JSON.stringify(profile));
+      localStorage.setItem('rutanomina_profile_v2', JSON.stringify(profile));
     } catch (e) {
       console.error(e);
     }
   }, [profile]);
-
-  // Sincronizar nómina y cuadrante con la nómina real escaneada de Octubre 2026
-  const handleSyncRealPayslip = () => {
-    setSelectedYear(2026);
-    setSelectedMonth(10);
-    setProfile((prev) => ({
-      ...prev,
-      name: 'GARCIA MIANA, JORGE ADOLFO',
-      nif: '29112260X',
-      category: 'Conductor/a Perceptor/a',
-      companyName: 'S.A. MASATS TRANSPORTES GENERALES, UNIP',
-      cif: 'A63086797',
-      irpfPercentage: 15.0,
-      salaryBaseRateMode: 'masats_39_89',
-      prorrateoPagasExtra: 'tres_pagas',
-      contractType: 'indefinido',
-      partTimePercentage: 100,
-    }));
-    const exactOctoberAssignments = getExactOctoberAssignments();
-    setAssignments((prev) => {
-      const otherMonths = prev.filter((a) => !a.date.startsWith('2026-10-'));
-      return [...otherMonths, ...exactOctoberAssignments];
-    });
-    setCurrentTab('nomina');
-  };
 
   // Modals state
   const [isTurnoModalOpen, setIsTurnoModalOpen] = useState(false);
   const [editingShift, setEditingShift] = useState<ShiftDefinition | null>(null);
   const [isConvenioModalOpen, setIsConvenioModalOpen] = useState(false);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [isOnboardingProfile, setIsOnboardingProfile] = useState(false);
 
   // Google Drive & Auth State
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
@@ -414,19 +369,28 @@ export default function App() {
           await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'turnos_base.json', currentSnapshot.shifts);
         }
 
-        // 2. Configuración de chófer
+        // 2. Configuración de chófer (si falta o está vacía en Drive y no se ha rellenado aún, abrir ficha para que el usuario la introduzca y guarde en Drive)
+        let needsProfileOnboarding = false;
         const choferFile = await findFileInFolder(token, 'chofer_config.json', folders.nominasFolderId);
         if (choferFile) {
           const driveProfile = await readDriveJsonFile<WorkerProfile>(token, choferFile.id);
-          if (driveProfile && driveProfile.name) {
+          if (driveProfile && driveProfile.name?.trim()) {
+            isApplyingRemoteSyncRef.current = true;
             setProfile({
+              ...EMPTY_WORKER_PROFILE,
               ...driveProfile,
               hasVacationPlus: driveProfile.hasVacationPlus !== undefined ? driveProfile.hasVacationPlus : true,
               hasPunctualityEarlyStartPlus: driveProfile.hasPunctualityEarlyStartPlus === true,
             });
+          } else if (currentSnapshot.profile.name.trim()) {
+            await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'chofer_config.json', currentSnapshot.profile);
+          } else {
+            needsProfileOnboarding = true;
           }
-        } else {
+        } else if (currentSnapshot.profile.name.trim()) {
           await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'chofer_config.json', currentSnapshot.profile);
+        } else {
+          needsProfileOnboarding = true;
         }
 
         // 3. Valores del Convenio de 2026
@@ -448,6 +412,7 @@ export default function App() {
                 };
               }
             }
+            isApplyingRemoteSyncRef.current = true;
             setConvenio({ ...driveConvenio, ratesByYear: migratedRates });
           }
         } else {
@@ -458,7 +423,7 @@ export default function App() {
         const asignacionesFile = await findFileInFolder(token, 'cuadrante_asignaciones.json', folders.nominasFolderId);
         if (asignacionesFile) {
           const driveAsignaciones = await readDriveJsonFile<DayAssignment[]>(token, asignacionesFile.id);
-          if (driveAsignaciones && Array.isArray(driveAsignaciones) && driveAsignaciones.length > 0) {
+          if (driveAsignaciones && Array.isArray(driveAsignaciones)) {
             isApplyingRemoteSyncRef.current = true;
             setAssignments(
               driveAsignaciones.map((a) => ({
@@ -477,6 +442,7 @@ export default function App() {
         if (extrasFile) {
           const driveExtras = await readDriveJsonFile<ExtraConcept[]>(token, extrasFile.id);
           if (driveExtras && Array.isArray(driveExtras) && driveExtras.length > 0) {
+            isApplyingRemoteSyncRef.current = true;
             setExtras(driveExtras);
           }
         } else {
@@ -490,6 +456,13 @@ export default function App() {
         setLastSyncTime(new Date());
         hasInitialDriveSyncDoneRef.current = true;
         hasPendingLocalSyncRef.current = false;
+
+        if (needsProfileOnboarding) {
+          setIsOnboardingProfile(true);
+          setIsProfileModalOpen(true);
+        } else {
+          setIsOnboardingProfile(false);
+        }
       } catch (err: any) {
         console.error('Error sincronizando con Google Drive:', err);
         setDriveSyncError(err?.message || 'Error al sincronizar con Google Drive.');
@@ -517,13 +490,18 @@ export default function App() {
     hasPendingLocalSyncRef.current = true;
     const timer = setTimeout(async () => {
       try {
-        await Promise.all([
+        const uploads: Array<Promise<unknown>> = [
           saveOrUpdateDriveJsonFile(accessToken, driveFolders.nominasFolderId, 'turnos_base.json', shifts),
-          saveOrUpdateDriveJsonFile(accessToken, driveFolders.nominasFolderId, 'chofer_config.json', profile),
           saveOrUpdateDriveJsonFile(accessToken, driveFolders.nominasFolderId, 'convenio_2026.json', convenio),
           saveOrUpdateDriveJsonFile(accessToken, driveFolders.nominasFolderId, 'cuadrante_asignaciones.json', assignments),
           saveOrUpdateDriveJsonFile(accessToken, driveFolders.nominasFolderId, 'catalogo_extras.json', extras),
-        ]);
+        ];
+        if (profile.name.trim().length > 0) {
+          uploads.push(
+            saveOrUpdateDriveJsonFile(accessToken, driveFolders.nominasFolderId, 'chofer_config.json', profile)
+          );
+        }
+        await Promise.all(uploads);
         hasPendingLocalSyncRef.current = false;
         setLastSyncTime(new Date());
       } catch (err) {
@@ -662,8 +640,9 @@ export default function App() {
             updatedAny = true;
           }
         }
-        if (driveProfile && driveProfile.name) {
+        if (driveProfile && driveProfile.name?.trim()) {
           const normalizedDriveProfile: WorkerProfile = {
+            ...EMPTY_WORKER_PROFILE,
             ...driveProfile,
             hasVacationPlus: driveProfile.hasVacationPlus !== undefined ? driveProfile.hasVacationPlus : true,
             hasPunctualityEarlyStartPlus: driveProfile.hasPunctualityEarlyStartPlus === true,
@@ -785,8 +764,26 @@ export default function App() {
   };
 
   const handleRestoreDefaultShifts = () => {
-    if (window.confirm('¿Deseas restablecer los 98 partes oficiales de Direxis Zaragoza y turnos estándar?')) {
+    if (window.confirm(`¿Deseas restablecer los ${ALL_INITIAL_SHIFTS.length} turnos iniciales incluidos en la aplicación?`)) {
       setShifts(ALL_INITIAL_SHIFTS);
+    }
+  };
+
+  const handleSaveProfile = async (newProf: WorkerProfile) => {
+    setProfile(newProf);
+    setIsOnboardingProfile(false);
+    setIsProfileModalOpen(false);
+
+    const token = accessToken || getCachedAccessToken();
+    if (currentUser && token) {
+      try {
+        const folders = driveFolders || (await ensureDirexisHierarchy(token));
+        if (!driveFolders) setDriveFolders(folders);
+        await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'chofer_config.json', newProf);
+        setLastSyncTime(new Date());
+      } catch (err) {
+        console.error('Error guardando configuración de perfil en Google Drive:', err);
+      }
     }
   };
 
@@ -919,6 +916,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans">
+      <OfflineIndicator />
       {/* Top Header */}
       <Header
         currentTab={currentTab}
@@ -979,6 +977,26 @@ export default function App() {
 
       {/* Main View Area */}
       <main className="flex-1">
+        {!profile.name.trim() && (
+          <div className="max-w-5xl mx-auto px-4 pt-3">
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-amber-900">
+              <p>
+                <strong>Configura tus particularidades laborales:</strong> introduce tu nombre, empresa, localidad, jornada e IRPF para personalizar tu calendario y nóminas.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsOnboardingProfile(true);
+                  setIsProfileModalOpen(true);
+                }}
+                className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-[11px] shrink-0 self-start sm:self-auto transition-colors cursor-pointer"
+              >
+                Configurar perfil ahora
+              </button>
+            </div>
+          </div>
+        )}
+
         {currentTab === 'turnos' && (
           <TurnosBDView
             shifts={shifts}
@@ -1023,7 +1041,6 @@ export default function App() {
             onUpdateProfile={(partial) => setProfile((prev) => ({ ...prev, ...partial }))}
             onExportPDF={handleExportPDF}
             onExportExcel={handleExportExcel}
-            onSyncRealPayslip={handleSyncRealPayslip}
             isDriveConnected={!!currentUser}
             onOpenDriveNominasModal={() => setIsDriveNominasModalOpen(true)}
             lastCalculatedAt={lastPayrollCalculatedAt}
@@ -1076,10 +1093,15 @@ export default function App() {
 
       <WorkerProfileModal
         isOpen={isProfileModalOpen}
-        onClose={() => setIsProfileModalOpen(false)}
+        onClose={() => {
+          setIsOnboardingProfile(false);
+          setIsProfileModalOpen(false);
+        }}
         profile={profile}
-        onSaveProfile={(newProf) => setProfile(newProf)}
+        onSaveProfile={handleSaveProfile}
         yearRate={currentYearRate}
+        isOnboarding={isOnboardingProfile || !profile.name.trim()}
+        isDriveConnected={!!currentUser && !!(accessToken || getCachedAccessToken())}
       />
 
       {/* Modal de Inicio de Sesión con Cuenta de Gmail / Google Drive */}

@@ -15,6 +15,8 @@ interface WorkerProfileModalProps {
   profile: WorkerProfile;
   onSaveProfile: (profile: WorkerProfile) => void;
   yearRate?: ConvenioYearRate;
+  isOnboarding?: boolean;
+  isDriveConnected?: boolean;
 }
 
 export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
@@ -23,6 +25,8 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
   profile,
   onSaveProfile,
   yearRate,
+  isOnboarding = false,
+  isDriveConnected = false,
 }) => {
   const effectiveRate = yearRate || DEFAULT_CONVENIO_ZARAGOZA.ratesByYear[2026];
   const [formData, setFormData] = useState<WorkerProfile>(() => ({
@@ -37,8 +41,11 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
     hasPunctualityEarlyStartPlus: profile.hasPunctualityEarlyStartPlus === true,
   }));
 
+  const [validationError, setValidationError] = useState<string | null>(null);
+
   useEffect(() => {
     if (isOpen) {
+      setValidationError(null);
       setFormData({
         ...profile,
         autonomousCommunity: profile.autonomousCommunity || 'aragon',
@@ -73,8 +80,18 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
   if (!isOpen) return null;
 
   const handleSave = () => {
+    if (isOnboarding && !formData.name.trim()) {
+      setValidationError('Por favor, introduce tu nombre completo para guardar tu perfil y sincronizarlo.');
+      return;
+    }
+    setValidationError(null);
     onSaveProfile({
       ...formData,
+      name: formData.name.trim(),
+      nif: formData.nif.trim(),
+      category: formData.category.trim(),
+      companyName: formData.companyName.trim(),
+      cif: formData.cif.trim(),
       autonomousCommunity: formData.autonomousCommunity || activeRegionId,
       locality: (formData.locality || '').trim(),
       prorratearPagasExtra: formData.prorrateoPagasExtra === 'tres_pagas',
@@ -110,6 +127,27 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
 
         {/* Content */}
         <div className="p-5 space-y-5 overflow-y-auto text-xs">
+          {isOnboarding && (
+            <div className="p-3.5 rounded-2xl bg-blue-50 border border-blue-200 text-blue-900 space-y-1">
+              <p className="font-bold text-xs">
+                {isDriveConnected
+                  ? 'Configuración inicial de tu cuenta en Google Drive'
+                  : 'Configura tus datos laborales iniciales'}
+              </p>
+              <p className="text-[11px] text-blue-800 leading-relaxed">
+                {isDriveConnected
+                  ? 'No se han encontrado tus datos personales en Google Drive. Introduce tu perfil, empresa, localidad, jornada e IRPF para guardarlos en tu carpeta Direxis / Nóminas.'
+                  : 'La aplicación inicia con el tarifario de turnos y el convenio base. Introduce tus particularidades laborales para personalizar tus nóminas.'}
+              </p>
+            </div>
+          )}
+
+          {validationError && (
+            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-[11px] font-semibold">
+              {validationError}
+            </div>
+          )}
+
           {/* Worker info */}
           <div className="space-y-3">
             <div className="flex items-center gap-1.5">
@@ -127,7 +165,11 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
                 <input
                   type="text"
                   value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  onChange={(e) => {
+                    if (validationError) setValidationError(null);
+                    setFormData({ ...formData, name: e.target.value });
+                  }}
+                  placeholder="Ej: Apellidos, Nombre"
                   className="w-full py-2 px-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
                 />
               </div>
@@ -140,6 +182,7 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
                   type="text"
                   value={formData.nif}
                   onChange={(e) => setFormData({ ...formData, nif: e.target.value })}
+                  placeholder="Ej: 12345678X"
                   className="w-full py-2 px-3 rounded-xl border border-slate-200 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
@@ -153,6 +196,7 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
                 type="text"
                 value={formData.category}
                 onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                placeholder="Ej: Conductor/a Perceptor/a"
                 className="w-full py-2 px-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
@@ -281,6 +325,7 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
                   type="text"
                   value={formData.companyName}
                   onChange={(e) => setFormData({ ...formData, companyName: e.target.value })}
+                  placeholder="Nombre o razón social de la empresa"
                   className="w-full py-2 px-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
@@ -293,6 +338,7 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
                   type="text"
                   value={formData.cif}
                   onChange={(e) => setFormData({ ...formData, cif: e.target.value })}
+                  placeholder="Ej: A12345678"
                   className="w-full py-2 px-3 rounded-xl border border-slate-200 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
@@ -332,10 +378,10 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
                   <input
                     type="number"
                     step="0.5"
-                    min="2"
+                    min="0"
                     max="45"
                     value={formData.irpfPercentage}
-                    onChange={(e) => setFormData({ ...formData, irpfPercentage: parseFloat(e.target.value) || 0 })}
+                    onChange={(e) => setFormData({ ...formData, irpfPercentage: Math.max(0, parseFloat(e.target.value) || 0) })}
                     className="w-full py-2 pl-3 pr-8 rounded-xl border border-slate-200 font-mono font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                   <span className="absolute right-3 top-2.5 font-bold text-slate-400 text-xs">%</span>
@@ -739,7 +785,7 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
             className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs shadow-xs transition-colors flex items-center gap-1.5"
           >
             <Check className="w-4 h-4" />
-            Guardar Configuración
+            {isDriveConnected ? 'Guardar y sincronizar en Drive' : 'Guardar Configuración'}
           </button>
         </div>
       </div>

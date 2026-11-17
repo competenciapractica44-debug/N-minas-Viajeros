@@ -180,8 +180,7 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
               Base de Datos & Tarifas de Turno
             </h2>
             <p className="text-xs text-slate-600 leading-relaxed">
-              Tarifario de Turnos oficial de <strong>DIREXIS ZARAGOZA</strong> (98 partes de trabajo) más turno de fiesta o descanso.
-              Cada turno refleja el cómputo íntegro de la jornada y retribución fijada según convenio.
+              Tarifario de turnos precargado con los partes de trabajo iniciales, descanso y vacaciones según el Convenio Colectivo de Transporte de Zaragoza.
             </p>
             <div className="flex flex-wrap items-center gap-3 pt-2 text-[11px] font-medium text-slate-500">
               <span className="flex items-center gap-1 text-blue-700">
