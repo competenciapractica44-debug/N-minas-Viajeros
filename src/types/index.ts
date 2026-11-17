@@ -193,6 +193,12 @@ export interface PayrollBreakdown {
   currentMonthCutoffTotal: number; // Sum of extrasItemsList in current month stretch
   prevMonthCutoffWorkedDays: number; // Worked shift days in prev month stretch
   currentMonthCutoffWorkedDays: number; // Worked shift days in current month stretch
+  prevMonthCutoffRecordDays: number; // Any recorded calendar days (worked, rest, vacation, sick, notes, extras) in prev month stretch
+  currentMonthCutoffRecordDays: number; // Any recorded calendar days in current month stretch
+  prevMonthCutoffRestDays: number; // Rest / sick days (D/B) in prev month stretch
+  currentMonthCutoffRestDays: number; // Rest / sick days (D/B) in current month stretch
+  prevMonthCutoffVacationDays: number; // Vacation days (V) in prev month stretch
+  currentMonthCutoffVacationDays: number; // Vacation days (V) in current month stretch
   extrasItemsList: PayrollExtraItemDetail[];
   pendingNextMonthExtrasCount?: number; // Extras after cutoff in the current month
   pendingNextMonthExtrasTotal?: number;

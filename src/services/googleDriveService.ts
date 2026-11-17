@@ -43,7 +43,7 @@ export async function findFolder(
   const safeName = folderName.replace(/'/g, "\\'");
   const query = `mimeType = 'application/vnd.google-apps.folder' and name = '${safeName}' and '${parentFolderId}' in parents and trashed = false`;
 
-  const url = `${DRIVE_API_URL}?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,parents,trashed,modifiedTime,webViewLink)&pageSize=5`;
+  const url = `${DRIVE_API_URL}?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,parents,trashed,modifiedTime,webViewLink)&orderBy=modifiedTime desc&pageSize=10`;
   const response = await fetch(url, {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -150,11 +150,22 @@ async function relocateStrayBackupFiles(
     const data = await response.json();
     const files: DriveFileInfo[] = data.files || [];
 
+    const existingNamesInTarget = new Set<string>(
+      files
+        .filter((f) => (f.parents || []).includes(nominasFolderId))
+        .map((f) => f.name)
+    );
+
     for (const f of files) {
       const isAppFile = BACKUP_FILE_NAMES.has(f.name) || f.name.startsWith('Nomina_');
       const parents = f.parents || [];
-      if (isAppFile && (parents.length !== 1 || parents[0] !== nominasFolderId)) {
+      if (
+        isAppFile &&
+        !existingNamesInTarget.has(f.name) &&
+        (parents.length !== 1 || parents[0] !== nominasFolderId)
+      ) {
         await moveFileToFolder(token, f.id, nominasFolderId, parents);
+        existingNamesInTarget.add(f.name);
       }
     }
   } catch (err) {
@@ -205,7 +216,7 @@ export async function findFileInFolder(
 ): Promise<DriveFileInfo | null> {
   const safeName = fileName.replace(/'/g, "\\'");
   const query = `'${parentFolderId}' in parents and name = '${safeName}' and trashed = false`;
-  const url = `${DRIVE_API_URL}?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,parents,modifiedTime,size,webViewLink)&pageSize=1`;
+  const url = `${DRIVE_API_URL}?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,parents,modifiedTime,size,webViewLink)&orderBy=modifiedTime desc&pageSize=10`;
 
   const response = await fetch(url, {
     headers: {
@@ -220,8 +231,11 @@ export async function findFileInFolder(
   }
 
   const data = await response.json();
-  if (data.files && data.files.length > 0) {
-    return data.files[0];
+  const files: DriveFileInfo[] = data.files || [];
+  if (files.length > 0) {
+    // Prefer the most recently modified non-empty file if duplicates exist
+    const nonEmpty = files.find((f) => f.size === undefined || Number(f.size) > 2);
+    return nonEmpty || files[0];
   }
   return null;
 }

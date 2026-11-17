@@ -86,15 +86,153 @@ const DELETED_MOCK_CODES = new Set([
 
 function mapLegacyShiftCode(code?: string): string | undefined {
   if (!code) return code;
-  if (code === 'M1') return '6V.L01';
-  if (code === 'M2') return '6V.L03';
-  if (code === 'T1' || code === 'T2' || code === 'T3' || code === 'T4' || code === 'T5') return '6V.L02';
-  if (code === 'N1') return '6V.LCC';
-  if (code === 'R') return '6V.LR1';
-  if (code.includes('/L')) return code.replace(/\/L/g, '');
-  if (code === 'F1' || code === 'F2') return '6.D03';
-  if (code === 'DISC' || code === 'SP1') return '6V.L01';
-  return code;
+  const trimmed = String(code).trim();
+  if (!trimmed) return undefined;
+  if (trimmed === 'M1') return '6V.L01';
+  if (trimmed === 'M2') return '6V.L03';
+  if (trimmed === 'T1' || trimmed === 'T2' || trimmed === 'T3' || trimmed === 'T4' || trimmed === 'T5') return '6V.L02';
+  if (trimmed === 'N1') return '6V.LCC';
+  if (trimmed === 'R') return '6V.LR1';
+  if (/\/L/i.test(trimmed)) return trimmed.replace(/\/L/gi, '');
+  if (trimmed === 'F1' || trimmed === 'F2') return '6.D03';
+  if (trimmed === 'DISC' || trimmed === 'SP1') return '6V.L01';
+  return trimmed;
+}
+
+function normalizeDateKey(dateStr?: string): string {
+  if (!dateStr) return '';
+  const trimmed = String(dateStr).trim().split('T')[0];
+  const m = trimmed.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (m) {
+    return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+  }
+  const dmy = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (dmy) {
+    return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
+  }
+  return trimmed;
+}
+
+function hasMeaningfulAssignmentContent(a?: DayAssignment): boolean {
+  if (!a) return false;
+  return Boolean(
+    (a.shiftCode && a.shiftCode.trim() !== '') ||
+      (a.shiftId && a.shiftId.trim() !== '') ||
+      a.isRest ||
+      a.isVacation ||
+      a.isSickLeave ||
+      a.isHoliday ||
+      (a.extras && a.extras.length > 0) ||
+      (a.lateFinishMinutes && a.lateFinishMinutes > 0) ||
+      (a.notes && a.notes.trim() !== '') ||
+      (a.customLine && a.customLine.trim() !== '')
+  );
+}
+
+function normalizeAssignmentsList(rawList: DayAssignment[], availableShifts?: ShiftDefinition[]): DayAssignment[] {
+  const byDate = new Map<string, DayAssignment>();
+  for (const a of rawList) {
+    const dateKey = normalizeDateKey(a.date);
+    if (!dateKey) continue;
+    const yr = parseInt(dateKey.split('-')[0], 10);
+    if (isNaN(yr) || yr < 2026) continue;
+
+    let resolvedCode = mapLegacyShiftCode(a.shiftCode);
+    if (!resolvedCode && a.shiftId) {
+      if (a.shiftId === 'D' || a.shiftId === 'V' || a.shiftId === 'B') {
+        resolvedCode = a.shiftId;
+      } else if (availableShifts) {
+        const matched = availableShifts.find((s) => s.id === a.shiftId);
+        if (matched) resolvedCode = matched.code;
+      }
+    }
+
+    const item: DayAssignment = {
+      ...a,
+      date: dateKey,
+      shiftCode: resolvedCode,
+      extras: Array.isArray(a.extras) ? a.extras : [],
+    };
+    const existing = byDate.get(dateKey);
+    if (!existing) {
+      byDate.set(dateKey, item);
+    } else {
+      const incomingHasShift = Boolean(item.shiftCode || item.shiftId || item.isRest || item.isVacation || item.isSickLeave);
+      byDate.set(dateKey, {
+        ...existing,
+        ...item,
+        shiftCode: incomingHasShift ? item.shiftCode : existing.shiftCode,
+        shiftId: incomingHasShift ? item.shiftId : existing.shiftId,
+        isRest: incomingHasShift ? item.isRest : existing.isRest,
+        isVacation: incomingHasShift ? item.isVacation : existing.isVacation,
+        isSickLeave: incomingHasShift ? item.isSickLeave : existing.isSickLeave,
+        isHoliday: Boolean(existing.isHoliday || item.isHoliday),
+        extras: item.extras.length > 0 ? item.extras : existing.extras,
+        lateFinishMinutes: (item.lateFinishMinutes || 0) > 0 ? item.lateFinishMinutes : existing.lateFinishMinutes,
+      });
+    }
+  }
+  return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function mergeAssignmentsByDate(
+  localList: DayAssignment[],
+  remoteList: DayAssignment[],
+  preferLocalOnConflict: boolean
+): DayAssignment[] {
+  const localMap = new Map<string, DayAssignment>();
+  localList.forEach((a) => {
+    const k = normalizeDateKey(a.date);
+    if (k) localMap.set(k, { ...a, date: k });
+  });
+  const remoteMap = new Map<string, DayAssignment>();
+  remoteList.forEach((a) => {
+    const k = normalizeDateKey(a.date);
+    if (k) remoteMap.set(k, { ...a, date: k });
+  });
+
+  const allDates = Array.from(new Set([...localMap.keys(), ...remoteMap.keys()])).sort();
+  const merged: DayAssignment[] = [];
+  for (const dateKey of allDates) {
+    const l = localMap.get(dateKey);
+    const r = remoteMap.get(dateKey);
+    if (l && !r) {
+      merged.push(l);
+    } else if (!l && r) {
+      merged.push(r);
+    } else if (l && r) {
+      if (preferLocalOnConflict) {
+        merged.push(l);
+      } else if (hasMeaningfulAssignmentContent(l) && !hasMeaningfulAssignmentContent(r)) {
+        merged.push(l);
+      } else {
+        merged.push(r);
+      }
+    }
+  }
+  return merged;
+}
+
+const ASSIGNMENTS_DIRTY_KEY = 'rutanomina_assignments_dirty_v1';
+
+function readAssignmentsDirtyFlag(): boolean {
+  try {
+    return localStorage.getItem(ASSIGNMENTS_DIRTY_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeAssignmentsDirtyFlag(dirty: boolean): void {
+  try {
+    if (dirty) {
+      localStorage.setItem(ASSIGNMENTS_DIRTY_KEY, '1');
+    } else {
+      localStorage.removeItem(ASSIGNMENTS_DIRTY_KEY);
+    }
+  } catch {
+    // ignore storage quota/privacy mode errors
+  }
 }
 
 export default function App() {
@@ -161,16 +299,7 @@ export default function App() {
       if (saved) {
         const parsed: DayAssignment[] = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          return parsed
-            .filter((a) => {
-              const yr = parseInt(a.date.split('-')[0], 10);
-              return yr >= 2026;
-            })
-            .map((a) => ({
-              ...a,
-              shiftCode: mapLegacyShiftCode(a.shiftCode),
-              extras: a.extras || [],
-            }));
+          return normalizeAssignmentsList(parsed);
         }
       }
     } catch (e) {
@@ -280,8 +409,9 @@ export default function App() {
   const [driveSyncError, setDriveSyncError] = useState<string | null>(null);
   const hasInitialDriveSyncDoneRef = React.useRef(false);
   const syncPromiseRef = React.useRef<Promise<void> | null>(null);
-  const hasPendingLocalSyncRef = React.useRef(false);
+  const hasPendingLocalSyncRef = React.useRef(readAssignmentsDirtyFlag());
   const isApplyingRemoteSyncRef = React.useRef(false);
+  const lastSyncedAssignmentsJsonRef = React.useRef<string | null>(null);
   const [payrollCalcNonce, setPayrollCalcNonce] = useState(0);
   const [lastPayrollCalculatedAt, setLastPayrollCalculatedAt] = useState<Date>(() => new Date());
   const [isRefreshingForNomina, setIsRefreshingForNomina] = useState(false);
@@ -419,22 +549,37 @@ export default function App() {
           await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'convenio_2026.json', currentSnapshot.convenio);
         }
 
-        // 4. Asignaciones de Cuadrante (si hay copia en Drive, rellena el calendario; si no, queda en blanco o conserva lo introducido)
+        // 4. Asignaciones de Cuadrante (fusión por fecha: nunca pierde meses introducidos en local si faltan en Drive)
+        const isLocalDirty = hasPendingLocalSyncRef.current || readAssignmentsDirtyFlag();
         const asignacionesFile = await findFileInFolder(token, 'cuadrante_asignaciones.json', folders.nominasFolderId);
         if (asignacionesFile) {
           const driveAsignaciones = await readDriveJsonFile<DayAssignment[]>(token, asignacionesFile.id);
           if (driveAsignaciones && Array.isArray(driveAsignaciones)) {
-            isApplyingRemoteSyncRef.current = true;
-            setAssignments(
-              driveAsignaciones.map((a) => ({
-                ...a,
-                shiftCode: mapLegacyShiftCode(a.shiftCode),
-                extras: Array.isArray(a.extras) ? a.extras : [],
-              }))
-            );
+            const normalizedDrive = normalizeAssignmentsList(driveAsignaciones, currentSnapshot.shifts);
+            const normalizedLocal = normalizeAssignmentsList(latestStateRef.current.assignments, currentSnapshot.shifts);
+            const mergedAssignments = mergeAssignmentsByDate(normalizedLocal, normalizedDrive, isLocalDirty);
+            const mergedJson = JSON.stringify(mergedAssignments);
+            const driveJson = JSON.stringify(normalizedDrive);
+
+            if (mergedJson !== JSON.stringify(latestStateRef.current.assignments)) {
+              setAssignments(mergedAssignments);
+            }
+            if (mergedJson !== driveJson) {
+              await saveOrUpdateDriveJsonFile(
+                token,
+                folders.nominasFolderId,
+                'cuadrante_asignaciones.json',
+                mergedAssignments
+              );
+            }
+            lastSyncedAssignmentsJsonRef.current = mergedJson;
+            writeAssignmentsDirtyFlag(false);
           }
         } else {
-          await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'cuadrante_asignaciones.json', currentSnapshot.assignments);
+          const normalizedLocal = normalizeAssignmentsList(latestStateRef.current.assignments, currentSnapshot.shifts);
+          await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'cuadrante_asignaciones.json', normalizedLocal);
+          lastSyncedAssignmentsJsonRef.current = JSON.stringify(normalizedLocal);
+          writeAssignmentsDirtyFlag(false);
         }
 
         // 5. Catálogo de Extras
@@ -482,12 +627,23 @@ export default function App() {
     if (!currentUser || !accessToken || !driveFolders || !hasInitialDriveSyncDoneRef.current) {
       return;
     }
-    if (isApplyingRemoteSyncRef.current) {
+
+    const currentAssignmentsJson = JSON.stringify(assignments);
+    const assignmentsChangedLocally =
+      lastSyncedAssignmentsJsonRef.current !== null &&
+      currentAssignmentsJson !== lastSyncedAssignmentsJsonRef.current;
+
+    if (isApplyingRemoteSyncRef.current && !assignmentsChangedLocally) {
       isApplyingRemoteSyncRef.current = false;
       return;
     }
+    isApplyingRemoteSyncRef.current = false;
 
-    hasPendingLocalSyncRef.current = true;
+    if (assignmentsChangedLocally) {
+      hasPendingLocalSyncRef.current = true;
+      writeAssignmentsDirtyFlag(true);
+    }
+
     const timer = setTimeout(async () => {
       try {
         const uploads: Array<Promise<unknown>> = [
@@ -502,10 +658,17 @@ export default function App() {
           );
         }
         await Promise.all(uploads);
+        lastSyncedAssignmentsJsonRef.current = currentAssignmentsJson;
         hasPendingLocalSyncRef.current = false;
+        writeAssignmentsDirtyFlag(false);
+        setDriveSyncError(null);
         setLastSyncTime(new Date());
-      } catch (err) {
+      } catch (err: any) {
         console.error('Error auto-guardando en Google Drive:', err);
+        const msg = String(err?.message || '');
+        if (msg.includes('401')) {
+          setDriveSyncError('Sesión de Drive caducada. Tus cambios siguen en este dispositivo; vuelve a conectar Drive para subirlos.');
+        }
       }
     }, 1500);
 
@@ -591,16 +754,25 @@ export default function App() {
         let updatedAny = false;
 
         if (driveAsignaciones && Array.isArray(driveAsignaciones)) {
-          const normalizedAssignments = driveAsignaciones.map((a) => ({
-            ...a,
-            shiftCode: mapLegacyShiftCode(a.shiftCode),
-            extras: Array.isArray(a.extras) ? a.extras : [],
-          }));
-          if (JSON.stringify(normalizedAssignments) !== JSON.stringify(cur.assignments)) {
-            isApplyingRemoteSyncRef.current = true;
-            setAssignments(normalizedAssignments);
+          const normalizedRemote = normalizeAssignmentsList(driveAsignaciones, cur.shifts);
+          const normalizedLocal = normalizeAssignmentsList(cur.assignments, cur.shifts);
+          const isDirty = hasPendingLocalSyncRef.current || readAssignmentsDirtyFlag();
+          const mergedAssignments = mergeAssignmentsByDate(normalizedLocal, normalizedRemote, isDirty);
+          const mergedJson = JSON.stringify(mergedAssignments);
+          if (mergedJson !== JSON.stringify(cur.assignments)) {
+            setAssignments(mergedAssignments);
             updatedAny = true;
           }
+          if (mergedJson !== JSON.stringify(normalizedRemote)) {
+            await saveOrUpdateDriveJsonFile(
+              token,
+              driveFolders.nominasFolderId,
+              'cuadrante_asignaciones.json',
+              mergedAssignments
+            );
+          }
+          lastSyncedAssignmentsJsonRef.current = mergedJson;
+          writeAssignmentsDirtyFlag(false);
         }
         if (driveTurnos && Array.isArray(driveTurnos) && driveTurnos.length > 0) {
           const cleanedShifts = driveTurnos.map((s) =>
@@ -789,14 +961,17 @@ export default function App() {
 
   // Calendar Assignment update
   const handleUpdateAssignment = (date: string, partial: Partial<DayAssignment>) => {
+    const normalizedDate = normalizeDateKey(date);
+    hasPendingLocalSyncRef.current = true;
+    writeAssignmentsDirtyFlag(true);
     setAssignments((prev) => {
-      const idx = prev.findIndex((a) => a.date === date);
+      const idx = prev.findIndex((a) => normalizeDateKey(a.date) === normalizedDate);
       if (idx >= 0) {
         const copy = [...prev];
-        copy[idx] = { ...copy[idx], ...partial };
+        copy[idx] = { ...copy[idx], ...partial, date: normalizedDate };
         return copy;
       }
-      return [...prev, { date, extras: [], ...partial }];
+      return [...prev, { date: normalizedDate, extras: [], ...partial }];
     });
   };
 
@@ -1033,10 +1208,15 @@ export default function App() {
             payroll={monthlyPayroll}
             profile={profile}
             convenio={convenio}
+            assignments={assignments}
+            shifts={shifts}
             selectedYear={selectedYear}
             selectedMonth={selectedMonth}
             yearlyEvolution={yearlyEvolution}
-            onSelectMonth={(m) => setSelectedMonth(m)}
+            onSelectMonth={(m, y) => {
+              if (y !== undefined) setSelectedYear(y);
+              setSelectedMonth(m);
+            }}
             monthName={MONTH_NAMES[selectedMonth - 1]}
             onUpdateProfile={(partial) => setProfile((prev) => ({ ...prev, ...partial }))}
             onExportPDF={handleExportPDF}

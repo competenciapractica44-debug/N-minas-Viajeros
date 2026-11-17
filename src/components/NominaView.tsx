@@ -17,6 +17,8 @@ import {
   WorkerProfile,
   ConvenioInfo,
   MonthlySalaryEvolution,
+  DayAssignment,
+  ShiftDefinition,
 } from '../types';
 import { getEffectiveYearRate } from '../data/convenioZaragoza';
 import { formatCurrency } from '../utils/exporter';
@@ -26,11 +28,13 @@ interface NominaViewProps {
   payroll: PayrollBreakdown;
   profile: WorkerProfile;
   convenio: ConvenioInfo;
+  assignments?: DayAssignment[];
+  shifts?: ShiftDefinition[];
   monthName: string;
   selectedYear: number;
   selectedMonth: number;
   yearlyEvolution: MonthlySalaryEvolution[];
-  onSelectMonth?: (month: number) => void;
+  onSelectMonth?: (month: number, year?: number) => void;
   onUpdateProfile: (partial: Partial<WorkerProfile>) => void;
   onExportPDF: () => void;
   onExportExcel: () => void;
@@ -45,6 +49,8 @@ export const NominaView: React.FC<NominaViewProps> = ({
   payroll,
   profile,
   convenio,
+  assignments = [],
+  shifts = [],
   monthName,
   selectedYear,
   selectedMonth,
@@ -204,6 +210,186 @@ export const NominaView: React.FC<NominaViewProps> = ({
   const prevMonthNameLabel = payroll.prevMonthCutoffStartDate
     ? MONTHS_FULL_ES[Number(payroll.prevMonthCutoffStartDate.split('-')[1]) - 1] || 'Mes ant.'
     : '';
+
+  const formatStretchStatus = (
+    itemsCount: number,
+    groupedDaysCount: number,
+    workedDaysCount: number,
+    restDaysCount: number,
+    vacationDaysCount: number,
+    recordDaysCount: number
+  ) => {
+    if (itemsCount > 0) {
+      return `${itemsCount} conc. (${groupedDaysCount}d)`;
+    }
+    if (workedDaysCount > 0) {
+      return `${workedDaysCount} jorn. (0 € extra)`;
+    }
+    if (recordDaysCount > 0) {
+      const parts: string[] = [];
+      if (vacationDaysCount > 0) parts.push(`${vacationDaysCount} vac.`);
+      if (restDaysCount > 0) parts.push(`${restDaysCount} desc.`);
+      if (parts.length === 0) parts.push(`${recordDaysCount} reg.`);
+      return `${parts.join(' · ')} (0 € extra)`;
+    }
+    return 'Sin registros';
+  };
+
+  const normalizeDateStr = (raw?: string): string => {
+    if (!raw) return '';
+    const trimmed = String(raw).trim().split('T')[0];
+    const m = trimmed.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+    const dmy = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+    if (dmy) return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
+    return trimmed;
+  };
+
+  const hasRecord = (a?: DayAssignment) =>
+    Boolean(
+      a &&
+        ((a.shiftCode && a.shiftCode.trim() !== '') ||
+          (a.shiftId && a.shiftId.trim() !== '') ||
+          a.isRest ||
+          a.isVacation ||
+          a.isSickLeave ||
+          a.isHoliday ||
+          (a.extras && a.extras.length > 0) ||
+          (a.lateFinishMinutes && a.lateFinishMinutes > 0) ||
+          (a.notes && a.notes.trim() !== '') ||
+          (a.customLine && a.customLine.trim() !== ''))
+    );
+
+  const shiftsByCode = new Map<string, ShiftDefinition>();
+  shifts.forEach((s) => {
+    shiftsByCode.set(s.code.trim().toUpperCase(), s);
+  });
+
+  const assignmentsMap = new Map<string, DayAssignment>();
+  assignments.forEach((a) => {
+    const key = normalizeDateStr(a.date);
+    if (!key) return;
+    if (!assignmentsMap.has(key) || hasRecord(a)) {
+      assignmentsMap.set(key, { ...a, date: key });
+    }
+  });
+
+  const describeAssignmentForDay = (asg?: DayAssignment): string => {
+    if (!asg) return 'Sin turno';
+    const uc = (asg.shiftCode || '').trim().toUpperCase();
+    if (asg.isVacation || uc === 'V' || asg.shiftId === 'V') return 'Vacaciones (V)';
+    if (asg.isRest || uc === 'D' || asg.shiftId === 'D') return 'Descanso / Fiesta (D)';
+    if (asg.isSickLeave || uc === 'B' || asg.shiftId === 'B') return 'Baja / IT (B)';
+    const code = (asg.shiftCode || asg.shiftId || '').trim();
+    if (code) {
+      const def = shiftsByCode.get(code.toUpperCase());
+      return def ? `Turno ${def.code} (${def.startTime}–${def.endTime})` : `Turno ${code}`;
+    }
+    if (asg.isHoliday) return 'Festivo marcado';
+    return 'Registro en calendario';
+  };
+
+  const buildStretchDayRows = (
+    startStr: string | undefined,
+    endStr: string | undefined,
+    groupedExtras: typeof groupedExtrasByDay
+  ) => {
+    const extrasByDate = new Map(groupedExtras.map((g) => [g.date, g]));
+    const rowsByDate = new Map<
+      string,
+      {
+        date: string;
+        dayLabel: string;
+        dayTotal: number;
+        items: typeof nonZeroExtrasItems;
+      }
+    >();
+
+    groupedExtras.forEach((g) => {
+      const asg = assignmentsMap.get(g.date);
+      rowsByDate.set(g.date, {
+        date: g.date,
+        dayLabel: describeAssignmentForDay(asg),
+        dayTotal: g.dayTotal,
+        items: g.items,
+      });
+    });
+
+    if (startStr && endStr) {
+      assignmentsMap.forEach((asg, dStr) => {
+        if (dStr >= startStr && dStr <= endStr && hasRecord(asg) && !extrasByDate.has(dStr)) {
+          rowsByDate.set(dStr, {
+            date: dStr,
+            dayLabel: describeAssignmentForDay(asg),
+            dayTotal: 0,
+            items: [],
+          });
+        }
+      });
+    }
+
+    return Array.from(rowsByDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+  };
+
+  const prevMonthDayRows = hasPrevMonthStretch
+    ? buildStretchDayRows(
+        payroll.prevMonthCutoffStartDate,
+        payroll.prevMonthCutoffEndDate,
+        prevMonthGroupedExtras
+      )
+    : [];
+  const currentMonthDayRows = buildStretchDayRows(
+    payroll.currentMonthCutoffStartDate || monthStartDateStr,
+    payroll.currentMonthCutoffEndDate,
+    currentMonthGroupedExtras
+  );
+
+  const prevMonthRecordDays = Math.max(
+    payroll.prevMonthCutoffRecordDays ?? 0,
+    payroll.prevMonthCutoffWorkedDays,
+    prevMonthDayRows.length
+  );
+  const currentMonthRecordDays = Math.max(
+    payroll.currentMonthCutoffRecordDays ?? 0,
+    payroll.currentMonthCutoffWorkedDays,
+    currentMonthDayRows.length
+  );
+
+  // Detectar en qué meses existen registros en el calendario para orientar al usuario si está viendo otro mes
+  const loggedMonthsSummary = (() => {
+    const counts = new Map<string, { year: number; month: number; totalDays: number; lateDays: number }>();
+    assignmentsMap.forEach((asg, dStr) => {
+      if (!hasRecord(asg)) return;
+      const [yStr, mStr, dNumStr] = dStr.split('-');
+      const yNum = Number(yStr);
+      const mNum = Number(mStr);
+      const dNum = Number(dNumStr);
+      if (!yNum || !mNum) return;
+      const key = `${yNum}-${String(mNum).padStart(2, '0')}`;
+      const existing = counts.get(key) || { year: yNum, month: mNum, totalDays: 0, lateDays: 0 };
+      existing.totalDays++;
+      if (dNum >= 25) existing.lateDays++;
+      counts.set(key, existing);
+    });
+    return Array.from(counts.values()).sort((a, b) => (a.year !== b.year ? b.year - a.year : b.month - a.month));
+  })();
+
+  const prevMonthStatusLabel = formatStretchStatus(
+    prevMonthItemsCount,
+    prevMonthGroupedExtras.length,
+    payroll.prevMonthCutoffWorkedDays,
+    payroll.prevMonthCutoffRestDays ?? 0,
+    payroll.prevMonthCutoffVacationDays ?? 0,
+    prevMonthRecordDays
+  );
+  const currentMonthStatusLabel = formatStretchStatus(
+    currentMonthItemsCount,
+    currentMonthGroupedExtras.length,
+    payroll.currentMonthCutoffWorkedDays,
+    payroll.currentMonthCutoffRestDays ?? 0,
+    payroll.currentMonthCutoffVacationDays ?? 0,
+    currentMonthRecordDays
+  );
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-4 pb-28 space-y-4">
@@ -957,7 +1143,7 @@ export const NominaView: React.FC<NominaViewProps> = ({
               </div>
             )}
 
-            {(payroll.totalExtrasFueraConvenio > 0 || nonZeroExtrasItems.length > 0 || hasPrevMonthStretch) && (
+            {(payroll.totalExtrasFueraConvenio > 0 || nonZeroExtrasItems.length > 0 || hasPrevMonthStretch || currentMonthDayRows.length > 0) && (
               <div className="pt-2 bg-amber-50/50 p-3 rounded-xl border border-amber-200/70 space-y-2.5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
@@ -1015,11 +1201,9 @@ export const NominaView: React.FC<NominaViewProps> = ({
                         <p className="text-slate-500">
                           {formatFullDateES(payroll.prevMonthCutoffStartDate)} – {formatFullDateES(payroll.prevMonthCutoffEndDate)}
                           {' · '}
-                          {prevMonthItemsCount > 0
-                            ? `${prevMonthItemsCount} conc. (${prevMonthGroupedExtras.length}d)`
-                            : payroll.prevMonthCutoffWorkedDays > 0
-                              ? `${payroll.prevMonthCutoffWorkedDays} jorn. (0 € extra)`
-                              : 'Sin registros'}
+                          <span className={prevMonthRecordDays > 0 ? 'font-semibold text-slate-700' : ''}>
+                            {prevMonthStatusLabel}
+                          </span>
                         </p>
                       </div>
                       <span className={`font-mono font-extrabold text-xs shrink-0 ${prevMonthExtrasSubtotal > 0 ? 'text-emerald-700' : 'text-slate-400'}`}>
@@ -1035,11 +1219,9 @@ export const NominaView: React.FC<NominaViewProps> = ({
                         <p className="text-slate-500">
                           {formatFullDateES(payroll.currentMonthCutoffStartDate)} – {formatFullDateES(payroll.currentMonthCutoffEndDate)}
                           {' · '}
-                          {currentMonthItemsCount > 0
-                            ? `${currentMonthItemsCount} conc. (${currentMonthGroupedExtras.length}d)`
-                            : payroll.currentMonthCutoffWorkedDays > 0
-                              ? `${payroll.currentMonthCutoffWorkedDays} jorn. (0 € extra)`
-                              : 'Sin registros'}
+                          <span className={currentMonthRecordDays > 0 ? 'font-semibold text-slate-700' : ''}>
+                            {currentMonthStatusLabel}
+                          </span>
                         </p>
                       </div>
                       <span className={`font-mono font-extrabold text-xs shrink-0 ${currentMonthExtrasSubtotal > 0 ? 'text-emerald-700' : 'text-slate-400'}`}>
@@ -1071,28 +1253,137 @@ export const NominaView: React.FC<NominaViewProps> = ({
                             +{formatCurrency(prevMonthExtrasSubtotal)}
                           </span>
                         </div>
-                        {prevMonthGroupedExtras.length > 0 ? (
+                        {prevMonthDayRows.length > 0 ? (
                           <div className="space-y-1.5">
-                            {prevMonthGroupedExtras.map((dayGroup) => (
+                            {prevMonthDayRows.map((dayGroup) => (
                               <div
                                 key={dayGroup.date}
                                 className="bg-white/90 rounded-lg border border-amber-200/70 px-2.5 py-2 space-y-1.5"
                               >
-                                <div className="flex items-center justify-between border-b border-amber-100 pb-1">
-                                  <div className="flex items-center gap-1.5">
-                                    <span className="font-mono text-[10px] font-bold text-amber-900 bg-amber-100 px-1.5 py-0.5 rounded">
+                                <div className="flex items-center justify-between border-b border-amber-100 pb-1 gap-2">
+                                  <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                                    <span className="font-mono text-[10px] font-bold text-amber-900 bg-amber-100 px-1.5 py-0.5 rounded shrink-0">
                                       {formatShortDateES(dayGroup.date)}
                                     </span>
+                                    <span className="text-[10px] font-semibold text-slate-600 truncate">
+                                      {dayGroup.dayLabel}
+                                    </span>
                                     {dayGroup.items.length > 1 && (
-                                      <span className="text-[9px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200/70 px-1.5 py-0.5 rounded">
-                                        {dayGroup.items.length} extras en el día
+                                      <span className="text-[9px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200/70 px-1.5 py-0.5 rounded shrink-0">
+                                        {dayGroup.items.length} extras
                                       </span>
                                     )}
                                   </div>
-                                  <span className="font-mono font-extrabold text-[11px] text-slate-900">
-                                    Total día: +{formatCurrency(dayGroup.dayTotal)}
+                                  <span className={`font-mono font-extrabold text-[11px] shrink-0 ${dayGroup.dayTotal > 0 ? 'text-slate-900' : 'text-slate-400'}`}>
+                                    {dayGroup.dayTotal > 0 ? `Total día: +${formatCurrency(dayGroup.dayTotal)}` : '0,00 € extra'}
                                   </span>
                                 </div>
+                                {dayGroup.items.length > 0 ? (
+                                  <div className="space-y-1">
+                                    {dayGroup.items.map((item, idx) => (
+                                      <div
+                                        key={`${dayGroup.date}-${idx}`}
+                                        className="flex items-start justify-between gap-2 text-slate-700"
+                                      >
+                                        <div className="min-w-0">
+                                          <p className="font-medium text-slate-800 leading-snug">{item.name}</p>
+                                          {item.notes && (
+                                            <p className="text-[10px] text-slate-400 leading-tight">{item.notes}</p>
+                                          )}
+                                        </div>
+                                        <span className="font-mono font-bold text-emerald-700 shrink-0">
+                                          +{formatCurrency(item.amount)}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <p className="text-[10px] text-slate-400">
+                                    Día registrado en calendario sin pluses extra adicionales en este tramo.
+                                  </p>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="bg-white/85 rounded-lg border border-dashed border-amber-300 px-3 py-2.5 text-[10px] text-slate-600 space-y-2">
+                            <p>
+                              No hay registros guardados en el calendario entre el{' '}
+                              <strong>{formatFullDateES(payroll.prevMonthCutoffStartDate)}</strong> y el{' '}
+                              <strong>{formatFullDateES(payroll.prevMonthCutoffEndDate)}</strong>.
+                            </p>
+                            {loggedMonthsSummary.length > 0 && (
+                              <div className="pt-1.5 border-t border-amber-200/60 space-y-1.5">
+                                <p className="text-amber-900 font-semibold">
+                                  Meses con datos encontrados en tu calendario:{' '}
+                                  {loggedMonthsSummary
+                                    .map((m) => `${MONTHS_FULL_ES[m.month - 1]} ${m.year} (${m.totalDays}d)`)
+                                    .join(', ')}.
+                                </p>
+                                {(() => {
+                                  const candidate = loggedMonthsSummary.find((m) => {
+                                    if (m.lateDays <= 0) return false;
+                                    const tm = m.month === 12 ? 1 : m.month + 1;
+                                    const ty = m.month === 12 ? m.year + 1 : m.year;
+                                    return !(ty === payroll.year && tm === payroll.month);
+                                  });
+                                  if (!candidate || !onSelectMonth) return null;
+                                  const targetMonth = candidate.month === 12 ? 1 : candidate.month + 1;
+                                  const targetYear = candidate.month === 12 ? candidate.year + 1 : candidate.year;
+                                  return (
+                                    <button
+                                      type="button"
+                                      onClick={() => onSelectMonth(targetMonth, targetYear)}
+                                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-[10px] transition-colors cursor-pointer"
+                                    >
+                                      <span>
+                                        Ver nómina de {MONTHS_FULL_ES[targetMonth - 1]} {targetYear} (incluye 25–{new Date(candidate.year, candidate.month, 0).getDate()} de {MONTHS_FULL_ES[candidate.month - 1]})
+                                      </span>
+                                    </button>
+                                  );
+                                })()}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between px-1">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-blue-900">
+                          {hasPrevMonthStretch ? `Parte Mes en Curso · ${monthName}` : `Mes Natural · ${monthName}`} ({formatFullDateES(payroll.currentMonthCutoffStartDate)} – {formatFullDateES(payroll.currentMonthCutoffEndDate)})
+                        </span>
+                        <span className="font-mono font-bold text-[11px] text-emerald-800">
+                          +{formatCurrency(currentMonthExtrasSubtotal)}
+                        </span>
+                      </div>
+                      {currentMonthDayRows.length > 0 ? (
+                        <div className="space-y-1.5">
+                          {currentMonthDayRows.map((dayGroup) => (
+                            <div
+                              key={dayGroup.date}
+                              className="bg-white/90 rounded-lg border border-amber-200/60 px-2.5 py-2 space-y-1.5"
+                            >
+                              <div className="flex items-center justify-between border-b border-amber-100 pb-1 gap-2">
+                                <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                                  <span className="font-mono text-[10px] font-bold text-blue-900 bg-blue-50 px-1.5 py-0.5 rounded shrink-0">
+                                    {formatShortDateES(dayGroup.date)}
+                                  </span>
+                                  <span className="text-[10px] font-semibold text-slate-600 truncate">
+                                    {dayGroup.dayLabel}
+                                  </span>
+                                  {dayGroup.items.length > 1 && (
+                                    <span className="text-[9px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200/70 px-1.5 py-0.5 rounded shrink-0">
+                                      {dayGroup.items.length} extras
+                                    </span>
+                                  )}
+                                </div>
+                                <span className={`font-mono font-extrabold text-[11px] shrink-0 ${dayGroup.dayTotal > 0 ? 'text-slate-900' : 'text-slate-400'}`}>
+                                  {dayGroup.dayTotal > 0 ? `Total día: +${formatCurrency(dayGroup.dayTotal)}` : '0,00 € extra'}
+                                </span>
+                              </div>
+                              {dayGroup.items.length > 0 ? (
                                 <div className="space-y-1">
                                   {dayGroup.items.map((item, idx) => (
                                     <div
@@ -1111,74 +1402,17 @@ export const NominaView: React.FC<NominaViewProps> = ({
                                     </div>
                                   ))}
                                 </div>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="bg-white/75 rounded-lg border border-dashed border-amber-300 px-3 py-2 text-[10px] text-slate-500">
-                            No hay turnos ni extras (&gt; 0,00 €) introducidos en el calendario entre el{' '}
-                            <strong>{formatFullDateES(payroll.prevMonthCutoffStartDate)}</strong> y el{' '}
-                            <strong>{formatFullDateES(payroll.prevMonthCutoffEndDate)}</strong>.
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between px-1">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-blue-900">
-                          {hasPrevMonthStretch ? `Parte Mes en Curso · ${monthName}` : `Mes Natural · ${monthName}`} ({formatFullDateES(payroll.currentMonthCutoffStartDate)} – {formatFullDateES(payroll.currentMonthCutoffEndDate)})
-                        </span>
-                        <span className="font-mono font-bold text-[11px] text-emerald-800">
-                          +{formatCurrency(currentMonthExtrasSubtotal)}
-                        </span>
-                      </div>
-                      {currentMonthGroupedExtras.length > 0 ? (
-                        <div className="space-y-1.5">
-                          {currentMonthGroupedExtras.map((dayGroup) => (
-                            <div
-                              key={dayGroup.date}
-                              className="bg-white/90 rounded-lg border border-amber-200/60 px-2.5 py-2 space-y-1.5"
-                            >
-                              <div className="flex items-center justify-between border-b border-amber-100 pb-1">
-                                <div className="flex items-center gap-1.5">
-                                  <span className="font-mono text-[10px] font-bold text-blue-900 bg-blue-50 px-1.5 py-0.5 rounded">
-                                    {formatShortDateES(dayGroup.date)}
-                                  </span>
-                                  {dayGroup.items.length > 1 && (
-                                    <span className="text-[9px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200/70 px-1.5 py-0.5 rounded">
-                                      {dayGroup.items.length} extras en el día
-                                    </span>
-                                  )}
-                                </div>
-                                <span className="font-mono font-extrabold text-[11px] text-slate-900">
-                                  Total día: +{formatCurrency(dayGroup.dayTotal)}
-                                </span>
-                              </div>
-                              <div className="space-y-1">
-                                {dayGroup.items.map((item, idx) => (
-                                  <div
-                                    key={`${dayGroup.date}-${idx}`}
-                                    className="flex items-start justify-between gap-2 text-slate-700"
-                                  >
-                                    <div className="min-w-0">
-                                      <p className="font-medium text-slate-800 leading-snug">{item.name}</p>
-                                      {item.notes && (
-                                        <p className="text-[10px] text-slate-400 leading-tight">{item.notes}</p>
-                                      )}
-                                    </div>
-                                    <span className="font-mono font-bold text-emerald-700 shrink-0">
-                                      +{formatCurrency(item.amount)}
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
+                              ) : (
+                                <p className="text-[10px] text-slate-400">
+                                  Día registrado en calendario sin pluses extra adicionales en este tramo.
+                                </p>
+                              )}
                             </div>
                           ))}
                         </div>
                       ) : (
-                        <div className="bg-white/75 rounded-lg border border-dashed border-slate-300 px-3 py-2 text-[10px] text-slate-500">
-                          No hay extras (&gt; 0,00 €) registrados entre el{' '}
+                        <div className="bg-white/75 rounded-lg border border-dashed border-slate-300 px-3 py-2 text-[10px] text-slate-600">
+                          No hay registros introducidos en el calendario entre el{' '}
                           <strong>{formatFullDateES(payroll.currentMonthCutoffStartDate)}</strong> y el{' '}
                           <strong>{formatFullDateES(payroll.currentMonthCutoffEndDate)}</strong>.
                         </div>
