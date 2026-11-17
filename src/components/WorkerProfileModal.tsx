@@ -8,6 +8,7 @@ import {
   resolveRegionId,
 } from '../data/spanishHolidays';
 import { formatCurrency } from '../utils/exporter';
+import { calculateMonthlyConvenioHoursTarget } from '../utils/calculator';
 
 interface WorkerProfileModalProps {
   isOpen: boolean;
@@ -438,24 +439,45 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
                 <p className="text-[11px] text-amber-800 leading-relaxed">
                   El salario base y las pagas extraordinarias se calcularán de forma proporcional al{' '}
                   <strong className="font-semibold">{formData.partTimePercentage || 50}%</strong> de la jornada de convenio.
-                  <span className="block mt-1 font-semibold text-amber-950">
-                    Jornada anual a cumplir (Art. 14):{' '}
-                    {parseFloat((((effectiveRate.horasJornadaAnual || 1776) * (formData.partTimePercentage || 50)) / 100).toFixed(2)).toLocaleString('es-ES')} h/año
-                    {' '}({parseFloat(((((effectiveRate.horasJornadaAnual || 1776) * (formData.partTimePercentage || 50)) / 100) / 12).toFixed(2)).toLocaleString('es-ES')} h/mes equivalente).
-                  </span>
+                  {(() => {
+                    const annualT = parseFloat(
+                      (((effectiveRate.horasJornadaAnual || 1776) * (formData.partTimePercentage || 50)) / 100).toFixed(2)
+                    );
+                    const refYear = effectiveRate.year || new Date().getFullYear();
+                    const h31 = calculateMonthlyConvenioHoursTarget(annualT, refYear, 1).monthlyTargetHours;
+                    const h30 = calculateMonthlyConvenioHoursTarget(annualT, refYear, 4).monthlyTargetHours;
+                    const hFeb = calculateMonthlyConvenioHoursTarget(annualT, refYear, 2).monthlyTargetHours;
+                    const avg11 = parseFloat((annualT / 11).toFixed(2));
+                    return (
+                      <span className="block mt-1 font-semibold text-amber-950">
+                        Jornada anual (Art. 14): {annualT.toLocaleString('es-ES')} h/año · Media por mes trabajado (11 meses, sin 31d vac.):{' '}
+                        {avg11.toLocaleString('es-ES')} h/mes ({h31.toLocaleString('es-ES')} h en 31d · {h30.toLocaleString('es-ES')} h en 30d · {hFeb.toLocaleString('es-ES')} h en feb.).
+                      </span>
+                    );
+                  })()}
                 </p>
               </div>
             )}
 
             {!isPartTime && (
-              <div className="p-3 bg-blue-50/70 border border-blue-200/80 rounded-2xl text-[11px] text-blue-900 flex items-center justify-between gap-2">
+              <div className="p-3 bg-blue-50/70 border border-blue-200/80 rounded-2xl text-[11px] text-blue-900 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <span>
                   <strong>Jornada Completa (100% · Art. 14 Convenio):</strong> deber anual de{' '}
-                  <strong>{(effectiveRate.horasJornadaAnual || 1776).toLocaleString('es-ES')} h/año</strong>
+                  <strong>{(effectiveRate.horasJornadaAnual || 1776).toLocaleString('es-ES')} h/año</strong>{' '}
+                  (descontados 31 días de vacaciones al año).
                 </span>
-                <span className="font-mono font-bold bg-white px-2 py-0.5 rounded-lg border border-blue-200 shrink-0">
-                  {parseFloat(((effectiveRate.horasJornadaAnual || 1776) / 12).toFixed(2)).toLocaleString('es-ES')} h/mes
-                </span>
+                {(() => {
+                  const annualFull = effectiveRate.horasJornadaAnual || 1776;
+                  const refYear = effectiveRate.year || new Date().getFullYear();
+                  const avg11 = parseFloat((annualFull / 11).toFixed(2));
+                  const h31 = calculateMonthlyConvenioHoursTarget(annualFull, refYear, 1).monthlyTargetHours;
+                  const hFeb = calculateMonthlyConvenioHoursTarget(annualFull, refYear, 2).monthlyTargetHours;
+                  return (
+                    <span className="font-mono font-bold bg-white px-2 py-0.5 rounded-lg border border-blue-200 shrink-0">
+                      ~{avg11.toLocaleString('es-ES')} h/mes ({hFeb.toLocaleString('es-ES')}–{h31.toLocaleString('es-ES')} h)
+                    </span>
+                  );
+                })()}
               </div>
             )}
 

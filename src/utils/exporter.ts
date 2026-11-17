@@ -9,7 +9,11 @@ import {
   ConvenioInfo,
 } from '../types';
 import { getEffectiveYearRate } from '../data/convenioZaragoza';
-import { computeShiftRateFromConvenio } from './calculator';
+import {
+  computeShiftRateFromConvenio,
+  ANNUAL_VACATION_DAYS_CONVENIO,
+  getDaysInYear,
+} from './calculator';
 
 /**
  * Format currency with euro symbol
@@ -553,10 +557,10 @@ export function exportToExcel(
       HOURS_FMT,
     ],
     [
-      `Referencia Mensual Convenio (${jornadaPct}%)`,
+      `Objetivo Mensual Convenio (${jornadaPct}%)`,
       payroll.convenioMonthlyHoursTarget,
       'horas / mes',
-      `${formatHoursLabel(payroll.convenioAnnualHoursTarget)} h anuales / 12 meses`,
+      `Proporcional a ${Math.max(0, payroll.totalDays - payroll.vacationDays - payroll.sickDays)}d activos de ${monthName} sobre ${Math.max(1, getDaysInYear(payroll.year) - ANNUAL_VACATION_DAYS_CONVENIO)}d/año (sin ${ANNUAL_VACATION_DAYS_CONVENIO}d vac.)`,
       HOURS_FMT,
     ],
     [

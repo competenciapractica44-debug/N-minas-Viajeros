@@ -32,7 +32,12 @@ import {
   WorkerProfile,
 } from '../types';
 import { formatCurrency } from '../utils/exporter';
-import { formatMinutesToHoursAndMinutes, computeShiftRateFromConvenio, calculateTotalHours } from '../utils/calculator';
+import {
+  formatMinutesToHoursAndMinutes,
+  computeShiftRateFromConvenio,
+  calculateTotalHours,
+  calculateMonthlyConvenioHoursTarget,
+} from '../utils/calculator';
 import { getEffectiveYearRate, getOfficialConvenioExtraAmount } from '../data/convenioZaragoza';
 import { getOfficialHolidaysForYear, DetectedHolidayInfo } from '../data/spanishHolidays';
 import { ConfirmModal } from './ConfirmModal';
@@ -510,7 +515,21 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
   const convenioAnnualTargetCal = parseFloat(
     (((activeYearRate.horasJornadaAnual && activeYearRate.horasJornadaAnual > 0 ? activeYearRate.horasJornadaAnual : 1776)) * partTimeFactorCal).toFixed(2)
   );
-  const convenioMonthlyTargetCal = parseFloat((convenioAnnualTargetCal / 12).toFixed(2));
+  const monthPrefixCal = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-`;
+  const vacationDaysCal = assignments.filter(
+    (a) => a.date?.startsWith(monthPrefixCal) && (a.isVacation || a.shiftCode?.trim().toUpperCase() === 'V' || a.shiftId === 'V')
+  ).length;
+  const sickDaysCal = assignments.filter(
+    (a) => a.date?.startsWith(monthPrefixCal) && (a.isSickLeave || a.shiftCode?.trim().toUpperCase() === 'B' || a.shiftId === 'B')
+  ).length;
+  const monthlyTargetInfoCal = calculateMonthlyConvenioHoursTarget(
+    convenioAnnualTargetCal,
+    selectedYear,
+    selectedMonth,
+    vacationDaysCal,
+    sickDaysCal
+  );
+  const convenioMonthlyTargetCal = monthlyTargetInfoCal.monthlyTargetHours;
 
   // Estado de Retén, Quebranto de Moneda y Plus Conductor (entero o mitad) para el día seleccionado
   const dayPlusStatus = useMemo(() => {
@@ -898,7 +917,9 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
           <span>
             <strong>Jornada Convenio ({Math.round(partTimeFactorCal * 100)}%):</strong>{' '}
             <strong className="font-mono">{convenioAnnualTargetCal.toLocaleString('es-ES')} h/año</strong>{' '}
-            <span className="text-blue-700">({convenioMonthlyTargetCal.toLocaleString('es-ES')} h/mes ref.)</span>
+            <span className="text-blue-700">
+              (Obj. {MONTH_NAMES[selectedMonth - 1]} {monthlyTargetInfoCal.activeDaysInMonth}d/{monthlyTargetInfoCal.daysInMonth}d: {convenioMonthlyTargetCal.toLocaleString('es-ES')} h · base {monthlyTargetInfoCal.activeDaysInYear}d/año)
+            </span>
           </span>
         </div>
         <span className="font-mono font-bold text-blue-800">

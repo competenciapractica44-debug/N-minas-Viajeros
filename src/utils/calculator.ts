@@ -224,6 +224,50 @@ export function calculateTotalHours(startTime: string, endTime: string): number 
   return Math.round((diff / 60) * 100) / 100;
 }
 
+export const ANNUAL_VACATION_DAYS_CONVENIO = 31;
+
+export function getDaysInYear(year: number): number {
+  return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 366 : 365;
+}
+
+/**
+ * Calculates target ordinary hours for a specific month/year by discounting the 31 annual
+ * Convenio vacation days from the year (334 active days in normal years, 335 in leap years),
+ * and prorating across the exact days of the month (28/29 Feb, 30, 31) minus vacation/sick days in that month.
+ */
+export function calculateMonthlyConvenioHoursTarget(
+  annualHoursTarget: number,
+  year: number,
+  month: number,
+  vacationDaysInMonth = 0,
+  sickDaysInMonth = 0
+): {
+  daysInYear: number;
+  activeDaysInYear: number;
+  daysInMonth: number;
+  activeDaysInMonth: number;
+  dailyTargetRate: number;
+  monthlyTargetHours: number;
+  monthlyActiveAverage: number;
+} {
+  const daysInYear = getDaysInYear(year);
+  const activeDaysInYear = Math.max(1, daysInYear - ANNUAL_VACATION_DAYS_CONVENIO);
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const activeDaysInMonth = Math.max(0, daysInMonth - vacationDaysInMonth - sickDaysInMonth);
+  const dailyTargetRate = annualHoursTarget / activeDaysInYear;
+  const monthlyTargetHours = parseFloat((dailyTargetRate * activeDaysInMonth).toFixed(2));
+  const monthlyActiveAverage = parseFloat((annualHoursTarget / 11).toFixed(2));
+  return {
+    daysInYear,
+    activeDaysInYear,
+    daysInMonth,
+    activeDaysInMonth,
+    dailyTargetRate,
+    monthlyTargetHours,
+    monthlyActiveAverage,
+  };
+}
+
 export interface ShiftRateCalculation {
   totalHours: number;
   dayHours: number;
@@ -1217,11 +1261,18 @@ export function calculateMonthlyPayroll(
     (finalPuntualidadCount * plusPuntualidadUnitRate).toFixed(2)
   );
 
-  // Horas Convenio objetivo (Art. 14, escalado por % de jornada parcial o completa)
+  // Horas Convenio objetivo (Art. 14, escalado por % de jornada y repartido en días activos del año sin 31d vac.)
   const convenioAnnualHoursBase =
     yearRate.horasJornadaAnual && yearRate.horasJornadaAnual > 0 ? yearRate.horasJornadaAnual : 1776;
   const convenioAnnualHoursTarget = parseFloat((convenioAnnualHoursBase * partTimeFactor).toFixed(2));
-  const convenioMonthlyHoursTarget = parseFloat((convenioAnnualHoursTarget / 12).toFixed(2));
+  const monthlyTargetInfo = calculateMonthlyConvenioHoursTarget(
+    convenioAnnualHoursTarget,
+    year,
+    month,
+    vacationDays,
+    sickDays
+  );
+  const convenioMonthlyHoursTarget = monthlyTargetInfo.monthlyTargetHours;
 
   // 5. Horas festivas (Convenio: horaOrdinaria) - Incluye jornadas en festivo marcado (no computan en convenio)
   const horaOrdinariaUnitRate = yearRate.horaOrdinaria ?? 13.62;

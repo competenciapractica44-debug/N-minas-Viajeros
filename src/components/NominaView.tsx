@@ -22,6 +22,7 @@ import {
 } from '../types';
 import { getEffectiveYearRate } from '../data/convenioZaragoza';
 import { formatCurrency } from '../utils/exporter';
+import { ANNUAL_VACATION_DAYS_CONVENIO, getDaysInYear } from '../utils/calculator';
 import { YearlySalaryChart } from './YearlySalaryChart';
 
 interface NominaViewProps {
@@ -97,6 +98,8 @@ export const NominaView: React.FC<NominaViewProps> = ({
       .toFixed(2)
   );
   const periodHoursDiff = parseFloat((payroll.ordinaryConvenioHours - payroll.convenioMonthlyHoursTarget).toFixed(2));
+  const activeYearDaysForDisplay = Math.max(1, getDaysInYear(payroll.year) - ANNUAL_VACATION_DAYS_CONVENIO);
+  const activeMonthDaysForDisplay = Math.max(0, payroll.totalDays - payroll.vacationDays - payroll.sickDays);
   const annualHoursProgressPct =
     payroll.convenioAnnualHoursTarget > 0
       ? Math.min(100, Math.round((annualLoggedHours / payroll.convenioAnnualHoursTarget) * 100))
@@ -484,8 +487,9 @@ export const NominaView: React.FC<NominaViewProps> = ({
               {formatHoursES(payroll.convenioAnnualHoursTarget)} h/año
             </span>
             <span className="text-[11px] text-slate-300 block">
-              Ref. mensual: <strong className="font-mono text-white">{formatHoursES(payroll.convenioMonthlyHoursTarget)} h/mes</strong>
-              {payroll.partTimeFactor < 1 && ` (${Math.round(payroll.partTimeFactor * 100)}% de ${formatHoursES(payroll.convenioAnnualHoursBase)} h)`}
+              Obj. {monthName} ({activeMonthDaysForDisplay}d{payroll.vacationDays > 0 || payroll.sickDays > 0 ? ` de ${payroll.totalDays}d` : ''}):{' '}
+              <strong className="font-mono text-white">{formatHoursES(payroll.convenioMonthlyHoursTarget)} h</strong>
+              {` · Base ${activeYearDaysForDisplay}d/año (sin ${ANNUAL_VACATION_DAYS_CONVENIO}d vac.)`}
             </span>
           </div>
 
@@ -509,8 +513,8 @@ export const NominaView: React.FC<NominaViewProps> = ({
             </div>
             <span className="text-[11px] text-slate-300 block">
               {payroll.horasFestivas > 0
-                ? `Ref. ${formatHoursES(payroll.convenioMonthlyHoursTarget)} h/mes · ${formatHoursES(payroll.horasFestivas)} h festivas excluidas (Total: ${formatHoursES(payroll.totalWorkedHours)} h)`
-                : `Respecto a ref. de ${formatHoursES(payroll.convenioMonthlyHoursTarget)} h/mes`}
+                ? `Obj. ${monthName}: ${formatHoursES(payroll.convenioMonthlyHoursTarget)} h · ${formatHoursES(payroll.horasFestivas)} h festivas excluidas (Total: ${formatHoursES(payroll.totalWorkedHours)} h)`
+                : `Respecto a obj. de ${monthName}: ${formatHoursES(payroll.convenioMonthlyHoursTarget)} h (${payroll.totalDays}d${payroll.vacationDays > 0 ? ` − ${payroll.vacationDays}d vac.` : ''}${payroll.sickDays > 0 ? ` − ${payroll.sickDays}d baja` : ''})`}
             </span>
           </div>
 
@@ -785,8 +789,8 @@ export const NominaView: React.FC<NominaViewProps> = ({
           <div className="flex items-center justify-between gap-1 pt-1 border-t border-slate-100">
             <p className="text-[11px] text-slate-500 truncate">
               {currentJornadaPercentage === 100
-                ? `Completa 100% · ${formatHoursES(payroll.convenioAnnualHoursTarget)} h/año (${formatHoursES(payroll.convenioMonthlyHoursTarget)} h/mes)`
-                : `Parcial ${currentJornadaPercentage}% · ${formatHoursES(payroll.convenioAnnualHoursTarget)} h/año (${formatHoursES(payroll.convenioMonthlyHoursTarget)} h/mes)`}
+                ? `Completa 100% · ${formatHoursES(payroll.convenioAnnualHoursTarget)} h/año (Obj. ${monthName}: ${formatHoursES(payroll.convenioMonthlyHoursTarget)} h)`
+                : `Parcial ${currentJornadaPercentage}% · ${formatHoursES(payroll.convenioAnnualHoursTarget)} h/año (Obj. ${monthName}: ${formatHoursES(payroll.convenioMonthlyHoursTarget)} h)`}
             </p>
             <div className="flex items-center gap-1 shrink-0">
               {[50, 75, 100].map((preset) => (
