@@ -21,7 +21,7 @@ import {
   AnnualCalendarState,
   AnnualYearOverrideData,
 } from './types';
-import { ALL_INITIAL_SHIFTS } from './data/defaultTurnos';
+import { ALL_INITIAL_SHIFTS, BAJA_SHIFT, DESCANSO_SHIFT, VACACIONES_SHIFT } from './data/defaultTurnos';
 import { DEFAULT_EXTRAS } from './data/defaultExtras';
 import { DEFAULT_CONVENIO_ZARAGOZA, getEffectiveYearRate } from './data/convenioZaragoza';
 import { calculateMonthlyPayroll, calculateYearlySalaryEvolution } from './utils/calculator';
@@ -255,6 +255,17 @@ export default function App() {
     return now.getFullYear() < 2026 ? 1 : now.getMonth() + 1;
   });
 
+  const ensureBuiltInSpecialShifts = (list: ShiftDefinition[]): ShiftDefinition[] => {
+    const hasCode = (c: string) =>
+      list.some((s) => s.code?.trim().toUpperCase() === c);
+    const additions: ShiftDefinition[] = [];
+    if (!hasCode('D')) additions.push(DESCANSO_SHIFT);
+    if (!hasCode('V')) additions.push(VACACIONES_SHIFT);
+    if (!hasCode('B')) additions.push(BAJA_SHIFT);
+    if (additions.length === 0) return list;
+    return [...additions, ...list];
+  };
+
   // Turnos iniciales: cargados directamente del JSON base de turnos de la aplicación
   const [shifts, setShifts] = useState<ShiftDefinition[]>(() => {
     try {
@@ -262,13 +273,13 @@ export default function App() {
       if (saved) {
         const parsed: ShiftDefinition[] = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
+          return ensureBuiltInSpecialShifts(parsed);
         }
       }
     } catch (e) {
       console.error(e);
     }
-    return ALL_INITIAL_SHIFTS;
+    return ensureBuiltInSpecialShifts(ALL_INITIAL_SHIFTS);
   });
 
   useEffect(() => {
@@ -534,7 +545,7 @@ export default function App() {
               }
               return s;
             });
-            setShifts(cleaned);
+            setShifts(ensureBuiltInSpecialShifts(cleaned));
           }
         } else {
           // Si no existen todavía, guardar los turnos actuales como base inicial dentro de Direxis / Nóminas
@@ -848,9 +859,10 @@ export default function App() {
                 }
               : s
           );
-          if (JSON.stringify(cleanedShifts) !== JSON.stringify(cur.shifts)) {
+          const normalizedRemoteShifts = ensureBuiltInSpecialShifts(cleanedShifts);
+          if (JSON.stringify(normalizedRemoteShifts) !== JSON.stringify(cur.shifts)) {
             isApplyingRemoteSyncRef.current = true;
-            setShifts(cleanedShifts);
+            setShifts(normalizedRemoteShifts);
             updatedAny = true;
           }
         }

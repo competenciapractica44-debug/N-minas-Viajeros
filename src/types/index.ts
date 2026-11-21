@@ -1,6 +1,6 @@
 export type DayType = 'laborable' | 'sabado' | 'festivo' | 'todos';
 
-export type ShiftCategory = 'todos' | 'mañana' | 'tarde' | 'partido' | 'noche' | 'sabado' | 'festivo' | 'discrecional' | 'descanso' | 'vacaciones';
+export type ShiftCategory = 'todos' | 'mañana' | 'tarde' | 'partido' | 'noche' | 'sabado' | 'festivo' | 'discrecional' | 'descanso' | 'vacaciones' | 'baja';
 
 export type ShiftModality = 'continuado' | 'partido' | 'nocturno' | 'discrecional';
 
@@ -8,7 +8,7 @@ export interface ShiftDefinition {
   id: string;
   code: string;
   title: string;
-  category: 'mañana' | 'tarde' | 'partido' | 'noche' | 'discrecional' | 'descanso' | 'vacaciones';
+  category: 'mañana' | 'tarde' | 'partido' | 'noche' | 'discrecional' | 'descanso' | 'vacaciones' | 'baja';
   dayType: DayType;
   modality: ShiftModality;
   terminal: string; // e.g. "Cochera Central - Línea 101"

@@ -352,11 +352,12 @@ export function deriveDefaultAnnualMonths(
     const firstDayIsSick = isAssignmentSickLeave(firstDayAsg);
     const lastDayIsSick = isAssignmentSickLeave(assignmentByDate.get(lastDayKey));
 
-    // Only auto-break continuity if daily diary entries clearly show a gap on the boundary
+    // Si el empleado rellenó bajas ('B') en Turnos Día en este mes, solo enlaza con el mes anterior
+    // cuando la baja termina el último día del mes previo y sigue exactamente en el día 1 de este mes.
     let bajaContiguaAuto = true;
-    if (firstDayAsg && !firstDayIsSick) {
-      bajaContiguaAuto = false;
-    } else if (prevMonthHadSickInDiary && !prevMonthEndedWithSickInDiary && bajaNat > 0) {
+    if (bajaNat > 0) {
+      bajaContiguaAuto = Boolean(prevMonthEndedWithSickInDiary && firstDayIsSick);
+    } else if (firstDayAsg && !firstDayIsSick) {
       bajaContiguaAuto = false;
     }
 
@@ -399,10 +400,23 @@ export function resolveAnnualMonths(
   yearOverride?: AnnualYearOverrideData
 ): AnnualMonthBaseRow[] {
   const monthOverrides = yearOverride?.monthOverrides || {};
-  return defaults.map((m) => ({
-    ...m,
-    ...(monthOverrides[m.idx] || {}),
-  }));
+  return defaults.map((m) => {
+    const ov = monthOverrides[m.idx];
+    if (!ov) return m;
+    const merged: AnnualMonthBaseRow = {
+      ...m,
+      ...ov,
+    };
+    if (ov.vacNat !== undefined && ov.vacLab === undefined) {
+      const maxHab = Math.max(0, merged.habilesCal - merged.bajaLab);
+      merged.vacLab = estimateWorkingDaysFromNatural(ov.vacNat, maxHab);
+    }
+    if (ov.bajaNat !== undefined && ov.bajaLab === undefined) {
+      const maxHab = Math.max(0, merged.habilesCal - merged.vacLab);
+      merged.bajaLab = estimateWorkingDaysFromNatural(ov.bajaNat, maxHab);
+    }
+    return merged;
+  });
 }
 
 export function calculateAnnualLiquidation(
@@ -622,7 +636,7 @@ export function calculateAnnualLiquidation(
     }
 
     fijoMes += prestacionIT;
-    const plusVacMes = m.vacNat * plusVacDiaEfectivo;
+    const plusVacMes = m.vacLab * plusVacDiaEfectivo;
     const totalBrutoMes = fijoMes + plusVacMes;
 
     sumaHorasTeoricasActivas += horasTeoricasActivas;
@@ -873,7 +887,7 @@ export function exportAnnualCalendarToExcel(
       Number(m.horasRealizadas.toFixed(2)),
       { t: 'n', v: Number(m.diferenciaRealMes.toFixed(2)), f: difFormula },
       { t: 'n', v: Number(m.fijoMes.toFixed(2)), f: `${fijoAltaExpr}+${prestacionITExpr}` },
-      { t: 'n', v: Number(m.plusVacMes.toFixed(2)), f: `C${r}*($C$13*($C$7/100))` },
+      { t: 'n', v: Number(m.plusVacMes.toFixed(2)), f: `D${r}*($C$13*($C$7/100))` },
       { t: 'n', v: Number(m.totalBrutoMes.toFixed(2)), f: `O${r}+P${r}` },
       m.extraJulDic ? 2 : m.extraMes ? 1 : 0,
     ]);

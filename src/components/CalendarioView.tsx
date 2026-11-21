@@ -271,7 +271,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
     // Contabilizar turnos más usados por el conductor para el tipo de día seleccionado
     const usageCount = new Map<string, number>();
     assignments.forEach((a) => {
-      if (!a.shiftCode || a.shiftCode === 'D' || a.shiftCode === 'V') return;
+      if (!a.shiftCode || a.shiftCode === 'D' || a.shiftCode === 'V' || a.shiftCode === 'B') return;
       const def = shiftsMap.get(a.shiftCode);
       if (def && matchesDayCategory(def, selectedDayTypeSuggested)) {
         usageCount.set(a.shiftCode, (usageCount.get(a.shiftCode) || 0) + 1);
@@ -330,6 +330,14 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
         subtitle: appliesVacationPlus ? `+${formatCurrency(effectiveVacationPlusDia)}` : 'Base',
         isUsedRecently: false,
       },
+      {
+        code: 'B',
+        label: 'Baja Médica',
+        rate: 0,
+        color: '#e11d48',
+        subtitle: 'IT',
+        isUsedRecently: false,
+      },
       ...workCards,
     ];
   }, [
@@ -345,7 +353,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
 
   // Turnos filtrados y contadores para el buscador visual de turnos
   const { pickerDayCounts, pickerFilteredShifts, pickerUsedFallbackAllDays } = useMemo(() => {
-    const workShifts = shifts.filter((s) => s.code !== 'D' && s.code !== 'V');
+    const workShifts = shifts.filter((s) => s.code !== 'D' && s.code !== 'V' && s.code !== 'B');
     const counts = {
       todos: workShifts.length,
       laborable: 0,
@@ -480,6 +488,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
     let turnosCount = 0;
     let descansosCount = 0;
     let vacacionesCount = 0;
+    let bajasCount = 0;
     let festivosCount = 0;
     let extrasTotal = 0;
     let monthWorkedHours = 0;
@@ -497,6 +506,8 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
           descansosCount++;
         } else if (asg.shiftCode === 'V' || asg.isVacation) {
           vacacionesCount++;
+        } else if (asg.shiftCode === 'B' || asg.isSickLeave) {
+          bajasCount++;
         } else if (asg.shiftCode) {
           turnosCount++;
           const shiftDef = shiftsMap.get(asg.shiftCode) || shifts.find((s) => s.code === asg.shiftCode);
@@ -546,6 +557,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
       turnosCount,
       descansosCount,
       vacacionesCount,
+      bajasCount,
       festivosCount,
       extrasTotal,
       monthWorkedHours: Math.round(monthWorkedHours * 100) / 100,
@@ -677,7 +689,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
     const isHoliday = hasManualPlusFestivo;
 
     if (currentShift) {
-      if (currentShift.code === 'D') {
+      if (currentShift.code === 'D' || currentShift.code === 'B') {
         base = isHoliday ? plusFestivoRate : 0;
       } else if (currentShift.code === 'V') {
         const baseDia = parseFloat((yearRate.salarioBaseDia * partTimeFactorCal).toFixed(2));
@@ -944,6 +956,15 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
             </span>
           </>
         )}
+        {counters.bajasCount > 0 && (
+          <>
+            <span className="text-slate-300">·</span>
+            <span className="flex items-center gap-1.5 text-rose-800">
+              <span className="w-2 h-2 rounded-full bg-rose-600"></span>
+              <strong>{counters.bajasCount}</strong> {counters.bajasCount === 1 ? 'Baja IT' : 'Bajas IT'}
+            </span>
+          </>
+        )}
         {counters.festivosCount > 0 && (
           <>
             <span className="text-slate-300">·</span>
@@ -1021,6 +1042,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
 
             const isRest = shiftCode === 'D' || asg?.isRest;
             const isVacation = shiftCode === 'V' || asg?.isVacation;
+            const isSick = shiftCode === 'B' || asg?.isSickLeave;
 
             // Determine badge appearance
             let badgeBg = '#f1f5f9';
@@ -1031,6 +1053,9 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
             } else if (isVacation) {
               badgeBg = '#cffafe'; // cyan-100
               badgeColor = '#0891b2'; // cyan-600
+            } else if (isSick) {
+              badgeBg = '#ffe4e6'; // rose-100
+              badgeColor = '#be123c'; // rose-700
             } else if (shiftDef) {
               badgeBg = `${shiftDef.color}18`;
               badgeColor = shiftDef.color;
@@ -1270,7 +1295,22 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
 
         {/* Shift Details Box */}
         {currentShift ? (
-          currentShift.code === 'V' ? (
+          currentShift.code === 'B' || currentAssignment.isSickLeave ? (
+            <div className="bg-rose-50/90 rounded-2xl p-3.5 border border-rose-200/80 space-y-2">
+              <div className="flex items-center justify-between text-xs font-semibold text-rose-950">
+                <span className="flex items-center gap-1.5 font-bold">
+                  <CalendarIcon className="w-4 h-4 text-rose-600" />
+                  Baja Médica / Incapacidad Temporal (IT)
+                </span>
+                <span className="text-xs font-bold font-mono text-rose-800 bg-rose-100 px-2 py-0.5 rounded-md">
+                  Turno B
+                </span>
+              </div>
+              <p className="text-[11px] text-rose-900 leading-relaxed">
+                Día registrado como <strong>baja médica (IT)</strong>. Si la misma baja continúa entre un mes y el siguiente en <strong>Turnos Día</strong>, el Calendario Anual enlaza automáticamente los días consecutivos sin reiniciar los tramos iniciales sin cobro.
+              </p>
+            </div>
+          ) : currentShift.code === 'V' ? (
             <div className="bg-cyan-50/90 rounded-2xl p-3.5 border border-cyan-200/80 space-y-2">
               <div className="flex items-center justify-between text-xs font-semibold text-cyan-950">
                 <span className="flex items-center gap-1.5 font-bold">
@@ -1930,7 +1970,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
         </div>
 
         {/* Quick buttons strip (div:nth-of-type(2)) */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
           {quickShiftItems.map((item) => {
             const isSelectedShift = currentAssignment.shiftCode === item.code;
 
@@ -1964,7 +2004,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                   </span>
                   <div className="flex items-center justify-between mt-0.5">
                     <span className="text-[10px] text-slate-500 font-mono">
-                      {item.rate > 0 ? formatCurrency(item.rate) : 'Libre (0€)'}
+                      {item.rate > 0 ? formatCurrency(item.rate) : item.code === 'B' ? 'Baja IT' : 'Libre (0€)'}
                     </span>
                     {item.isUsedRecently && (
                       <span className="text-[9px] font-bold text-blue-600">Habitual</span>

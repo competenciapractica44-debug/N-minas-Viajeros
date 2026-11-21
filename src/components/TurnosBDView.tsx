@@ -362,6 +362,8 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
                         <span className="capitalize font-medium text-slate-600">
                           {shift.code === 'D'
                             ? 'Descanso / Fiesta'
+                            : shift.code === 'B'
+                            ? 'Baja Médica / IT'
                             : shift.modality === 'partido'
                             ? 'Turno Partido'
                             : `Turno ${shift.category}`}
@@ -412,6 +414,8 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
                     <p className="font-semibold text-slate-800">
                       {shift.code === 'D'
                         ? '00:00 - 00:00 (Libre)'
+                        : shift.code === 'B'
+                        ? '00:00 - 00:00 (Baja IT)'
                         : shift.modality === 'partido' && shift.secondStartTime
                         ? `${shift.startTime}-${shift.endTime} / ${shift.secondStartTime}-${shift.secondEndTime}`
                         : `${shift.startTime} - ${shift.endTime}`}
@@ -469,10 +473,10 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
 
                   <div className="text-right shrink-0">
                     <span className="text-[10px] text-slate-400 block -mb-0.5">
-                      {shift.code === 'D' ? 'No laborable' : shift.isCustom && shift.fixedRate ? 'Tarifa fijada' : `Retribución ${currentYear}`}
+                      {shift.code === 'D' || shift.code === 'B' ? 'No laborable' : shift.isCustom && shift.fixedRate ? 'Tarifa fijada' : `Retribución ${currentYear}`}
                     </span>
                     <span className="text-base sm:text-lg font-extrabold text-emerald-700 font-mono tabular-nums">
-                      {shift.code === 'D' ? '0,00 € (Libre)' : formatCurrency(rateCalc.totalRate)}
+                      {shift.code === 'D' ? '0,00 € (Libre)' : shift.code === 'B' ? 'Baja IT (Ver Anual)' : formatCurrency(rateCalc.totalRate)}
                     </span>
                   </div>
                 </div>

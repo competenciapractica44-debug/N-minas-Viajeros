@@ -655,7 +655,9 @@ export function calculateMonthlyPayroll(
 
       const [cY, cM, cD] = dateStr.split('-').map(Number);
       const dateObj = new Date(cY, cM - 1, cD);
-      const isSunday = dateObj.getDay() === 0;
+      const dow = dateObj.getDay();
+      const isSunday = dow === 0;
+      const isMonToFri = dow >= 1 && dow <= 5;
       const shiftCode = assignment.shiftCode?.trim();
       const upperCode = shiftCode?.toUpperCase();
       const dayExtras = assignment.extras || [];
@@ -679,7 +681,7 @@ export function calculateMonthlyPayroll(
         assignment.shiftId === 'B'
       );
 
-      if (isVacationDay) {
+      if (isVacationDay && isMonToFri) {
         cutoffVacationPlusDays++;
         if (isPrevStretch) {
           prevMonthCutoffVacationDays++;
@@ -1220,7 +1222,10 @@ export function calculateMonthlyPayroll(
           const isVacationDayPostCutoff = Boolean(
             assignment.isVacation || upperCodePost === 'V' || assignment.shiftId === 'V'
           );
-          if (isVacationDayPostCutoff && profile.hasVacationPlus !== false) {
+          const [pY, pM, pD] = dateStr.split('-').map(Number);
+          const postDow = new Date(pY, pM - 1, pD).getDay();
+          const isPostMonToFri = postDow >= 1 && postDow <= 5;
+          if (isVacationDayPostCutoff && isPostMonToFri && profile.hasVacationPlus !== false) {
             const vacRate =
               yearRate.plusVacacionesDia && yearRate.plusVacacionesDia > 0
                 ? yearRate.plusVacacionesDia

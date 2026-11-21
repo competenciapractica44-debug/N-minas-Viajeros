@@ -699,7 +699,12 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                   Comp. (R − T)
                 </th>
                 <th className="px-3 py-3 text-right whitespace-nowrap">Fijo Prorr.</th>
-                <th className="px-3 py-3 text-right whitespace-nowrap">Plus Vac.</th>
+                <th
+                  className="px-3 py-3 text-right whitespace-nowrap"
+                  title="Calculado solo sobre vacaciones laborables (Lunes a Viernes); sábados y domingos no cobran plus"
+                >
+                  Plus Vac. (L–V)
+                </th>
                 <th className="px-3 py-3 text-right whitespace-nowrap bg-blue-50 text-blue-950">
                   Total Bruto
                 </th>
@@ -803,6 +808,11 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                           className="w-12 text-center rounded border border-amber-300 bg-amber-50/60 px-1 py-1 text-xs font-bold text-amber-900 focus:border-amber-600 focus:outline-none"
                         />
                       </div>
+                      {(m.vacNat > 0 || m.vacLab > 0) && (
+                        <div className="mt-1 text-[10px] font-bold text-amber-800">
+                          {m.vacLab} d. L–V cobrables
+                        </div>
+                      )}
                     </td>
                     <td className="px-2 py-2 text-center whitespace-nowrap">
                       <div className="inline-flex items-center justify-center space-x-1">
@@ -972,7 +982,12 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                         m.plusVacMes > 0 ? 'text-amber-700 font-bold' : 'text-slate-400'
                       }`}
                     >
-                      {formatEuro(m.plusVacMes)}
+                      <div>{formatEuro(m.plusVacMes)}</div>
+                      {m.vacLab > 0 && liquidation.plusVacDiaEfectivo > 0 && (
+                        <div className="text-[10px] font-semibold text-amber-700">
+                          {m.vacLab}d L–V × {formatEuro(liquidation.plusVacDiaEfectivo)}
+                        </div>
+                      )}
                     </td>
                     <td className="px-3 py-2.5 text-right font-extrabold text-slate-950 bg-blue-50/50 whitespace-nowrap">
                       {formatEuro(m.totalBrutoMes)}

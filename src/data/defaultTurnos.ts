@@ -48,6 +48,29 @@ export const VACACIONES_SHIFT: ShiftDefinition =
       'Retribución de salario base diario (53,18 € en 2026) más plus de vacaciones de 10,00 €/día según Art. 9 del Convenio Colectivo de Transporte de Zaragoza (proporcional al % de jornada).',
   };
 
-export const FEATURED_SHIFTS: ShiftDefinition[] = [DESCANSO_SHIFT, VACACIONES_SHIFT];
+/**
+ * Turno de Baja Médica / Incapacidad Temporal (IT)
+ */
+export const BAJA_SHIFT: ShiftDefinition =
+  INITIAL_SHIFTS.find((s) => s.code === 'B') || {
+    id: 'turno-b',
+    code: 'B',
+    title: 'Baja Médica / Incapacidad Temporal (IT)',
+    category: 'baja',
+    dayType: 'todos',
+    modality: 'continuado',
+    terminal: 'Baja Médica / IT',
+    startTime: '00:00',
+    endTime: '00:00',
+    drivingDuration: '00:00',
+    computedDuration: 'Día de Baja Médica (IT)',
+    fixedRate: 0,
+    color: '#e11d48',
+    badges: ['Baja Médica IT', 'No laborable'],
+    notes:
+      'Día de baja médica / Incapacidad Temporal (IT). Permite detectar automáticamente en el Calendario Anual si la baja continúa entre meses distintos sin reiniciar carencias.',
+  };
+
+export const FEATURED_SHIFTS: ShiftDefinition[] = [DESCANSO_SHIFT, VACACIONES_SHIFT, BAJA_SHIFT];
 
 export const ALL_INITIAL_SHIFTS: ShiftDefinition[] = INITIAL_SHIFTS;
