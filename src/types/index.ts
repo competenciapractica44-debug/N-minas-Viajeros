@@ -308,6 +308,7 @@ export interface AnnualMonthEditableFields {
   bajaNat: number;
   bajaLab: number;
   tipoBaja: SickLeaveContingencyType;
+  bajaEsContinuacion?: boolean;
   horasReales?: number;
 }
 

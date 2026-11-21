@@ -25,6 +25,7 @@ import {
   calculateAnnualLiquidation,
   deriveDefaultAnnualMonths,
   deriveDefaultAnnualParams,
+  estimateWorkingDaysFromNatural,
   exportAnnualCalendarToExcel,
   formatEuro,
   formatHoras,
@@ -126,20 +127,23 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
     });
   };
 
-  const handleMonthFieldChange = <K extends keyof AnnualMonthEditableFields>(
+  const handleMonthFieldsChange = (
     monthIdx: number,
-    field: K,
-    value: AnnualMonthEditableFields[K]
+    updates: Partial<AnnualMonthEditableFields>
   ) => {
     const prevMonthMap = yearOverride?.monthOverrides || {};
     const prevMonthFields = prevMonthMap[monthIdx] || {};
     const nextMonthFields: Partial<AnnualMonthEditableFields> = {
       ...prevMonthFields,
-      [field]: value,
     };
 
-    if (value === undefined) {
-      delete nextMonthFields[field];
+    for (const [k, v] of Object.entries(updates)) {
+      const key = k as keyof AnnualMonthEditableFields;
+      if (v === undefined) {
+        delete nextMonthFields[key];
+      } else {
+        (nextMonthFields as Record<string, unknown>)[key] = v;
+      }
     }
 
     const nextMonthOverrides = {
@@ -157,6 +161,14 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
         Object.keys(nextMonthOverrides).length > 0 ? nextMonthOverrides : undefined,
       updatedAt: new Date().toISOString(),
     });
+  };
+
+  const handleMonthFieldChange = <K extends keyof AnnualMonthEditableFields>(
+    monthIdx: number,
+    field: K,
+    value: AnnualMonthEditableFields[K]
+  ) => {
+    handleMonthFieldsChange(monthIdx, { [field]: value });
   };
 
   const handleResetToRutaNomina = () => {
@@ -192,6 +204,7 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
       delete copy.vacLab;
       delete copy.bajaNat;
       delete copy.bajaLab;
+      delete copy.bajaEsContinuacion;
       delete copy.horasReales;
       if (Object.keys(copy).length > 0) {
         nextMonths[idx] = copy;
@@ -761,14 +774,15 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                           max={31}
                           step={1}
                           value={m.vacNat}
-                          title="Vacaciones naturales"
-                          onChange={(e) =>
-                            handleMonthFieldChange(
-                              m.idx,
-                              'vacNat',
-                              Math.max(0, parseInt(e.target.value, 10) || 0)
-                            )
-                          }
+                          title="Vacaciones naturales (calcula automáticamente L–V)"
+                          onChange={(e) => {
+                            const natVal = Math.max(0, parseInt(e.target.value, 10) || 0);
+                            const maxHab = Math.max(0, m.habilesCal - m.bajaLab);
+                            handleMonthFieldsChange(m.idx, {
+                              vacNat: natVal,
+                              vacLab: estimateWorkingDaysFromNatural(natVal, maxHab),
+                            });
+                          }}
                           className="w-12 text-center rounded border border-amber-300 bg-amber-50/60 px-1 py-1 text-xs font-bold text-amber-900 focus:border-amber-600 focus:outline-none"
                         />
                         <span className="text-slate-400 font-bold">/</span>
@@ -798,14 +812,15 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                           max={31}
                           step={1}
                           value={m.bajaNat}
-                          title="Baja IT días naturales"
-                          onChange={(e) =>
-                            handleMonthFieldChange(
-                              m.idx,
-                              'bajaNat',
-                              Math.max(0, parseInt(e.target.value, 10) || 0)
-                            )
-                          }
+                          title="Baja IT días naturales (calcula automáticamente L–V)"
+                          onChange={(e) => {
+                            const natVal = Math.max(0, parseInt(e.target.value, 10) || 0);
+                            const maxHab = Math.max(0, m.habilesCal - m.vacLab);
+                            handleMonthFieldsChange(m.idx, {
+                              bajaNat: natVal,
+                              bajaLab: estimateWorkingDaysFromNatural(natVal, maxHab),
+                            });
+                          }}
                           className="w-11 text-center rounded border border-rose-300 bg-rose-50/60 px-1 py-1 text-xs font-bold text-rose-900 focus:border-rose-600 focus:outline-none"
                         />
                         <span className="text-slate-400 font-bold">/</span>
@@ -842,6 +857,34 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                           <option value="accidente_75">Acc. 75%</option>
                         </select>
                       </div>
+                      {m.prevMonthHasBaja && m.bajaNat > 0 && m.tipoBaja === 'comun' && (
+                        <div className="mt-1">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleMonthFieldChange(
+                                m.idx,
+                                'bajaEsContinuacion',
+                                !m.bajaEsContinuacionEfectiva
+                              )
+                            }
+                            title={
+                              m.bajaEsContinuacionEfectiva
+                                ? 'Misma baja continuada (no reinicia días 1–3 sin cobro). Pulsa si es una nueva baja distinta.'
+                                : 'Baja nueva independiente (reinicia en día 1). Pulsa para enlazar con el mes anterior.'
+                            }
+                            className={`text-[10px] font-bold px-1.5 py-0.5 rounded border transition cursor-pointer ${
+                              m.bajaEsContinuacionEfectiva
+                                ? 'bg-rose-100 text-rose-900 border-rose-300 hover:bg-rose-200'
+                                : 'bg-amber-50 text-amber-900 border-amber-300 hover:bg-amber-100'
+                            }`}
+                          >
+                            {m.bajaEsContinuacionEfectiva
+                              ? `↳ Continúa baja (d. ${m.rachaInicioDia + 1}–${m.rachaFinDia})`
+                              : `↺ Nueva baja (d. 1–${m.rachaFinDia})`}
+                          </button>
+                        </div>
+                      )}
                     </td>
                     <td className="px-2 py-2.5 text-center font-bold text-slate-800 whitespace-nowrap">
                       {m.diasActivos}

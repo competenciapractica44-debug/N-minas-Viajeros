@@ -37,6 +37,8 @@ export interface AnnualMonthBaseRow extends AnnualMonthEditableFields {
   extraJulDic: boolean;
   horasDiarioMes: number;
   turnosDiarioCount: number;
+  bajaDiasPreviosAnioAnterior?: number;
+  bajaContiguaAuto?: boolean;
 }
 
 export interface AnnualMonthComputedRow extends AnnualMonthBaseRow {
@@ -59,6 +61,10 @@ export interface AnnualMonthComputedRow extends AnnualMonthBaseRow {
   plusVacMes: number;
   totalBrutoMes: number;
   detalleIT: string;
+  rachaInicioDia: number;
+  rachaFinDia: number;
+  prevMonthHasBaja: boolean;
+  bajaEsContinuacionEfectiva: boolean;
 }
 
 export interface AnnualLiquidationResult {
@@ -194,6 +200,30 @@ function resolveShiftForAnnual(
 }
 
 /**
+ * Estimates working days (Mon–Fri) corresponding to a block of natural days,
+ * matching standard calendar weeks (5 working days per 7 natural days) and capped
+ * by available working days in the month.
+ */
+export function estimateWorkingDaysFromNatural(
+  naturalDays: number,
+  maxWorkingDays = 31
+): number {
+  const nat = Math.max(0, Math.round(Number(naturalDays) || 0));
+  if (nat <= 0) return 0;
+  const fullWeeks = Math.floor(nat / 7);
+  const rem = nat % 7;
+  const estimated = fullWeeks * 5 + Math.min(5, rem);
+  return Math.max(0, Math.min(Math.max(0, Math.round(maxWorkingDays)), estimated));
+}
+
+function isAssignmentSickLeave(asg?: DayAssignment): boolean {
+  if (!asg) return false;
+  const upperCode = (asg.shiftCode || '').trim().toUpperCase();
+  const upperId = (asg.shiftId || '').trim().toUpperCase();
+  return Boolean(asg.isSickLeave || upperCode === 'B' || upperId === 'B');
+}
+
+/**
  * Computes default 12-month rows from calendar working days (Mon–Fri minus official holidays)
  * plus Vacation ('V'), Sick Leave ('B'), and exact natural-month worked hours from Turnos Día.
  */
@@ -219,12 +249,32 @@ export function deriveDefaultAnnualMonths(
   });
 
   const assignmentByDate = new Map<string, DayAssignment>();
+  const prevYearPrefix = `${year - 1}-`;
+  const yearPrefix = `${year}-`;
   for (const a of assignments) {
     const key = normalizeDateKeyForAnnual(a.date);
-    if (key && key.startsWith(`${year}-`)) {
+    if (key && (key.startsWith(yearPrefix) || key.startsWith(prevYearPrefix))) {
       assignmentByDate.set(key, { ...a, date: key });
     }
   }
+
+  // Count consecutive trailing sick-leave days ending Dec 31 of previous year
+  let prevYearTrailingSickDays = 0;
+  for (let offset = 0; offset < 366; offset++) {
+    const d = new Date(year - 1, 11, 31 - offset);
+    if (d.getFullYear() !== year - 1) break;
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+      d.getDate()
+    ).padStart(2, '0')}`;
+    if (isAssignmentSickLeave(assignmentByDate.get(key))) {
+      prevYearTrailingSickDays += 1;
+    } else {
+      break;
+    }
+  }
+
+  let prevMonthHadSickInDiary = prevYearTrailingSickDays > 0;
+  let prevMonthEndedWithSickInDiary = prevYearTrailingSickDays > 0;
 
   return ANNUAL_MONTH_NAMES.map((mes, idx) => {
     const monthNum = idx + 1;
@@ -255,7 +305,7 @@ export function deriveDefaultAnnualMonths(
 
       const isRest = Boolean(asg.isRest || upperCode === 'D' || upperId === 'D');
       const isVac = Boolean(asg.isVacation || upperCode === 'V' || upperId === 'V');
-      const isSick = Boolean(asg.isSickLeave || upperCode === 'B' || upperId === 'B');
+      const isSick = isAssignmentSickLeave(asg);
 
       if (isVac) {
         vacNat += 1;
@@ -293,6 +343,26 @@ export function deriveDefaultAnnualMonths(
       }
     }
 
+    const firstDayKey = `${year}-${String(monthNum).padStart(2, '0')}-01`;
+    const lastDayKey = `${year}-${String(monthNum).padStart(2, '0')}-${String(daysInMonth).padStart(
+      2,
+      '0'
+    )}`;
+    const firstDayAsg = assignmentByDate.get(firstDayKey);
+    const firstDayIsSick = isAssignmentSickLeave(firstDayAsg);
+    const lastDayIsSick = isAssignmentSickLeave(assignmentByDate.get(lastDayKey));
+
+    // Only auto-break continuity if daily diary entries clearly show a gap on the boundary
+    let bajaContiguaAuto = true;
+    if (firstDayAsg && !firstDayIsSick) {
+      bajaContiguaAuto = false;
+    } else if (prevMonthHadSickInDiary && !prevMonthEndedWithSickInDiary && bajaNat > 0) {
+      bajaContiguaAuto = false;
+    }
+
+    prevMonthHadSickInDiary = bajaNat > 0;
+    prevMonthEndedWithSickInDiary = lastDayIsSick;
+
     return {
       idx,
       mes,
@@ -306,6 +376,10 @@ export function deriveDefaultAnnualMonths(
       extraJulDic: idx === 6 || idx === 11, // Julio y Diciembre
       horasDiarioMes: Math.round(horasDiarioMes * 100) / 100,
       turnosDiarioCount,
+      ...(idx === 0 && prevYearTrailingSickDays > 0
+        ? { bajaDiasPreviosAnioAnterior: prevYearTrailingSickDays }
+        : {}),
+      bajaContiguaAuto,
     };
   });
 }
@@ -423,8 +497,13 @@ export function calculateAnnualLiquidation(
   let sumaPlusVac = 0;
   let sumaTotalBruto = 0;
 
-  let rachaBajaDias = 0;
-  let ultimoTipoBaja: SickLeaveContingencyType | null = null;
+  const prevYearCarry = Math.max(
+    0,
+    Math.round(Number(prelim[0]?.bajaDiasPreviosAnioAnterior) || 0)
+  );
+  let rachaBajaDias = prevYearCarry;
+  let ultimoTipoBaja: SickLeaveContingencyType | null = prevYearCarry > 0 ? 'comun' : null;
+  let prevHadBaja = prevYearCarry > 0;
 
   const filas: AnnualMonthComputedRow[] = prelim.map((m) => {
     // 1. Cálculo teórico (cuadre anual a 0 h)
@@ -482,35 +561,64 @@ export function calculateAnnualLiquidation(
 
     let prestacionIT = 0;
     let detalleIT = '';
+    const prevMonthHasBaja = prevHadBaja && ultimoTipoBaja === 'comun';
+    let rachaInicioDia = 0;
+    let rachaFinDia = 0;
+    let bajaEsContinuacionEfectiva = false;
+
     if (m.bajaNat > 0) {
       if (m.tipoBaja === 'accidente_100') {
         prestacionIT = m.bajaNat * baseRegDiaria;
         detalleIT = `IT 100% (${m.bajaNat}d)`;
+        rachaInicioDia = 0;
+        rachaFinDia = m.bajaNat;
         rachaBajaDias = 0;
-        ultimoTipoBaja = null;
+        ultimoTipoBaja = 'accidente_100';
+        prevHadBaja = true;
       } else if (m.tipoBaja === 'accidente_75') {
         prestacionIT = m.bajaNat * baseRegDiaria * 0.75;
         detalleIT = `IT 75% (${m.bajaNat}d)`;
+        rachaInicioDia = 0;
+        rachaFinDia = m.bajaNat;
         rachaBajaDias = 0;
-        ultimoTipoBaja = null;
+        ultimoTipoBaja = 'accidente_75';
+        prevHadBaja = true;
       } else {
-        const inicioAcum = ultimoTipoBaja === 'comun' ? rachaBajaDias : 0;
-        const finAcum = inicioAcum + m.bajaNat;
+        const autoCont = m.bajaContiguaAuto ?? true;
+        bajaEsContinuacionEfectiva =
+          prevMonthHasBaja &&
+          (m.bajaEsContinuacion !== undefined ? m.bajaEsContinuacion : autoCont);
 
+        const inicioAcum = bajaEsContinuacionEfectiva ? rachaBajaDias : 0;
+        const finAcum = inicioAcum + m.bajaNat;
+        rachaInicioDia = inicioAcum;
+        rachaFinDia = finAcum;
+
+        let d0 = 0;
         let d60 = 0;
         let d75 = 0;
         for (let d = inicioAcum + 1; d <= finAcum; d++) {
-          if (d >= 4 && d <= 20) d60++;
-          else if (d >= 21) d75++;
+          if (d <= 3) d0++;
+          else if (d <= 20) d60++;
+          else d75++;
         }
         prestacionIT = baseRegDiaria * (0.6 * d60 + 0.75 * d75);
-        detalleIT = `IT Común: ${d60}d@60% · ${d75}d@75%`;
+        const rangoTxt = `${inicioAcum + 1}–${finAcum}d`;
+        const tramos: string[] = [];
+        if (d0 > 0) tramos.push(`${d0}d@0%`);
+        if (d60 > 0) tramos.push(`${d60}d@60%`);
+        if (d75 > 0) tramos.push(`${d75}d@75%`);
+        detalleIT = bajaEsContinuacionEfectiva
+          ? `Cont. (${rangoTxt}): ${tramos.join(' · ')}`
+          : `IT Común (${rangoTxt}): ${tramos.join(' · ')}`;
         rachaBajaDias = finAcum;
         ultimoTipoBaja = 'comun';
+        prevHadBaja = true;
       }
     } else {
       rachaBajaDias = 0;
       ultimoTipoBaja = null;
+      prevHadBaja = false;
     }
 
     fijoMes += prestacionIT;
@@ -543,6 +651,10 @@ export function calculateAnnualLiquidation(
       plusVacMes,
       totalBrutoMes,
       detalleIT,
+      rachaInicioDia,
+      rachaFinDia,
+      prevMonthHasBaja,
+      bajaEsContinuacionEfectiva,
     };
   });
 
@@ -683,13 +795,46 @@ export function exportAnnualCalendarToExcel(
     'TRAMO EXTRA',
   ]);
 
+  const buildEndAcumFormula = (j: number): string => {
+    const rowJ = res.filas[j];
+    const rJ = 16 + j;
+    if (j === 0) {
+      const carry0 =
+        rowJ.bajaEsContinuacionEfectiva && rowJ.rachaInicioDia > 0
+          ? String(rowJ.rachaInicioDia)
+          : '';
+      return carry0 ? `${carry0}+E16` : 'E16';
+    }
+    if (!rowJ.bajaEsContinuacionEfectiva) {
+      return `E${rJ}`;
+    }
+    const prevR = 16 + j - 1;
+    const prevEnd = buildEndAcumFormula(j - 1);
+    return `IF(AND(E${prevR}>0,G${prevR}=0),${prevEnd},0)+E${rJ}`;
+  };
+
+  const buildPrevAcumFormula = (idx: number): string => {
+    const m = res.filas[idx];
+    if (idx === 0) {
+      return m.bajaEsContinuacionEfectiva && m.rachaInicioDia > 0
+        ? String(m.rachaInicioDia)
+        : '0';
+    }
+    if (!m.bajaEsContinuacionEfectiva) {
+      return '0';
+    }
+    const prevR = 16 + idx - 1;
+    const prevEnd = buildEndAcumFormula(idx - 1);
+    return `IF(AND(E${prevR}>0,G${prevR}=0),${prevEnd},0)`;
+  };
+
   res.filas.forEach((m, idx) => {
     const r = 16 + idx;
     const prevR = r - 1;
     const bolsaFormula = idx === 0 ? `K${r}` : `L${prevR}+K${r}`;
 
-    const acumBajaExpr = idx === 0 ? `E${r}` : `IF(G${prevR}=G${r},E${prevR}+E${r},E${r})`;
-    const prevAcumExpr = idx === 0 ? '0' : `IF(G${prevR}=G${r},E${prevR},0)`;
+    const prevAcumExpr = buildPrevAcumFormula(idx);
+    const acumBajaExpr = prevAcumExpr === '0' ? `E${r}` : `(${prevAcumExpr})+E${r}`;
 
     const brDiariaExpr = '(((($C$9+$C$10)*($C$7/100))*$C$11)/360)';
     const prestacionComunExpr = `(${brDiariaExpr}*(0.6*MAX(0,MIN(20,${acumBajaExpr})-MAX(3,${prevAcumExpr}))+0.75*MAX(0,${acumBajaExpr}-MAX(20,${prevAcumExpr}))))`;
