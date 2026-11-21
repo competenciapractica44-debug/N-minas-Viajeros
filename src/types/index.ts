@@ -210,7 +210,10 @@ export interface PayrollBreakdown {
   plusFestivoCount: number;
   quebrantoCount: number;
   horasComplementarias: number;
+  horasExcesoDiario9h: number;
+  horasExcesoMensual: number;
   horasFestivas: number;
+  horasFT: number;
   plusRetenCount: number;
   plusConductorCount: number;
   medioPlusConductorCount: number;
@@ -227,6 +230,7 @@ export interface PayrollBreakdown {
   plusNocturnidad: number;
   plusFestivos: number;
   horasFestivasAmount: number;
+  horasFTAmount: number;
   plusRetenAmount: number;
   plusPuntualidadAmount: number;
   prorrataPagasExtra: number;
@@ -280,3 +284,38 @@ export interface MonthlySalaryEvolution {
   totalHours: number;
   ordinaryConvenioHours?: number;
 }
+
+export type AnnualExtrasPayMode = 'prorrateadas' | 'integras' | 'mixta_marzo_prorr';
+export type BolsaRepartoMode = 'lineal' | 'equilibrado';
+export type SickLeaveContingencyType = 'comun' | 'accidente_100' | 'accidente_75';
+
+export interface AnnualEditableParams {
+  horasAnuales100: number;
+  jornadaPct: number;
+  vacReglamentarias: number;
+  baseMes100: number;
+  compMes100: number;
+  numPagas: number;
+  modoExtras: AnnualExtrasPayMode;
+  plusVacDia100: number;
+  repartoBolsa: BolsaRepartoMode;
+}
+
+export interface AnnualMonthEditableFields {
+  habilesCal: number;
+  vacNat: number;
+  vacLab: number;
+  bajaNat: number;
+  bajaLab: number;
+  tipoBaja: SickLeaveContingencyType;
+  horasReales?: number;
+}
+
+export interface AnnualYearOverrideData {
+  paramOverrides?: Partial<AnnualEditableParams>;
+  monthOverrides?: Record<number, Partial<AnnualMonthEditableFields>>;
+  updatedAt?: string;
+}
+
+export type AnnualCalendarState = Record<number, AnnualYearOverrideData>;
+

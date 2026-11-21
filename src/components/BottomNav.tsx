@@ -1,5 +1,5 @@
 import React from 'react';
-import { CreditCard, CalendarDays, Database, SlidersHorizontal } from 'lucide-react';
+import { Home, CreditCard, CalendarDays, CalendarRange, Database, SlidersHorizontal } from 'lucide-react';
 
 interface BottomNavProps {
   currentTab: string;
@@ -9,15 +9,17 @@ interface BottomNavProps {
 
 export const BottomNav: React.FC<BottomNavProps> = ({ currentTab, onSelectTab, extrasCount }) => {
   const tabs = [
+    { id: 'inicio', label: 'Menú', icon: Home },
+    { id: 'calendario', label: 'Turnos Día', icon: CalendarDays },
+    { id: 'anual', label: 'Cal. Anual', icon: CalendarRange },
     { id: 'nomina', label: 'Nómina', icon: CreditCard },
-    { id: 'calendario', label: 'Calendario', icon: CalendarDays },
     { id: 'turnos', label: 'Turnos BD', icon: Database },
     { id: 'extras', label: 'Extras', icon: SlidersHorizontal, badge: extrasCount },
   ];
 
   return (
     <nav className="fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur-md border-t border-slate-200 shadow-lg">
-      <div className="max-w-md mx-auto grid grid-cols-4 px-2 py-1.5">
+      <div className="max-w-xl mx-auto grid grid-cols-6 px-1 py-1.5">
         {tabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = currentTab === tab.id;
@@ -25,7 +27,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({ currentTab, onSelectTab, e
             <button
               key={tab.id}
               onClick={() => onSelectTab(tab.id)}
-              className={`flex flex-col items-center justify-center py-1 px-1 rounded-xl transition-all relative ${
+              className={`flex flex-col items-center justify-center py-1 px-0.5 rounded-xl transition-all relative cursor-pointer ${
                 isActive
                   ? 'text-blue-600 font-semibold'
                   : 'text-slate-500 hover:text-slate-800'
@@ -39,7 +41,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({ currentTab, onSelectTab, e
                   </span>
                 )}
               </div>
-              <span className="text-[11px] mt-1 tracking-tight">{tab.label}</span>
+              <span className="text-[10px] sm:text-[11px] mt-1 tracking-tight truncate max-w-full">{tab.label}</span>
             </button>
           );
         })}

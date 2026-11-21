@@ -10,7 +10,7 @@ import {
   MonthlySalaryEvolution,
   PayrollLineItem,
 } from '../types';
-import { getEffectiveYearRate, getOfficialConvenioExtraAmount } from '../data/convenioZaragoza';
+import { getEffectiveYearRate, getOfficialConvenioExtraAmount, isFTExtraName } from '../data/convenioZaragoza';
 import { ALL_INITIAL_SHIFTS } from '../data/defaultTurnos';
 
 function normalizeAssignmentDateStr(dateStr?: string): string {
@@ -432,7 +432,9 @@ export function calculateMonthlyPayroll(
 
   let totalWorkedHours = 0;
   let ordinaryShiftHours = 0;
+  let dailyExcessOver9hHours = 0;
   let holidayShiftHours = 0;
+  let ftShiftHours = 0;
   let totalNightHours = 0;
 
   let festivoPluses = 0;
@@ -592,9 +594,16 @@ export function calculateMonthlyPayroll(
   let totalLateFinishMinutes = 0;
 
   let explicitFestivasHours = 0;
+  let explicitFTHours = 0;
   let explicitComplementariasHours = 0;
   let generalExtrasTotal = 0;
   const generalExtrasItems: PayrollLineItem[] = [];
+  const pendingOrdinaryLateDetails: Array<{
+    date: string;
+    lateMinutes: number;
+    lateOrdinaryHours: number;
+    reason?: string;
+  }> = [];
 
   const isShiftInherentExtraName = (name: string) => {
     const l = name.toLowerCase();
@@ -721,6 +730,11 @@ export function calculateMonthlyPayroll(
             }
           : undefined;
 
+      const dayHasFTExtra = dayExtras.some((e) => isFTExtraName(e.name));
+      const hasWorkedShiftOnDay = Boolean(
+        shiftDef && shiftDef.code !== 'D' && shiftDef.code !== 'V' && shiftDef.code !== 'B'
+      );
+
       if (shiftDef && shiftDef.code !== 'D' && shiftDef.code !== 'V' && shiftDef.code !== 'B') {
         if (isPrevStretch) {
           prevMonthCutoffWorkedDays++;
@@ -735,22 +749,80 @@ export function calculateMonthlyPayroll(
           effectiveNightHours = calculateNightHours(assignment.customStartTime, assignment.customEndTime);
         }
 
-        totalWorkedHours += effectiveTotalHours;
-        totalNightHours += effectiveNightHours;
+        const lateMinsDay = assignment.lateFinishMinutes && assignment.lateFinishMinutes > 0
+          ? assignment.lateFinishMinutes
+          : 0;
+        const lateHoursDay = lateMinsDay / 60;
+        const dayTotalWorkedHours = effectiveTotalHours + lateHoursDay;
 
+        totalWorkedHours += dayTotalWorkedHours;
+        totalNightHours += effectiveNightHours;
+        if (lateMinsDay > 0) {
+          totalLateFinishMinutes += lateMinsDay;
+        }
+
+        const horaOrdinariaDay = yearRate.horaOrdinaria ?? 13.62;
         const isPaidHolidayDay = isHoliday || dayPlusFestivoQty > 0;
         if (isPaidHolidayDay) {
-          holidayShiftHours += effectiveTotalHours;
+          holidayShiftHours += dayTotalWorkedHours;
           if (effectiveTotalHours > 0) {
             pushValidExtraDetail({
               date: dateStr,
               name: `Horas festivas (${effectiveTotalHours.toFixed(2).replace('.', ',')} h)`,
-              amount: effectiveTotalHours * (yearRate.horaOrdinaria ?? 13.62),
-              notes: `Turno ${shiftDef.code} en festivo (excluidas de convenio)`,
+              amount: effectiveTotalHours * horaOrdinariaDay,
+              notes: `Turno ${shiftDef.code} en festivo (aparte del salario base)`,
+            });
+          }
+          if (lateMinsDay > 0) {
+            const durationFormatted = formatMinutesToHoursAndMinutes(lateMinsDay);
+            const reasonText = assignment.lateFinishReason ? ` (${assignment.lateFinishReason})` : '';
+            pushValidExtraDetail({
+              date: dateStr,
+              name: `Terminado más tarde en festivo: +${durationFormatted}${reasonText}`,
+              amount: lateHoursDay * horaOrdinariaDay,
+              notes: `Computado como horas festivas a ${horaOrdinariaDay.toFixed(2)} €/h`,
+            });
+          }
+        } else if (dayHasFTExtra) {
+          ftShiftHours += dayTotalWorkedHours;
+          if (dayTotalWorkedHours > 0) {
+            pushValidExtraDetail({
+              date: dateStr,
+              name: `Horas F/T (${dayTotalWorkedHours.toFixed(2).replace('.', ',')} h)`,
+              amount: dayTotalWorkedHours * horaOrdinariaDay,
+              notes: `Turno ${shiftDef.code}${lateMinsDay > 0 ? ` + ${formatMinutesToHoursAndMinutes(lateMinsDay)}` : ''} en día F/T (aparte del salario base)`,
             });
           }
         } else {
-          ordinaryShiftHours += effectiveTotalHours;
+          // Regla 9 horas diarias: hasta 9h computan como horas ordinarias de convenio; el exceso > 9h va directo a Horas Complementarias
+          const ordinaryForDay = Math.min(9, dayTotalWorkedHours);
+          const over9ForDay = Math.max(0, dayTotalWorkedHours - 9);
+          ordinaryShiftHours += ordinaryForDay;
+          dailyExcessOver9hHours += over9ForDay;
+
+          if (over9ForDay > 0) {
+            const over9Formatted = over9ForDay.toFixed(2).replace('.', ',');
+            const totalFormatted = dayTotalWorkedHours.toFixed(2).replace('.', ',');
+            pushValidExtraDetail({
+              date: dateStr,
+              name: `Exceso turno > 9h (${over9Formatted} h)`,
+              amount: over9ForDay * horaOrdinariaDay,
+              notes: `Turno ${shiftDef.code}${lateMinsDay > 0 ? ` + ${formatMinutesToHoursAndMinutes(lateMinsDay)}` : ''} (${totalFormatted} h): ${over9Formatted} h pasan a complementarias`,
+            });
+          }
+
+          if (lateMinsDay > 0) {
+            const latePaidInOver9h = Math.min(lateHoursDay, over9ForDay);
+            const lateOrdinaryHours = Math.max(0, lateHoursDay - latePaidInOver9h);
+            if (lateOrdinaryHours > 0) {
+              pendingOrdinaryLateDetails.push({
+                date: dateStr,
+                lateMinutes: Math.round(lateOrdinaryHours * 60),
+                lateOrdinaryHours,
+                reason: assignment.lateFinishReason,
+              });
+            }
+          }
         }
 
         if (effectiveNightHours > 0) {
@@ -962,10 +1034,34 @@ export function calculateMonthlyPayroll(
         });
       }
 
-      // Otros extras (Horas festivas, Complementarias, Dietas, Fuera de convenio) dentro del corte
+      // Otros extras (Horas festivas, F/T, Complementarias, Dietas, Fuera de convenio) dentro del corte
+      const isPaidHolidayDayForExtras = isHoliday || dayPlusFestivoQty > 0;
       for (const extra of dayExtras) {
         const lower = extra.name.toLowerCase();
         if (isShiftInherentExtraName(extra.name)) continue;
+
+        if (isFTExtraName(extra.name)) {
+          // Si hay un turno asignado en este día F/T, sus horas ya se computaron en ftShiftHours o holidayShiftHours
+          if (hasWorkedShiftOnDay) continue;
+          const h = extra.quantity !== undefined && extra.quantity > 0
+            ? extra.quantity
+            : (extra.amount > 0 ? parseFloat((extra.amount / (yearRate.horaOrdinaria || 13.62)).toFixed(2)) : 0);
+          if (h > 0) {
+            if (isPaidHolidayDayForExtras) {
+              explicitFestivasHours += h;
+            } else {
+              explicitFTHours += h;
+            }
+            const amt = parseFloat((h * (yearRate.horaOrdinaria ?? 13.62)).toFixed(2));
+            pushValidExtraDetail({
+              date: dateStr,
+              name: isPaidHolidayDayForExtras ? `Horas festivas (${h.toFixed(2).replace('.', ',')} h)` : `Horas F/T (${h.toFixed(2).replace('.', ',')} h)`,
+              amount: amt,
+              notes: extra.notes || 'Día marcado como F/T',
+            });
+          }
+          continue;
+        }
 
         const qty = extra.quantity !== undefined && extra.quantity > 0 ? extra.quantity : 1;
         const convenioUnitRate = getOfficialConvenioExtraAmount(extra.name, yearRate);
@@ -1015,10 +1111,11 @@ export function calculateMonthlyPayroll(
         });
       }
 
-      // Terminado más tarde dentro del período de corte
-      if (assignment.lateFinishMinutes && assignment.lateFinishMinutes > 0) {
+      // Terminado más tarde en días sin turno laboral asignado
+      if (!hasWorkedShiftOnDay && assignment.lateFinishMinutes && assignment.lateFinishMinutes > 0) {
         const isPaidHolidayDay = isHoliday || dayPlusFestivoQty > 0;
         const lateHoursDay = assignment.lateFinishMinutes / 60;
+        totalWorkedHours += lateHoursDay;
         const computedLateAmount = parseFloat(
           (lateHoursDay * (yearRate.horaOrdinaria ?? 13.62)).toFixed(2)
         );
@@ -1033,14 +1130,36 @@ export function calculateMonthlyPayroll(
             amount: computedLateAmount,
             notes: `Computado como horas festivas a ${(yearRate.horaOrdinaria ?? 13.62).toFixed(2)} €/h`,
           });
-        } else {
-          totalLateFinishMinutes += assignment.lateFinishMinutes;
+        } else if (dayHasFTExtra) {
+          ftShiftHours += lateHoursDay;
           pushValidExtraDetail({
             date: dateStr,
-            name: `Terminado más tarde: +${durationFormatted}${reasonText}`,
+            name: `Terminado más tarde en F/T: +${durationFormatted}${reasonText}`,
             amount: computedLateAmount,
-            notes: `Exceso de jornada compensado en bruto a ${(yearRate.horaOrdinaria ?? 13.62).toFixed(2)} €/h (Convenio)`,
+            notes: `Computado como horas F/T a ${(yearRate.horaOrdinaria ?? 13.62).toFixed(2)} €/h`,
           });
+        } else {
+          totalLateFinishMinutes += assignment.lateFinishMinutes;
+          const ordLate = Math.min(9, lateHoursDay);
+          const over9Late = Math.max(0, lateHoursDay - 9);
+          ordinaryShiftHours += ordLate;
+          dailyExcessOver9hHours += over9Late;
+          if (over9Late > 0) {
+            pushValidExtraDetail({
+              date: dateStr,
+              name: `Exceso > 9h: +${durationFormatted}${reasonText}`,
+              amount: parseFloat((over9Late * (yearRate.horaOrdinaria ?? 13.62)).toFixed(2)),
+              notes: `Exceso sobre 9h a complementarias`,
+            });
+          }
+          if (ordLate > 0) {
+            pendingOrdinaryLateDetails.push({
+              date: dateStr,
+              lateMinutes: Math.round(ordLate * 60),
+              lateOrdinaryHours: ordLate,
+              reason: assignment.lateFinishReason,
+            });
+          }
         }
       }
     }
@@ -1194,8 +1313,42 @@ export function calculateMonthlyPayroll(
           pendingNextMonthExtrasTotal += parseFloat((dayPuntualidadQty * (yearRate.plusPuntualidadDia ?? 12.00)).toFixed(2));
         }
 
+        const hasWorkingShiftPost = Boolean(
+          shiftDef && shiftDef.code !== 'D' && shiftDef.code !== 'V' && shiftDef.code !== 'B'
+        );
+        const hasFTPost = dayExtras.some((e) => isFTExtraName(e.name));
+        const isHolidayPost = Boolean(assignment.isHoliday) || dayPlusFestivoQty > 0;
+        let effectiveTotalHoursPost = 0;
+        if (hasWorkingShiftPost && shiftDef) {
+          const calcPost = computeShiftRateFromConvenio(shiftDef, yearRate, { isHoliday: isHolidayPost });
+          effectiveTotalHoursPost =
+            assignment.customStartTime && assignment.customEndTime
+              ? calculateTotalHours(assignment.customStartTime, assignment.customEndTime)
+              : calcPost.totalHours;
+          const latePostHrs = (assignment.lateFinishMinutes || 0) / 60;
+          const dayTotalPost = effectiveTotalHoursPost + latePostHrs;
+          if ((isHolidayPost || hasFTPost) && dayTotalPost > 0) {
+            pendingNextMonthExtrasCount++;
+            pendingNextMonthExtrasTotal += parseFloat((dayTotalPost * (yearRate.horaOrdinaria ?? 13.62)).toFixed(2));
+          } else if (dayTotalPost > 9) {
+            pendingNextMonthExtrasCount++;
+            pendingNextMonthExtrasTotal += parseFloat(((dayTotalPost - 9) * (yearRate.horaOrdinaria ?? 13.62)).toFixed(2));
+          }
+        }
+
         for (const extra of dayExtras) {
           if (isShiftInherentExtraName(extra.name)) continue;
+          if (isFTExtraName(extra.name)) {
+            if (hasWorkingShiftPost) continue;
+            const h = extra.quantity !== undefined && extra.quantity > 0
+              ? extra.quantity
+              : (extra.amount > 0 ? parseFloat((extra.amount / (yearRate.horaOrdinaria || 13.62)).toFixed(2)) : 0);
+            if (h > 0) {
+              pendingNextMonthExtrasCount++;
+              pendingNextMonthExtrasTotal += parseFloat((h * (yearRate.horaOrdinaria ?? 13.62)).toFixed(2));
+            }
+            continue;
+          }
           pendingNextMonthExtrasCount++;
           const qty = extra.quantity !== undefined && extra.quantity > 0 ? extra.quantity : 1;
           const convUnit = getOfficialConvenioExtraAmount(extra.name, yearRate);
@@ -1208,12 +1361,15 @@ export function calculateMonthlyPayroll(
               : extra.amount;
           pendingNextMonthExtrasTotal += amt;
         }
-        if (assignment.lateFinishMinutes && assignment.lateFinishMinutes > 0) {
-          pendingNextMonthExtrasCount++;
-          const lateAmt = parseFloat(
-            ((assignment.lateFinishMinutes / 60) * (yearRate.horaOrdinaria ?? 13.62)).toFixed(2)
-          );
-          pendingNextMonthExtrasTotal += lateAmt;
+        if (!hasWorkingShiftPost && assignment.lateFinishMinutes && assignment.lateFinishMinutes > 0) {
+          const latePostHrs = assignment.lateFinishMinutes / 60;
+          if (isHolidayPost || hasFTPost) {
+            pendingNextMonthExtrasCount++;
+            pendingNextMonthExtrasTotal += parseFloat((latePostHrs * (yearRate.horaOrdinaria ?? 13.62)).toFixed(2));
+          } else if (latePostHrs > 9) {
+            pendingNextMonthExtrasCount++;
+            pendingNextMonthExtrasTotal += parseFloat(((latePostHrs - 9) * (yearRate.horaOrdinaria ?? 13.62)).toFixed(2));
+          }
         }
       }
     });
@@ -1274,25 +1430,50 @@ export function calculateMonthlyPayroll(
   );
   const convenioMonthlyHoursTarget = monthlyTargetInfo.monthlyTargetHours;
 
-  // 5. Horas festivas (Convenio: horaOrdinaria) - Incluye jornadas en festivo marcado (no computan en convenio)
+  // 5. Horas festivas (Convenio: horaOrdinaria) - Jornadas en festivo marcado (aparte de salario base)
   const horaOrdinariaUnitRate = yearRate.horaOrdinaria ?? 13.62;
   const finalFestivasHours = Math.round((holidayShiftHours + explicitFestivasHours) * 100) / 100;
   const horasFestivasAmount = parseFloat(
     (finalFestivasHours * horaOrdinariaUnitRate).toFixed(2)
   );
 
-  // 6. Horas complementarias / exceso de jornada sobre Convenio (Convenio: horaOrdinaria)
-  const horasLateFinish = Math.round((totalLateFinishMinutes / 60) * 100) / 100;
-  const ordinaryConvenioHours = Math.round((ordinaryShiftHours + horasLateFinish) * 100) / 100;
-  const autoExcessOverConvenioHours = Math.max(
+  // 5b. Horas F/T (Fiesta / Trabajo) (Convenio: horaOrdinaria) - Aparte del salario base aunque al mismo precio
+  const finalFTHours = Math.round((ftShiftHours + explicitFTHours) * 100) / 100;
+  const horasFTAmount = parseFloat(
+    (finalFTHours * horaOrdinariaUnitRate).toFixed(2)
+  );
+
+  // 6. Horas complementarias: (Horas realizadas reales hasta 9h/día sin Festivos ni F/T - Horas teóricas) + exceso diario > 9h + manuales
+  // Si (realizadas - teóricas) < 0, no se generan complementarias mensuales (cobra salario base íntegro y se compensa en meses siguientes)
+  const ordinaryConvenioHours = Math.round(ordinaryShiftHours * 100) / 100;
+  const monthlyExcessOverTheoretical = Math.max(
     0,
     Math.round((ordinaryConvenioHours - convenioMonthlyHoursTarget) * 100) / 100
   );
+  const roundedDailyOver9h = Math.round(dailyExcessOver9hHours * 100) / 100;
   const finalComplementariasHours =
-    Math.round((Math.max(autoExcessOverConvenioHours, horasLateFinish) + explicitComplementariasHours) * 100) / 100;
+    Math.round((monthlyExcessOverTheoretical + roundedDailyOver9h + explicitComplementariasHours) * 100) / 100;
   const importeHorasExtra = parseFloat(
     (finalComplementariasHours * horaOrdinariaUnitRate).toFixed(2)
   );
+
+  // Desglosar prolongaciones ordinarias (<=9h): solo devengan importe en desglose si hay exceso mensual sobre las teóricas
+  if (pendingOrdinaryLateDetails.length > 0 && monthlyExcessOverTheoretical > 0) {
+    let remainingMonthlyExcess = monthlyExcessOverTheoretical;
+    for (const item of pendingOrdinaryLateDetails) {
+      if (remainingMonthlyExcess <= 0) break;
+      const paidHours = Math.min(item.lateOrdinaryHours, remainingMonthlyExcess);
+      remainingMonthlyExcess = Math.max(0, remainingMonthlyExcess - paidHours);
+      const durationFormatted = formatMinutesToHoursAndMinutes(item.lateMinutes);
+      const reasonText = item.reason ? ` (${item.reason})` : '';
+      pushValidExtraDetail({
+        date: item.date,
+        name: `Terminado más tarde: +${durationFormatted}${reasonText}`,
+        amount: paidHours * horaOrdinariaUnitRate,
+        notes: `Computado en exceso mensual (${paidHours.toFixed(2).replace('.', ',')} h a H. Complementarias)`,
+      });
+    }
+  }
 
   // 7. Plus nocturnidad (Convenio: plusNocturnidadHora)
   const roundedNightHours = Math.round(totalNightHours * 100) / 100;
@@ -1394,6 +1575,7 @@ export function calculateMonthlyPayroll(
       effectiveNocturnidad +
       medioPlusConductorAmount +
       horasFestivasAmount +
+      horasFTAmount +
       plusRetenAmount +
       plusPuntualidadAmount +
       plusConductorPerceptor +
@@ -1502,6 +1684,20 @@ export function calculateMonthlyPayroll(
       unit: 'horas',
       unitPrice: horaOrdinariaUnitRate,
       amount: horasFestivasAmount,
+      category: 'horas',
+      isOfficial: true,
+    });
+  }
+
+  if (finalFTHours > 0 && horasFTAmount > 0) {
+    lines.push({
+      id: 'horas-ft',
+      name: 'Horas F/T (Fiesta / Trabajo)',
+      quantity: finalFTHours,
+      quantityLabel: `${finalFTHours.toFixed(2).replace('.', ',')}`,
+      unit: 'horas',
+      unitPrice: horaOrdinariaUnitRate,
+      amount: horasFTAmount,
       category: 'horas',
       isOfficial: true,
     });
@@ -1688,7 +1884,7 @@ export function calculateMonthlyPayroll(
   );
 
   const computedTotalWorkedHours =
-    Math.round((ordinaryConvenioHours + finalFestivasHours + explicitComplementariasHours) * 100) / 100;
+    Math.round((ordinaryConvenioHours + roundedDailyOver9h + finalFestivasHours + finalFTHours + explicitComplementariasHours) * 100) / 100;
 
   return {
     monthKey,
@@ -1717,7 +1913,10 @@ export function calculateMonthlyPayroll(
     plusFestivoCount: holidayDays,
     quebrantoCount: finalQuebrantoCount,
     horasComplementarias: finalComplementariasHours,
+    horasExcesoDiario9h: roundedDailyOver9h,
+    horasExcesoMensual: monthlyExcessOverTheoretical,
     horasFestivas: finalFestivasHours,
+    horasFT: finalFTHours,
     plusRetenCount: finalRetenCount,
     plusConductorCount: finalPlusConductorCount,
     medioPlusConductorCount: finalMedioPlusCount,
@@ -1785,6 +1984,7 @@ export function calculateMonthlyPayroll(
     plusNocturnidad: effectiveNocturnidad,
     plusFestivos: parseFloat(festivoPluses.toFixed(2)),
     horasFestivasAmount: parseFloat(horasFestivasAmount.toFixed(2)),
+    horasFTAmount: parseFloat(horasFTAmount.toFixed(2)),
     plusRetenAmount: parseFloat(plusRetenAmount.toFixed(2)),
     plusPuntualidadAmount: parseFloat(plusPuntualidadAmount.toFixed(2)),
     prorrataPagasExtra,

@@ -54,6 +54,17 @@ export function getEffectiveYearRate(convenio: ConvenioInfo | undefined, year: n
   return { ...default2026, year };
 }
 
+export function isFTExtraName(name?: string): boolean {
+  const lower = (name || '').toLowerCase().trim();
+  if (!lower) return false;
+  return (
+    /(^|[\s(/\-])f\/t($|[\s)/\-])/.test(lower) ||
+    lower.includes('fiesta / trabajo') ||
+    lower.includes('fiesta/trabajo') ||
+    lower.includes('fiesta o trabajo')
+  );
+}
+
 /**
  * Returns the live gross Convenio amount for official Convenio-linked extras so UI
  * and payroll calculation always obey the uploaded Convenio table.
@@ -81,7 +92,7 @@ export function getOfficialConvenioExtraAmount(name: string, yearRate: ConvenioY
   if (lower.includes('puntualidad') || lower.includes('inicio temprano')) {
     return yearRate.plusPuntualidadDia ?? 12.00;
   }
-  if (lower.includes('festiva') || lower.includes('complementaria')) {
+  if (lower.includes('festiva') || lower.includes('complementaria') || isFTExtraName(name)) {
     return yearRate.horaOrdinaria ?? 13.62;
   }
   return null;

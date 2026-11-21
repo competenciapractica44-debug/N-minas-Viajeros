@@ -34,6 +34,7 @@ const MONTH_NAMES = [
 
 export const Header: React.FC<HeaderProps> = ({
   currentTab,
+  onSelectTab,
   selectedMonth,
   selectedYear,
   onChangeMonth,
@@ -70,16 +71,21 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200">
       <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
-        {/* Brand Zone */}
-        <div className="flex items-center gap-3">
+        {/* Brand Zone - Click returns to Menú Principal */}
+        <button
+          type="button"
+          onClick={() => onSelectTab('inicio')}
+          title="Volver al Menú Principal"
+          className="flex items-center gap-3 text-left group cursor-pointer focus:outline-none"
+        >
           <img
             src="/pwa-192x192.png"
             alt="Icono RutaNómina"
-            className="w-9 h-9 rounded-xl shadow-sm object-cover shrink-0 border border-slate-200"
+            className="w-9 h-9 rounded-xl shadow-sm object-cover shrink-0 border border-slate-200 group-hover:ring-2 group-hover:ring-blue-500/30 transition"
           />
           <div>
             <div className="flex items-center gap-2">
-              <span className="font-bold text-slate-900 tracking-tight text-base sm:text-lg">
+              <span className="font-bold text-slate-900 tracking-tight text-base sm:text-lg group-hover:text-blue-700 transition-colors">
                 RutaNómina
               </span>
               <span className="hidden sm:inline-block text-xs text-slate-400 font-medium">·</span>
@@ -88,13 +94,15 @@ export const Header: React.FC<HeaderProps> = ({
               </span>
             </div>
             <p className="text-[11px] text-slate-400 -mt-0.5 capitalize">
+              {currentTab === 'inicio' && 'Menú Principal'}
               {currentTab === 'nomina' && 'Cálculo y Liquidación'}
               {currentTab === 'calendario' && 'Cuadrante y Partes de Trabajo'}
+              {currentTab === 'anual' && 'Calendario Anual y Bolsa de Horas'}
               {currentTab === 'turnos' && 'Base de Datos de Turnos'}
               {currentTab === 'extras' && 'Pluses Fuera de Convenio'}
             </p>
           </div>
-        </div>
+        </button>
 
         {/* Center / Month Selector */}
         <div className="flex items-center gap-2">

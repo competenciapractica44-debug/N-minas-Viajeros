@@ -1,0 +1,919 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cuadro Numérico Editable Nómina y Bolsa de Horas</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+    <style>
+        html {
+            scroll-behavior: smooth;
+        }
+        input[type="number"]::-webkit-inner-spin-button,
+        input[type="number"]::-webkit-outer-spin-button {
+            opacity: 0.7;
+        }
+    </style>
+</head>
+<body class="bg-slate-100 text-slate-800 font-sans antialiased py-6 px-3 sm:px-6 lg:px-8">
+
+    <div class="max-w-7xl mx-auto space-y-6">
+
+        <!-- Panel de Configuración del Convenio y Calendario -->
+        <div class="bg-white rounded-xl shadow-md border border-slate-200 p-5 sm:p-6">
+            <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 pb-5 border-b border-slate-200">
+                <div>
+                    <div class="inline-flex items-center space-x-2 text-xs font-extrabold uppercase tracking-wider text-blue-700 bg-blue-50 px-3 py-1 rounded-full border border-blue-200 mb-2">
+                        <span>Convenio Transporte Viajeros</span>
+                        <span class="text-slate-400">·</span>
+                        <span class="text-slate-600">Parametrización 2026 / 2027+</span>
+                    </div>
+                    <h1 class="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
+                        Configuración de Conceptos del Convenio y Calendario
+                    </h1>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-2.5">
+                    <button type="button" id="btnReset2026" class="px-3.5 py-2 rounded-lg text-xs sm:text-sm font-bold bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 transition cursor-pointer">
+                        ↺ Valores Base 2026
+                    </button>
+                    <button type="button" id="btnVacacionesCero" class="px-3.5 py-2 rounded-lg text-xs sm:text-sm font-bold bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 transition cursor-pointer">
+                        ✕ Vacaciones a 0
+                    </button>
+                    <button type="button" id="btnDescargarExcel" class="px-4 py-2 rounded-lg text-xs sm:text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition cursor-pointer flex items-center space-x-1.5">
+                        <span>📊</span>
+                        <span>Descargar Excel (.xlsx)</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Fila principal de parámetros -->
+            <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mt-5">
+                <div>
+                    <label for="paramAnio" class="block text-[11px] font-extrabold uppercase tracking-wider text-slate-600 mb-1">Año Ejercicio</label>
+                    <input type="number" id="paramAnio" value="2026" min="2020" max="2040" step="1" class="w-full rounded-lg border border-slate-300 bg-slate-50 focus:bg-white focus:border-blue-600 focus:ring-2 focus:ring-blue-500/20 px-3 py-2 text-sm font-bold text-slate-900">
+                </div>
+
+                <div>
+                    <label for="paramHorasAnuales" class="block text-[11px] font-extrabold uppercase tracking-wider text-slate-600 mb-1">Horas 100% Año</label>
+                    <input type="number" id="paramHorasAnuales" value="1776" min="500" max="2500" step="1" class="w-full rounded-lg border border-slate-300 bg-slate-50 focus:bg-white focus:border-blue-600 focus:ring-2 focus:ring-blue-500/20 px-3 py-2 text-sm font-bold text-slate-900">
+                </div>
+
+                <div>
+                    <label for="paramJornadaPct" class="block text-[11px] font-extrabold uppercase tracking-wider text-blue-700 mb-1">% Jornada</label>
+                    <input type="number" id="paramJornadaPct" value="100" min="10" max="100" step="1" class="w-full rounded-lg border border-blue-300 bg-blue-50/50 focus:bg-white focus:border-blue-600 focus:ring-2 focus:ring-blue-500/20 px-3 py-2 text-sm font-extrabold text-blue-950">
+                    <div id="infoJornadaPct" class="text-[11px] font-semibold text-blue-700 mt-1">Efectiva: 1.776,00 h/año</div>
+                </div>
+
+                <div>
+                    <label for="paramVacReg" class="block text-[11px] font-extrabold uppercase tracking-wider text-slate-600 mb-1">Días Vac. Convenio</label>
+                    <input type="number" id="paramVacReg" value="31" min="0" max="60" step="1" class="w-full rounded-lg border border-slate-300 bg-slate-50 focus:bg-white focus:border-blue-600 focus:ring-2 focus:ring-blue-500/20 px-3 py-2 text-sm font-bold text-slate-900">
+                </div>
+
+                <div>
+                    <label for="paramBaseMes" class="block text-[11px] font-extrabold uppercase tracking-wider text-slate-600 mb-1">Base 100% (€/Mes)</label>
+                    <input type="number" id="paramBaseMes" value="1595.40" min="0" max="20000" step="0.01" class="w-full rounded-lg border border-slate-300 bg-slate-50 focus:bg-white focus:border-blue-600 focus:ring-2 focus:ring-blue-500/20 px-3 py-2 text-sm font-bold text-slate-900">
+                    <div id="infoBaseProp" class="text-[11px] font-semibold text-slate-500 mt-1">Aplicado: 1.595,40 €/mes</div>
+                </div>
+
+                <div>
+                    <label for="paramCompMes" class="block text-[11px] font-extrabold uppercase tracking-wider text-slate-600 mb-1">Comp. 100% (€)</label>
+                    <input type="number" id="paramCompMes" value="0" min="0" max="10000" step="0.01" class="w-full rounded-lg border border-slate-300 bg-slate-50 focus:bg-white focus:border-blue-600 focus:ring-2 focus:ring-blue-500/20 px-3 py-2 text-sm font-bold text-slate-900">
+                    <div id="infoCompProp" class="text-[11px] font-semibold text-slate-500 mt-1">Aplicado: 0,00 €/mes</div>
+                </div>
+            </div>
+
+            <!-- Segunda fila de parámetros -->
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-4 pt-4 border-t border-slate-100">
+                <div>
+                    <label for="paramNumPagas" class="block text-[11px] font-extrabold uppercase tracking-wider text-slate-600 mb-1">Nº Pagas Anuales</label>
+                    <input type="number" id="paramNumPagas" value="15" min="12" max="18" step="1" class="w-full rounded-lg border border-slate-300 bg-slate-50 focus:bg-white focus:border-blue-600 focus:ring-2 focus:ring-blue-500/20 px-3 py-2 text-sm font-bold text-slate-900">
+                </div>
+
+                <div>
+                    <label for="paramModoExtras" class="block text-[11px] font-extrabold uppercase tracking-wider text-slate-600 mb-1">Abono Pagas Extras</label>
+                    <select id="paramModoExtras" class="w-full rounded-lg border border-slate-300 bg-slate-50 focus:bg-white focus:border-blue-600 focus:ring-2 focus:ring-blue-500/20 px-3 py-2 text-sm font-bold text-slate-900">
+                        <option value="prorrateadas" selected>Prorrateadas (12 meses)</option>
+                        <option value="integras">Íntegras (Mar, Jul, Dic)</option>
+                        <option value="mixta_marzo_prorr">2 Íntegras + Marzo Prorr.</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label for="paramPlusVacDia" class="block text-[11px] font-extrabold uppercase tracking-wider text-amber-800 mb-1">Plus Vac. 100% (€/D)</label>
+                    <input type="number" id="paramPlusVacDia" value="10.00" min="0" max="500" step="0.01" class="w-full rounded-lg border border-amber-300 bg-amber-50/50 focus:bg-white focus:border-amber-600 focus:ring-2 focus:ring-amber-500/20 px-3 py-2 text-sm font-bold text-slate-900">
+                    <div id="infoPlusVacProp" class="text-[11px] font-semibold text-amber-700 mt-1">Aplicado: 10,00 €/día</div>
+                </div>
+
+                <div>
+                    <label for="paramRepartoBolsa" class="block text-[11px] font-extrabold uppercase tracking-wider text-cyan-800 mb-1">Reparto Bolsa Horas</label>
+                    <select id="paramRepartoBolsa" class="w-full rounded-lg border border-cyan-300 bg-cyan-50/50 focus:bg-white focus:border-cyan-600 focus:ring-2 focus:ring-cyan-500/20 px-3 py-2 text-sm font-bold text-slate-900">
+                        <option value="lineal" selected>Cuota Fija Mensual</option>
+                        <option value="equilibrado">Equilibrado (Uniforme)</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Barra de estado y métricas resumen -->
+            <div class="mt-5 pt-4 border-t border-slate-200 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+                <div id="badgeVacaciones" class="inline-flex items-center px-3.5 py-2 rounded-lg text-xs sm:text-sm font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                    ✓ Vacaciones cuadradas: 31 / 31 días naturales (23 laborables L–V)
+                </div>
+
+                <div class="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs sm:text-sm text-slate-700">
+                    <span>Jornada: <strong id="resJornadaTexto" class="text-slate-950">1776,00 h</strong></span>
+                    <span>Cuota base: <strong id="resCuotaTexto" class="text-slate-950">148,00 h/mes</strong></span>
+                    <span>Plus vac. efectivo: <strong id="resPlusEfectivo" class="text-amber-700">10,00 €/día</strong></span>
+                    <span>Media diaria: <strong id="resMediaDiaria" class="text-slate-950">7,8933 h/día</strong></span>
+                    <span>Bruto fijo anual: <strong id="resBrutoFijoAnual" class="text-blue-900">23.931,00 €</strong></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Cuadro Numérico Completo de Liquidación -->
+        <div class="bg-white rounded-xl shadow-md border border-slate-200 overflow-hidden">
+            <div class="p-5 sm:p-6 bg-slate-900 text-white flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                    <h2 id="tituloTablaAnual" class="text-lg sm:text-xl font-extrabold tracking-tight">
+                        Cuadro Numérico Completo de Liquidación 2026
+                    </h2>
+                    <p id="subtituloTablaAnual" class="text-xs sm:text-sm text-slate-300 mt-0.5">
+                        Edita días hábiles, vacaciones (Nat / L-V) y bajas IT (Nat / L-V / Tipo) directamente en cada fila
+                    </p>
+                </div>
+                <span id="badgeValorHora" class="inline-block bg-cyan-500/20 border border-cyan-400/40 text-cyan-200 text-xs sm:text-sm font-bold px-3.5 py-1.5 rounded-full self-start sm:self-auto">
+                    Valor hora tabla: 13,47 €/h
+                </span>
+            </div>
+
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-slate-200 text-xs sm:text-sm">
+                    <thead class="bg-slate-100 text-slate-700 font-bold uppercase text-[11px]">
+                        <tr>
+                            <th id="thMes" class="px-3 py-3 text-left whitespace-nowrap">Mes 2026</th>
+                            <th class="px-2 py-3 text-center whitespace-nowrap">Háb. Cal.</th>
+                            <th class="px-2 py-3 text-center whitespace-nowrap">Vacac. (Nat / L-V)</th>
+                            <th class="px-2 py-3 text-center whitespace-nowrap">Baja IT (Nat / L-V / Tipo)</th>
+                            <th class="px-2 py-3 text-center whitespace-nowrap">Días Activos</th>
+                            <th class="px-3 py-3 text-right whitespace-nowrap">Horas Reales</th>
+                            <th class="px-3 py-3 text-right whitespace-nowrap">Cuota Fija</th>
+                            <th class="px-3 py-3 text-right whitespace-nowrap">Saldo Mes</th>
+                            <th class="px-3 py-3 text-right whitespace-nowrap">Bolsa Acum.</th>
+                            <th class="px-3 py-3 text-right whitespace-nowrap">Fijo Prorr.</th>
+                            <th class="px-3 py-3 text-right whitespace-nowrap">Plus Vac.</th>
+                            <th class="px-3 py-3 text-right whitespace-nowrap bg-blue-50 text-blue-950">Total Bruto</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tbodyLiquidacion" class="divide-y divide-slate-200 font-medium"></tbody>
+                    <tfoot id="tfootLiquidacion" class="bg-blue-950 text-white font-extrabold text-xs sm:text-sm"></tfoot>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Aviso no bloqueante en pantalla -->
+    <div id="toastAviso" class="fixed bottom-5 right-5 z-50 hidden max-w-sm rounded-xl bg-slate-900 text-white px-4 py-3 text-xs sm:text-sm font-semibold shadow-xl border border-slate-700"></div>
+
+    <script>
+        // Datos base del calendario 2026 y vacaciones iniciales (31 días naturales / 23 laborables L-V)
+        const MESES_BASE = [
+            { mes: 'Enero',      habilesCal: 19, vacNat: 0, vacLab: 0, bajaNat: 0, bajaLab: 0, tipoBaja: 'comun', extraMes: false, extraJulDic: false },
+            { mes: 'Febrero',    habilesCal: 20, vacNat: 7, vacLab: 5, bajaNat: 0, bajaLab: 0, tipoBaja: 'comun', extraMes: false, extraJulDic: false },
+            { mes: 'Marzo',      habilesCal: 21, vacNat: 0, vacLab: 0, bajaNat: 0, bajaLab: 0, tipoBaja: 'comun', extraMes: true,  extraJulDic: false },
+            { mes: 'Abril',      habilesCal: 19, vacNat: 7, vacLab: 5, bajaNat: 0, bajaLab: 0, tipoBaja: 'comun', extraMes: false, extraJulDic: false },
+            { mes: 'Mayo',       habilesCal: 20, vacNat: 0, vacLab: 0, bajaNat: 0, bajaLab: 0, tipoBaja: 'comun', extraMes: false, extraJulDic: false },
+            { mes: 'Junio',      habilesCal: 22, vacNat: 0, vacLab: 0, bajaNat: 0, bajaLab: 0, tipoBaja: 'comun', extraMes: false, extraJulDic: false },
+            { mes: 'Julio',      habilesCal: 23, vacNat: 7, vacLab: 5, bajaNat: 0, bajaLab: 0, tipoBaja: 'comun', extraMes: false, extraJulDic: true  },
+            { mes: 'Agosto',     habilesCal: 21, vacNat: 0, vacLab: 0, bajaNat: 0, bajaLab: 0, tipoBaja: 'comun', extraMes: false, extraJulDic: false },
+            { mes: 'Septiembre', habilesCal: 22, vacNat: 7, vacLab: 5, bajaNat: 0, bajaLab: 0, tipoBaja: 'comun', extraMes: false, extraJulDic: false },
+            { mes: 'Octubre',    habilesCal: 21, vacNat: 0, vacLab: 0, bajaNat: 0, bajaLab: 0, tipoBaja: 'comun', extraMes: false, extraJulDic: false },
+            { mes: 'Noviembre',  habilesCal: 20, vacNat: 3, vacLab: 3, bajaNat: 0, bajaLab: 0, tipoBaja: 'comun', extraMes: false, extraJulDic: false },
+            { mes: 'Diciembre',  habilesCal: 20, vacNat: 0, vacLab: 0, bajaNat: 0, bajaLab: 0, tipoBaja: 'comun', extraMes: false, extraJulDic: true  }
+        ];
+
+        let estadoMeses = MESES_BASE.map((m, i) => ({ ...m, idx: i }));
+
+        function mostrarToast(mensaje) {
+            const el = document.getElementById('toastAviso');
+            if (!el) return;
+            el.textContent = mensaje;
+            el.classList.remove('hidden');
+            clearTimeout(window._toastTimer);
+            window._toastTimer = setTimeout(() => {
+                el.classList.add('hidden');
+            }, 3400);
+        }
+
+        function formatEuro(valor) {
+            const num = Number.isFinite(valor) ? valor : 0;
+            return num.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+        }
+
+        function formatHoras(valor, conSigno = false) {
+            const num = Number.isFinite(valor) ? valor : 0;
+            const absStr = Math.abs(num).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' h';
+            if (conSigno) {
+                if (num > 0.004) return '+' + absStr;
+                if (num < -0.004) return '−' + absStr;
+                return '0,00 h';
+            }
+            return (num < 0 ? '−' : '') + absStr;
+        }
+
+        function leerParametros() {
+            const anio = parseInt(document.getElementById('paramAnio').value, 10) || 2026;
+            const horasAnuales100 = Math.max(1, parseFloat(document.getElementById('paramHorasAnuales').value) || 1776);
+            const jornadaPct = Math.min(100, Math.max(1, parseFloat(document.getElementById('paramJornadaPct').value) || 100));
+            const vacReglamentarias = Math.max(0, parseInt(document.getElementById('paramVacReg').value, 10) || 0);
+            const baseMes100 = Math.max(0, parseFloat(document.getElementById('paramBaseMes').value) || 0);
+            const compMes100 = Math.max(0, parseFloat(document.getElementById('paramCompMes').value) || 0);
+            const numPagas = Math.max(12, parseInt(document.getElementById('paramNumPagas').value, 10) || 15);
+            const modoExtras = document.getElementById('paramModoExtras').value || 'prorrateadas';
+            const plusVacDia100 = Math.max(0, parseFloat(document.getElementById('paramPlusVacDia').value) || 0);
+            const repartoBolsa = document.getElementById('paramRepartoBolsa').value || 'lineal';
+
+            return {
+                anio,
+                horasAnuales100,
+                jornadaPct,
+                factorJornada: jornadaPct / 100,
+                vacReglamentarias,
+                baseMes100,
+                compMes100,
+                numPagas,
+                modoExtras,
+                plusVacDia100,
+                repartoBolsa
+            };
+        }
+
+        function calcularLiquidacion() {
+            const p = leerParametros();
+            const jornadaAnualEfectiva = p.horasAnuales100 * p.factorJornada;
+            const cuotaFijaMes = jornadaAnualEfectiva / 12;
+
+            const baseMensualEfectiva = p.baseMes100 * p.factorJornada;
+            const compMensualEfectiva = p.compMes100 * p.factorJornada;
+            const sumaBaseCompMes = baseMensualEfectiva + compMensualEfectiva;
+            const plusVacDiaEfectivo = p.plusVacDia100 * p.factorJornada;
+
+            const brutoFijoAnual = sumaBaseCompMes * p.numPagas;
+            const valorHoraTabla = jornadaAnualEfectiva > 0 ? brutoFijoAnual / jornadaAnualEfectiva : 0;
+            const baseRegDiaria = brutoFijoAnual / 360;
+
+            // Totales previos de días para cálculo de media diaria de cómputo
+            let totalHabilesCal = 0;
+            let totalVacNat = 0;
+            let totalVacLab = 0;
+            let totalBajaNat = 0;
+            let totalBajaLab = 0;
+            let totalDiasActivos = 0;
+
+            const prelim = estadoMeses.map((m) => {
+                const habilesCal = Math.max(0, parseInt(m.habilesCal, 10) || 0);
+                const vacNat = Math.max(0, parseInt(m.vacNat, 10) || 0);
+                const vacLab = Math.max(0, parseInt(m.vacLab, 10) || 0);
+                const bajaNat = Math.max(0, parseInt(m.bajaNat, 10) || 0);
+                const bajaLab = Math.max(0, parseInt(m.bajaLab, 10) || 0);
+                const diasActivos = Math.max(0, habilesCal - vacLab - bajaLab);
+
+                totalHabilesCal += habilesCal;
+                totalVacNat += vacNat;
+                totalVacLab += vacLab;
+                totalBajaNat += bajaNat;
+                totalBajaLab += bajaLab;
+                totalDiasActivos += diasActivos;
+
+                return {
+                    ...m,
+                    habilesCal,
+                    vacNat,
+                    vacLab,
+                    bajaNat,
+                    bajaLab,
+                    diasActivos
+                };
+            });
+
+            const totalDiasComputo = Math.max(1, totalDiasActivos + totalBajaLab);
+            const horasPorDiaActivo = jornadaAnualEfectiva / totalDiasComputo;
+
+            let bolsaAcumulada = 0;
+            let sumaHorasReales = 0;
+            let sumaHorasComputo = 0;
+            let sumaCuotaFija = 0;
+            let sumaSaldoMes = 0;
+            let sumaFijo = 0;
+            let sumaPlusVac = 0;
+            let sumaTotalBruto = 0;
+
+            let rachaBajaDias = 0;
+            let ultimoTipoBaja = null;
+
+            const filas = prelim.map((m) => {
+                const horasReales = m.diasActivos * horasPorDiaActivo;
+                const horasJustificadasIT = m.bajaLab * horasPorDiaActivo;
+                const horasComputoTotal = horasReales + horasJustificadasIT;
+
+                // Cuota de referencia del mes (lineal o equilibrada por días activos + IT)
+                const cuotaMes = p.repartoBolsa === 'equilibrado'
+                    ? (m.diasActivos + m.bajaLab) * horasPorDiaActivo
+                    : cuotaFijaMes;
+
+                const saldoMes = horasComputoTotal - cuotaMes;
+                bolsaAcumulada += saldoMes;
+
+                // Cálculo económico mensual (fijo + extras + prestación IT por tramos)
+                const factorAlta = Math.max(0, (30 - m.bajaNat) / 30);
+                let fijoMes = 0;
+
+                if (p.modoExtras === 'prorrateadas') {
+                    fijoMes = (brutoFijoAnual / 12) * factorAlta;
+                } else if (p.modoExtras === 'integras') {
+                    fijoMes = sumaBaseCompMes * factorAlta;
+                    if (m.extraMes && p.numPagas >= 13) {
+                        fijoMes += (sumaBaseCompMes / 12) * factorAlta;
+                    }
+                    if (m.extraJulDic && p.numPagas > 13) {
+                        const extrasRestantes = Math.max(0, p.numPagas - 13);
+                        fijoMes += (sumaBaseCompMes * extrasRestantes) / 2;
+                    }
+                } else if (p.modoExtras === 'mixta_marzo_prorr') {
+                    const extraMarzoProrr = p.numPagas >= 13 ? (sumaBaseCompMes / 12) : 0;
+                    fijoMes = (sumaBaseCompMes + extraMarzoProrr) * factorAlta;
+                    if (m.extraJulDic && p.numPagas > 13) {
+                        const extrasRestantes = Math.max(0, p.numPagas - 13);
+                        fijoMes += (sumaBaseCompMes * extrasRestantes) / 2;
+                    }
+                }
+
+                // Prestación económica por Incapacidad Temporal según días y contingencia del mes
+                let prestacionIT = 0;
+                let detalleIT = '';
+                if (m.bajaNat > 0) {
+                    if (m.tipoBaja === 'accidente_100') {
+                        prestacionIT = m.bajaNat * baseRegDiaria;
+                        detalleIT = `IT 100% (${m.bajaNat}d)`;
+                        rachaBajaDias = 0;
+                        ultimoTipoBaja = null;
+                    } else if (m.tipoBaja === 'accidente_75') {
+                        prestacionIT = m.bajaNat * baseRegDiaria * 0.75;
+                        detalleIT = `IT 75% (${m.bajaNat}d)`;
+                        rachaBajaDias = 0;
+                        ultimoTipoBaja = null;
+                    } else {
+                        // Enfermedad común: encadena días consecutivos si continúa la baja común del mes anterior
+                        const inicioAcum = (ultimoTipoBaja === 'comun') ? rachaBajaDias : 0;
+                        const finAcum = inicioAcum + m.bajaNat;
+
+                        let d60 = 0;
+                        let d75 = 0;
+                        for (let d = inicioAcum + 1; d <= finAcum; d++) {
+                            if (d >= 4 && d <= 20) d60++;
+                            else if (d >= 21) d75++;
+                        }
+                        prestacionIT = baseRegDiaria * (0.60 * d60 + 0.75 * d75);
+                        detalleIT = `IT Común: ${d60}d@60% · ${d75}d@75%`;
+                        rachaBajaDias = finAcum;
+                        ultimoTipoBaja = 'comun';
+                    }
+                } else {
+                    rachaBajaDias = 0;
+                    ultimoTipoBaja = null;
+                }
+
+                fijoMes += prestacionIT;
+                const plusVacMes = m.vacNat * plusVacDiaEfectivo;
+                const totalBrutoMes = fijoMes + plusVacMes;
+
+                sumaHorasReales += horasReales;
+                sumaHorasComputo += horasComputoTotal;
+                sumaCuotaFija += cuotaMes;
+                sumaSaldoMes += saldoMes;
+                sumaFijo += fijoMes;
+                sumaPlusVac += plusVacMes;
+                sumaTotalBruto += totalBrutoMes;
+
+                return {
+                    ...m,
+                    horasReales,
+                    horasComputoTotal,
+                    cuotaMes,
+                    saldoMes,
+                    bolsaAcumulada,
+                    fijoMes,
+                    plusVacMes,
+                    totalBrutoMes,
+                    detalleIT
+                };
+            });
+
+            return {
+                p,
+                jornadaAnualEfectiva,
+                cuotaFijaMes,
+                baseMensualEfectiva,
+                compMensualEfectiva,
+                plusVacDiaEfectivo,
+                brutoFijoAnual,
+                valorHoraTabla,
+                horasPorDiaActivo,
+                totalHabilesCal,
+                totalVacNat,
+                totalVacLab,
+                totalBajaNat,
+                totalBajaLab,
+                totalDiasActivos,
+                sumaHorasReales,
+                sumaHorasComputo,
+                sumaCuotaFija,
+                sumaSaldoMes,
+                sumaFijo,
+                sumaPlusVac,
+                sumaTotalBruto,
+                filas
+            };
+        }
+
+        function renderizarTodo() {
+            const res = calcularLiquidacion();
+            const { p } = res;
+
+            // Actualizar textos proporcionales al % de jornada
+            document.getElementById('infoJornadaPct').textContent = `Efectiva: ${formatHoras(res.jornadaAnualEfectiva)}/año`;
+            document.getElementById('infoBaseProp').textContent = `Aplicado: ${formatEuro(res.baseMensualEfectiva)}/mes`;
+            document.getElementById('infoCompProp').textContent = `Aplicado: ${formatEuro(res.compMensualEfectiva)}/mes`;
+            document.getElementById('infoPlusVacProp').textContent = `Aplicado: ${formatEuro(res.plusVacDiaEfectivo)}/día`;
+
+            // Actualizar barra de resumen
+            document.getElementById('resJornadaTexto').textContent = formatHoras(res.jornadaAnualEfectiva);
+            document.getElementById('resCuotaTexto').textContent = formatHoras(res.cuotaFijaMes) + '/mes';
+            document.getElementById('resPlusEfectivo').textContent = formatEuro(res.plusVacDiaEfectivo) + '/día';
+            document.getElementById('resMediaDiaria').textContent = res.horasPorDiaActivo.toLocaleString('es-ES', { minimumFractionDigits: 4, maximumFractionDigits: 4 }) + ' h/día';
+            document.getElementById('resBrutoFijoAnual').textContent = formatEuro(res.brutoFijoAnual);
+
+            // Estado de vacaciones reglamentarias
+            const badgeVac = document.getElementById('badgeVacaciones');
+            const difVac = p.vacReglamentarias - res.totalVacNat;
+            if (difVac === 0) {
+                badgeVac.className = 'inline-flex items-center px-3.5 py-2 rounded-lg text-xs sm:text-sm font-bold bg-emerald-50 text-emerald-800 border border-emerald-200';
+                badgeVac.textContent = `✓ Vacaciones cuadradas: ${res.totalVacNat} / ${p.vacReglamentarias} días naturales (${res.totalVacLab} laborables L–V)`;
+            } else if (difVac > 0) {
+                badgeVac.className = 'inline-flex items-center px-3.5 py-2 rounded-lg text-xs sm:text-sm font-bold bg-amber-50 text-amber-900 border border-amber-300';
+                badgeVac.textContent = `⚠ Faltan ${difVac} días naturales por asignar (${res.totalVacNat} / ${p.vacReglamentarias} · ${res.totalVacLab} L–V)`;
+            } else {
+                badgeVac.className = 'inline-flex items-center px-3.5 py-2 rounded-lg text-xs sm:text-sm font-bold bg-rose-50 text-rose-800 border border-rose-300';
+                badgeVac.textContent = `✕ Exceso de ${Math.abs(difVac)} días naturales sobre convenio (${res.totalVacNat} / ${p.vacReglamentarias} · ${res.totalVacLab} L–V)`;
+            }
+
+            // Cabeceras dinámicas por año
+            document.getElementById('tituloTablaAnual').textContent = `Cuadro Numérico Completo de Liquidación ${p.anio}`;
+            document.getElementById('thMes').textContent = `Mes ${p.anio}`;
+            document.getElementById('badgeValorHora').textContent = `Valor hora tabla: ${res.valorHoraTabla.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €/h`;
+
+            // Renderizar 12 filas mensuales
+            const tbody = document.getElementById('tbodyLiquidacion');
+            tbody.innerHTML = '';
+
+            res.filas.forEach((m) => {
+                const tr = document.createElement('tr');
+                const tieneVac = m.vacNat > 0 || m.vacLab > 0;
+                const tieneBaja = m.bajaNat > 0 || m.bajaLab > 0;
+                tr.className = tieneBaja
+                    ? 'bg-rose-50/40 hover:bg-rose-50/80'
+                    : (tieneVac ? 'bg-amber-50/40 hover:bg-amber-50/80' : 'hover:bg-slate-50');
+
+                const saldoClass = m.saldoMes > 0.004
+                    ? 'text-emerald-600 font-bold'
+                    : (m.saldoMes < -0.004 ? 'text-rose-600 font-bold' : 'text-slate-600 font-bold');
+
+                const bolsaClass = m.bolsaAcumulada > 0.004
+                    ? 'text-emerald-700 font-bold'
+                    : (m.bolsaAcumulada < -0.004 ? 'text-rose-700 font-bold' : 'text-slate-900 font-black');
+
+                tr.innerHTML = `
+                    <td class="px-3 py-2.5 font-bold text-slate-900 whitespace-nowrap">${m.mes}</td>
+                    <td class="px-2 py-2 text-center">
+                        <input type="number" min="0" max="31" step="1" value="${m.habilesCal}" data-idx="${m.idx}" data-campo="habilesCal"
+                            class="input-celda w-14 text-center rounded border border-slate-300 bg-white px-1.5 py-1 text-xs font-bold text-slate-800 focus:border-blue-600 focus:outline-none">
+                    </td>
+                    <td class="px-2 py-2 text-center whitespace-nowrap">
+                        <div class="inline-flex items-center justify-center space-x-1">
+                            <input type="number" min="0" max="31" step="1" value="${m.vacNat}" data-idx="${m.idx}" data-campo="vacNat" title="Vacaciones naturales"
+                                class="input-celda w-12 text-center rounded border border-amber-300 bg-amber-50/60 px-1 py-1 text-xs font-bold text-amber-900 focus:border-amber-600 focus:outline-none">
+                            <span class="text-slate-400 font-bold">/</span>
+                            <input type="number" min="0" max="31" step="1" value="${m.vacLab}" data-idx="${m.idx}" data-campo="vacLab" title="Vacaciones laborables (L–V)"
+                                class="input-celda w-12 text-center rounded border border-amber-300 bg-amber-50/60 px-1 py-1 text-xs font-bold text-amber-900 focus:border-amber-600 focus:outline-none">
+                        </div>
+                    </td>
+                    <td class="px-2 py-2 text-center whitespace-nowrap">
+                        <div class="inline-flex items-center justify-center space-x-1">
+                            <input type="number" min="0" max="31" step="1" value="${m.bajaNat}" data-idx="${m.idx}" data-campo="bajaNat" title="Baja IT días naturales"
+                                class="input-celda w-11 text-center rounded border border-rose-300 bg-rose-50/60 px-1 py-1 text-xs font-bold text-rose-900 focus:border-rose-600 focus:outline-none">
+                            <span class="text-slate-400 font-bold">/</span>
+                            <input type="number" min="0" max="31" step="1" value="${m.bajaLab}" data-idx="${m.idx}" data-campo="bajaLab" title="Baja IT días laborables (L–V)"
+                                class="input-celda w-11 text-center rounded border border-rose-300 bg-rose-50/60 px-1 py-1 text-xs font-bold text-rose-900 focus:border-rose-600 focus:outline-none">
+                            <select data-idx="${m.idx}" data-campo="tipoBaja" title="Contingencia de la baja en este mes"
+                                class="select-baja rounded border border-rose-300 bg-white px-1.5 py-1 text-[11px] font-bold text-rose-900 focus:border-rose-600 focus:outline-none">
+                                <option value="comun" ${m.tipoBaja === 'comun' ? 'selected' : ''}>E. Común</option>
+                                <option value="accidente_100" ${m.tipoBaja === 'accidente_100' ? 'selected' : ''}>Acc. 100%</option>
+                                <option value="accidente_75" ${m.tipoBaja === 'accidente_75' ? 'selected' : ''}>Acc. 75%</option>
+                            </select>
+                        </div>
+                    </td>
+                    <td class="px-2 py-2.5 text-center font-bold text-slate-800 whitespace-nowrap">${m.diasActivos}</td>
+                    <td class="px-3 py-2.5 text-right text-slate-800 whitespace-nowrap">${formatHoras(m.horasReales)}</td>
+                    <td class="px-3 py-2.5 text-right text-slate-500 whitespace-nowrap">${formatHoras(m.cuotaMes)}</td>
+                    <td class="px-3 py-2.5 text-right whitespace-nowrap ${saldoClass}">${formatHoras(m.saldoMes, true)}</td>
+                    <td class="px-3 py-2.5 text-right whitespace-nowrap ${bolsaClass}">${formatHoras(m.bolsaAcumulada, true)}</td>
+                    <td class="px-3 py-2.5 text-right text-slate-800 whitespace-nowrap">
+                        <div>${formatEuro(m.fijoMes)}</div>
+                        ${m.detalleIT ? `<div class="text-[10px] font-semibold text-rose-700">${m.detalleIT}</div>` : ''}
+                    </td>
+                    <td class="px-3 py-2.5 text-right whitespace-nowrap ${m.plusVacMes > 0 ? 'text-amber-700 font-bold' : 'text-slate-400'}">${formatEuro(m.plusVacMes)}</td>
+                    <td class="px-3 py-2.5 text-right font-extrabold text-slate-950 bg-blue-50/50 whitespace-nowrap">${formatEuro(m.totalBrutoMes)}</td>
+                `;
+
+                tbody.appendChild(tr);
+            });
+
+            // Fila TOTAL anual
+            const tfoot = document.getElementById('tfootLiquidacion');
+            const saldoFinalBolsa = res.filas.length > 0 ? res.filas[res.filas.length - 1].bolsaAcumulada : 0;
+            tfoot.innerHTML = `
+                <tr>
+                    <td class="px-3 py-3 whitespace-nowrap">TOTAL ${p.anio}</td>
+                    <td class="px-2 py-3 text-center whitespace-nowrap">${res.totalHabilesCal}</td>
+                    <td class="px-2 py-3 text-center text-amber-300 whitespace-nowrap">${res.totalVacNat} / ${res.totalVacLab}</td>
+                    <td class="px-2 py-3 text-center text-rose-300 whitespace-nowrap">${res.totalBajaNat} / ${res.totalBajaLab}</td>
+                    <td class="px-2 py-3 text-center whitespace-nowrap">${res.totalDiasActivos}</td>
+                    <td class="px-3 py-3 text-right whitespace-nowrap">${formatHoras(res.sumaHorasReales)}</td>
+                    <td class="px-3 py-3 text-right whitespace-nowrap">${formatHoras(res.sumaCuotaFija)}</td>
+                    <td class="px-3 py-3 text-right text-cyan-300 whitespace-nowrap">${formatHoras(res.sumaSaldoMes, true)}</td>
+                    <td class="px-3 py-3 text-right text-cyan-300 whitespace-nowrap">${formatHoras(saldoFinalBolsa, true)}</td>
+                    <td class="px-3 py-3 text-right whitespace-nowrap">${formatEuro(res.sumaFijo)}</td>
+                    <td class="px-3 py-3 text-right text-amber-300 whitespace-nowrap">${formatEuro(res.sumaPlusVac)}</td>
+                    <td class="px-3 py-3 text-right text-emerald-300 whitespace-nowrap">${formatEuro(res.sumaTotalBruto)}</td>
+                </tr>
+            `;
+
+            // Enlazar cambios en inputs y selects de cada fila
+            tbody.querySelectorAll('.input-celda').forEach((inp) => {
+                inp.addEventListener('input', (e) => {
+                    const idx = parseInt(e.target.dataset.idx, 10);
+                    const campo = e.target.dataset.campo;
+                    const val = Math.max(0, parseInt(e.target.value, 10) || 0);
+                    if (estadoMeses[idx]) {
+                        estadoMeses[idx][campo] = val;
+                        renderizarTodo();
+                    }
+                });
+            });
+
+            tbody.querySelectorAll('.select-baja').forEach((sel) => {
+                sel.addEventListener('change', (e) => {
+                    const idx = parseInt(e.target.dataset.idx, 10);
+                    if (estadoMeses[idx]) {
+                        estadoMeses[idx].tipoBaja = e.target.value;
+                        renderizarTodo();
+                    }
+                });
+            });
+        }
+
+        function exportarExcelConEstilos() {
+            try {
+                if (typeof XLSX === 'undefined') {
+                    mostrarToast('No se pudo cargar la librería de exportación a Excel.');
+                    return;
+                }
+
+                const res = calcularLiquidacion();
+                const { p } = res;
+
+                const wb = XLSX.utils.book_new();
+                const wsData = [];
+
+                // Filas 1 a 14: Cabecera y parámetros del convenio
+                wsData.push([`CUADRO DE LIQUIDACIÓN DE NÓMINA Y BOLSA DE HORAS — EJERCICIO ${p.anio}`, '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']);
+                wsData.push([`Convenio de Transporte de Viajeros por Carretera · Jornada pactada ${p.horasAnuales100} h/año al 100%`, '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']);
+                wsData.push([]);
+                wsData.push(['PARÁMETRO DE CONVENIO', 'VALOR CONFIGURADO', 'OBSERVACIÓN ADMINISTRATIVA']);
+                wsData.push(['Año Ejercicio', p.anio, 'Año natural de cálculo y calendario laboral']);
+                wsData.push(['Horas 100% Año', p.horasAnuales100, 'Jornada anual completa fijada por convenio']);
+                wsData.push(['% Jornada', p.jornadaPct, 'Porcentaje de contratación (100 = jornada completa)']);
+                wsData.push(['Días Vac. Convenio', p.vacReglamentarias, 'Días naturales reglamentarios anuales (no % jornada)']);
+                wsData.push(['Base 100% (€/Mes)', p.baseMes100, 'Salario base mensual a jornada completa (100%)']);
+                wsData.push(['Comp. 100% (€)', p.compMes100, 'Complemento personal o antigüedad mensual (100%)']);
+                wsData.push(['Nº Pagas Anuales', p.numPagas, 'Número de mensualidades + pagas extraordinarias']);
+                wsData.push(['Abono Pagas Extras', p.modoExtras === 'prorrateadas' ? 1 : (p.modoExtras === 'integras' ? 2 : 3), '1=Prorrateadas (12m), 2=Íntegras, 3=2 Íntegras + Marzo Prorr.']);
+                wsData.push(['Plus Vac. 100% (€/Día)', p.plusVacDia100, 'Plus diario de vacaciones a jornada completa']);
+                wsData.push([]);
+
+                // Fila 15: Encabezados de la tabla mensual (A15:P15)
+                wsData.push([
+                    `MES ${p.anio}`,
+                    'HÁB. CAL.',
+                    'VAC. NAT.',
+                    'VAC. L-V',
+                    'BAJA NAT.',
+                    'BAJA L-V',
+                    'TIPO BAJA',
+                    'DÍAS ACTIVOS',
+                    'HORAS REALES',
+                    'CUOTA FIJA',
+                    'SALDO MES',
+                    'BOLSA ACUM.',
+                    'FIJO PRORR.',
+                    'PLUS VAC.',
+                    'TOTAL BRUTO',
+                    'TRAMO EXTRA'
+                ]);
+
+                // Filas 16 a 27: 12 meses
+                res.filas.forEach((m, idx) => {
+                    const r = 16 + idx;
+                    const prevR = r - 1;
+                    const bolsaFormula = idx === 0 ? `K${r}` : `L${prevR}+K${r}`;
+
+                    const acumBajaExpr = idx === 0 ? `E${r}` : `IF(G${prevR}=G${r},E${prevR}+E${r},E${r})`;
+                    const prevAcumExpr = idx === 0 ? `0` : `IF(G${prevR}=G${r},E${prevR},0)`;
+
+                    const brDiariaExpr = `(((($C$9+$C$10)*($C$7/100))*$C$11)/360)`;
+                    const prestacionComunExpr = `(${brDiariaExpr}*(0.6*MAX(0,MIN(20,${acumBajaExpr})-MAX(3,${prevAcumExpr}))+0.75*MAX(0,${acumBajaExpr}-MAX(20,${prevAcumExpr}))))`;
+                    const prestacionITExpr = `IF(E${r}=0,0,IF(G${r}=1,E${r}*${brDiariaExpr},IF(G${r}=2,E${r}*${brDiariaExpr}*0.75,${prestacionComunExpr})))`;
+
+                    const factorAltaExpr = `(MAX(0,30-E${r})/30)`;
+                    const baseMensualExpr = `(($C$9+$C$10)*($C$7/100))`;
+                    const fijoAltaExpr = `IF($C$12=1,((${baseMensualExpr}*$C$11)/12)*${factorAltaExpr},IF($C$12=2,(${baseMensualExpr}*${factorAltaExpr})+(IF($C$11>=13,(${baseMensualExpr}/12)*${factorAltaExpr},0))+IF(P${r}=2,(${baseMensualExpr}*MAX(0,$C$11-13))/2,0),(${baseMensualExpr}*${factorAltaExpr})+IF(P${r}>=1,(${baseMensualExpr}*($C$11-12))/3,0)))`;
+
+                    const cuotaLinealExcel = res.cuotaFijaMes;
+                    const saldoLinealExcel = m.horasComputoTotal - cuotaLinealExcel;
+                    const bolsaLinealExcel = res.filas.slice(0, idx + 1).reduce((acc, item) => acc + (item.horasComputoTotal - cuotaLinealExcel), 0);
+
+                    wsData.push([
+                        m.mes,
+                        m.habilesCal,
+                        m.vacNat,
+                        m.vacLab,
+                        m.bajaNat,
+                        m.bajaLab,
+                        m.tipoBaja === 'accidente_100' ? 1 : (m.tipoBaja === 'accidente_75' ? 2 : 0),
+                        { t: 'n', v: m.diasActivos, f: `MAX(0,B${r}-D${r}-F${r})` },
+                        { t: 'n', v: Number(m.horasComputoTotal.toFixed(4)), f: `(H${r}+F${r})*(($C$6*($C$7/100))/($H$28+$F$28))` },
+                        { t: 'n', v: Number(cuotaLinealExcel.toFixed(4)), f: `($C$6*($C$7/100))/12` },
+                        { t: 'n', v: Number(saldoLinealExcel.toFixed(4)), f: `I${r}-J${r}` },
+                        { t: 'n', v: Number(bolsaLinealExcel.toFixed(4)), f: bolsaFormula },
+                        { t: 'n', v: Number(m.fijoMes.toFixed(2)), f: `${fijoAltaExpr}+${prestacionITExpr}` },
+                        { t: 'n', v: Number(m.plusVacMes.toFixed(2)), f: `C${r}*($C$13*($C$7/100))` },
+                        { t: 'n', v: Number(m.totalBrutoMes.toFixed(2)), f: `M${r}+N${r}` },
+                        m.extraJulDic ? 2 : (m.extraMes ? 1 : 0)
+                    ]);
+                });
+
+                // Fila 28: TOTAL anual
+                wsData.push([
+                    `TOTAL ${p.anio}`,
+                    { t: 'n', v: res.totalHabilesCal, f: 'SUM(B16:B27)' },
+                    { t: 'n', v: res.totalVacNat, f: 'SUM(C16:C27)' },
+                    { t: 'n', v: res.totalVacLab, f: 'SUM(D16:D27)' },
+                    { t: 'n', v: res.totalBajaNat, f: 'SUM(E16:E27)' },
+                    { t: 'n', v: res.totalBajaLab, f: 'SUM(F16:F27)' },
+                    '—',
+                    { t: 'n', v: res.totalDiasActivos, f: 'SUM(H16:H27)' },
+                    { t: 'n', v: Number(res.sumaHorasComputo.toFixed(2)), f: 'SUM(I16:I27)' },
+                    { t: 'n', v: Number(res.sumaCuotaFija.toFixed(2)), f: 'SUM(J16:J27)' },
+                    { t: 'n', v: Number((res.sumaHorasComputo - res.sumaCuotaFija).toFixed(2)), f: 'SUM(K16:K27)' },
+                    { t: 'n', v: Number((res.sumaHorasComputo - res.sumaCuotaFija).toFixed(2)), f: 'L27' },
+                    { t: 'n', v: Number(res.sumaFijo.toFixed(2)), f: 'SUM(M16:M27)' },
+                    { t: 'n', v: Number(res.sumaPlusVac.toFixed(2)), f: 'SUM(N16:N27)' },
+                    { t: 'n', v: Number(res.sumaTotalBruto.toFixed(2)), f: 'SUM(O16:O27)' },
+                    { t: 'n', v: res.filas.reduce((acc, m) => acc + (m.extraJulDic ? 2 : (m.extraMes ? 1 : 0)), 0), f: 'SUM(P16:P27)' }
+                ]);
+
+                // Filas 30 a 34: Resumen e indicadores clave
+                wsData.push([]);
+                wsData.push(['RESUMEN E INDICADORES CLAVE', 'CÓDIGO', 'RESULTADO', 'INTERPRETACIÓN ADMINISTRATIVA']);
+                wsData.push(['Jornada Anual Efectiva Contrato (h)', 'JORN_EFEC', { t: 'n', v: res.jornadaAnualEfectiva, f: 'C6*(C7/100)' }, 'Total horas anuales ajustadas al porcentaje de jornada del empleado']);
+                wsData.push(['Valor Hora Tabla Convenio (€/h)', 'VAL_HORA', { t: 'n', v: Number(res.valorHoraTabla.toFixed(2)), f: '((($C$9+$C$10)*($C$7/100))*$C$11)/C31' }, 'Retribución fija anual dividida entre horas efectivas del contrato']);
+                wsData.push(['Media Horas por Día Hábil (h/día)', 'MED_DIA', { t: 'n', v: Number(res.horasPorDiaActivo.toFixed(4)), f: 'C31/(H28+F28)' }, 'Horas anuales divididas entre días activos más días justificados por IT']);
+                wsData.push(['Días Vacaciones Pendientes de Asignar', 'VAC_PEND', { t: 'n', v: p.vacReglamentarias - res.totalVacNat, f: 'C8-C28' }, 'Debe marcar 0 para cumplir los días naturales fijados por convenio']);
+
+                const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+                // Estilos visuales
+                const borderThin = {
+                    top: { style: 'thin', color: { rgb: 'CBD5E1' } },
+                    bottom: { style: 'thin', color: { rgb: 'CBD5E1' } },
+                    left: { style: 'thin', color: { rgb: 'E2E8F0' } },
+                    right: { style: 'thin', color: { rgb: 'E2E8F0' } }
+                };
+
+                const estiloBanner = {
+                    font: { name: 'Calibri', sz: 14, bold: true, color: { rgb: 'FFFFFF' } },
+                    fill: { fgColor: { rgb: '071530' } },
+                    alignment: { horizontal: 'left', vertical: 'center' }
+                };
+
+                const estiloSubBanner = {
+                    font: { name: 'Calibri', sz: 10, italic: true, color: { rgb: 'CBD5E1' } },
+                    fill: { fgColor: { rgb: '0F2347' } },
+                    alignment: { horizontal: 'left', vertical: 'center' }
+                };
+
+                const estiloCabeceraSeccion = {
+                    font: { name: 'Calibri', sz: 10, bold: true, color: { rgb: '071530' } },
+                    fill: { fgColor: { rgb: 'E2E8F0' } },
+                    border: borderThin,
+                    alignment: { horizontal: 'left', vertical: 'center' }
+                };
+
+                const estiloCabeceraTabla = {
+                    font: { name: 'Calibri', sz: 10, bold: true, color: { rgb: 'FFFFFF' } },
+                    fill: { fgColor: { rgb: '071530' } },
+                    border: borderThin,
+                    alignment: { horizontal: 'center', vertical: 'center', wrapText: true }
+                };
+
+                const estiloTotal = {
+                    font: { name: 'Calibri', sz: 10, bold: true, color: { rgb: 'FFFFFF' } },
+                    fill: { fgColor: { rgb: '071530' } },
+                    border: borderThin,
+                    alignment: { horizontal: 'right', vertical: 'center' }
+                };
+
+                ws['!merges'] = [
+                    { s: { r: 0, c: 0 }, e: { r: 0, c: 15 } },
+                    { s: { r: 1, c: 0 }, e: { r: 1, c: 15 } }
+                ];
+
+                for (let c = 0; c <= 15; c++) {
+                    const c0 = XLSX.utils.encode_cell({ r: 0, c });
+                    const c1 = XLSX.utils.encode_cell({ r: 1, c });
+                    if (ws[c0]) ws[c0].s = estiloBanner;
+                    if (ws[c1]) ws[c1].s = estiloSubBanner;
+                }
+
+                for (let c = 0; c <= 2; c++) {
+                    const cell = ws[XLSX.utils.encode_cell({ r: 3, c })];
+                    if (cell) cell.s = estiloCabeceraSeccion;
+                }
+
+                for (let r = 4; r <= 12; r++) {
+                    const cLabel = ws[XLSX.utils.encode_cell({ r, c: 0 })];
+                    const cVal = ws[XLSX.utils.encode_cell({ r, c: 1 })];
+                    const cObs = ws[XLSX.utils.encode_cell({ r, c: 2 })];
+                    if (cLabel) cLabel.s = { font: { name: 'Calibri', sz: 10, bold: true, color: { rgb: '1E293B' } }, fill: { fgColor: { rgb: 'F8FAFC' } }, border: borderThin };
+                    if (cVal) cVal.s = { font: { name: 'Calibri', sz: 10, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: 'EFF6FF' } }, border: borderThin, alignment: { horizontal: 'right', vertical: 'center' } };
+                    if (cObs) cObs.s = { font: { name: 'Calibri', sz: 9, color: { rgb: '475569' } }, fill: { fgColor: { rgb: 'FFFFFF' } }, border: borderThin };
+                }
+
+                for (let c = 0; c <= 15; c++) {
+                    const cell = ws[XLSX.utils.encode_cell({ r: 14, c })];
+                    if (cell) cell.s = estiloCabeceraTabla;
+                }
+
+                for (let r = 15; r <= 26; r++) {
+                    const zebra = r % 2 === 1 ? 'FFFFFF' : 'F8FAFC';
+                    for (let c = 0; c <= 15; c++) {
+                        const cell = ws[XLSX.utils.encode_cell({ r, c })];
+                        if (!cell) continue;
+                        let bg = zebra;
+                        let bold = c === 0 || c === 14;
+                        let color = '1E293B';
+                        if (c === 2 || c === 3 || c === 13) { bg = 'FFFBEB'; color = '92400E'; bold = true; }
+                        if (c === 4 || c === 5 || c === 6) { bg = 'FFF1F2'; color = '9F1239'; }
+                        if (c === 14) { bg = 'EFF6FF'; color = '0F172A'; }
+                        cell.s = {
+                            font: { name: 'Calibri', sz: 10, bold, color: { rgb: color } },
+                            fill: { fgColor: { rgb: bg } },
+                            border: borderThin,
+                            alignment: { horizontal: c === 0 ? 'left' : (c <= 7 || c === 15 ? 'center' : 'right'), vertical: 'center' }
+                        };
+                    }
+                }
+
+                for (let c = 0; c <= 15; c++) {
+                    const cell = ws[XLSX.utils.encode_cell({ r: 27, c })];
+                    if (cell) {
+                        cell.s = {
+                            ...estiloTotal,
+                            alignment: { horizontal: c === 0 ? 'left' : (c <= 7 || c === 15 ? 'center' : 'right'), vertical: 'center' }
+                        };
+                    }
+                }
+
+                for (let c = 0; c <= 3; c++) {
+                    const cell = ws[XLSX.utils.encode_cell({ r: 30, c })];
+                    if (cell) cell.s = estiloCabeceraSeccion;
+                }
+                for (let r = 31; r <= 34; r++) {
+                    for (let c = 0; c <= 3; c++) {
+                        const cell = ws[XLSX.utils.encode_cell({ r, c })];
+                        if (!cell) continue;
+                        cell.s = {
+                            font: { name: 'Calibri', sz: 10, bold: c === 0 || c === 2, color: { rgb: c === 2 ? '065F46' : '1E293B' } },
+                            fill: { fgColor: { rgb: c === 2 ? 'ECFDF5' : 'FFFFFF' } },
+                            border: borderThin,
+                            alignment: { horizontal: c === 2 ? 'right' : 'left', vertical: 'center' }
+                        };
+                    }
+                }
+
+                // Formatos numéricos exactos (C5=Año, C6=Horas, C7=% Jornada, C8=31 Días Naturales)
+                for (let r = 16; r <= 28; r++) {
+                    if (ws[`I${r}`]) ws[`I${r}`].z = '#,##0.00" h"';
+                    if (ws[`J${r}`]) ws[`J${r}`].z = '#,##0.00" h"';
+                    if (ws[`K${r}`]) ws[`K${r}`].z = '+#,##0.00" h";-#,##0.00" h";0.00" h"';
+                    if (ws[`L${r}`]) ws[`L${r}`].z = '+#,##0.00" h";-#,##0.00" h";0.00" h"';
+                    if (ws[`M${r}`]) ws[`M${r}`].z = '#,##0.00" €"';
+                    if (ws[`N${r}`]) ws[`N${r}`].z = '#,##0.00" €"';
+                    if (ws[`O${r}`]) ws[`O${r}`].z = '#,##0.00" €"';
+                }
+                if (ws['C5']) ws['C5'].z = '0';
+                if (ws['C6']) ws['C6'].z = '#,##0" h"';
+                if (ws['C7']) ws['C7'].z = '0"%"';
+                if (ws['C8']) ws['C8'].z = '0" días"';
+                if (ws['C9']) ws['C9'].z = '#,##0.00" €"';
+                if (ws['C10']) ws['C10'].z = '#,##0.00" €"';
+                if (ws['C11']) ws['C11'].z = '0';
+                if (ws['C12']) ws['C12'].z = '0';
+                if (ws['C13']) ws['C13'].z = '#,##0.00" €"';
+                if (ws['C32']) ws['C32'].z = '#,##0.00" h"';
+                if (ws['C33']) ws['C33'].z = '#,##0.00" €/h"';
+                if (ws['C34']) ws['C34'].z = '0.0000" h/día"';
+                if (ws['C35']) ws['C35'].z = '0" días"';
+
+                ws['!cols'] = [
+                    { wch: 30 }, { wch: 16 }, { wch: 14 }, { wch: 12 },
+                    { wch: 12 }, { wch: 12 }, { wch: 13 }, { wch: 14 },
+                    { wch: 15 }, { wch: 14 }, { wch: 14 }, { wch: 15 },
+                    { wch: 15 }, { wch: 14 }, { wch: 16 }, { wch: 14 }
+                ];
+
+                ws['!rows'] = Array.from({ length: 36 }, (_, idx) => {
+                    if (idx === 0) return { hpt: 28 };
+                    if (idx === 1) return { hpt: 20 };
+                    if (idx === 14) return { hpt: 30 };
+                    if (idx >= 15 && idx <= 27) return { hpt: 22 };
+                    return { hpt: 20 };
+                });
+
+                XLSX.utils.book_append_sheet(wb, ws, `Liquidacion_${p.anio}`);
+                XLSX.writeFile(wb, `Nomina_Bolsa_Horas_${p.anio}.xlsx`);
+                mostrarToast(`Archivo Nomina_Bolsa_Horas_${p.anio}.xlsx generado con éxito.`);
+            } catch (err) {
+                console.error('Error al exportar Excel:', err);
+                mostrarToast('Ocurrió un error al generar el archivo Excel.');
+            }
+        }
+
+        function resetearValores2026() {
+            document.getElementById('paramAnio').value = '2026';
+            document.getElementById('paramHorasAnuales').value = '1776';
+            document.getElementById('paramJornadaPct').value = '100';
+            document.getElementById('paramVacReg').value = '31';
+            document.getElementById('paramBaseMes').value = '1595.40';
+            document.getElementById('paramCompMes').value = '0';
+            document.getElementById('paramNumPagas').value = '15';
+            document.getElementById('paramModoExtras').value = 'prorrateadas';
+            document.getElementById('paramPlusVacDia').value = '10.00';
+            document.getElementById('paramRepartoBolsa').value = 'lineal';
+
+            estadoMeses = MESES_BASE.map((m, i) => ({ ...m, idx: i }));
+            renderizarTodo();
+            mostrarToast('Valores base de 2026 restaurados.');
+        }
+
+        function ponerVacacionesACero() {
+            estadoMeses = estadoMeses.map((m) => ({
+                ...m,
+                vacNat: 0,
+                vacLab: 0
+            }));
+            renderizarTodo();
+            mostrarToast('Vacaciones mensuales puestas a 0.');
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            ['paramAnio', 'paramHorasAnuales', 'paramJornadaPct', 'paramVacReg', 'paramBaseMes', 'paramCompMes', 'paramNumPagas', 'paramPlusVacDia']
+                .forEach((id) => {
+                    const el = document.getElementById(id);
+                    if (el) el.addEventListener('input', renderizarTodo);
+                });
+
+            ['paramModoExtras', 'paramRepartoBolsa'].forEach((id) => {
+                const el = document.getElementById(id);
+                if (el) el.addEventListener('change', renderizarTodo);
+            });
+
+            document.getElementById('btnReset2026').addEventListener('click', resetearValores2026);
+            document.getElementById('btnVacacionesCero').addEventListener('click', ponerVacacionesACero);
+            document.getElementById('btnDescargarExcel').addEventListener('click', exportarExcelConEstilos);
+
+            renderizarTodo();
+        });
+    </script>
+</body>
+</html>

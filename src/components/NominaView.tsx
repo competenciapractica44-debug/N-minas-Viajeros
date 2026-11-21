@@ -495,9 +495,9 @@ export const NominaView: React.FC<NominaViewProps> = ({
 
           <div>
             <span className="text-slate-400 text-[10px] uppercase tracking-wider font-semibold block">
-              Horas Ordinarias en Convenio
+              Horas Reales (hasta 9h/día) vs Teóricas
             </span>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-1.5">
               <span className="font-bold text-white font-mono text-sm">
                 {formatHoursES(payroll.ordinaryConvenioHours)} h
               </span>
@@ -508,13 +508,20 @@ export const NominaView: React.FC<NominaViewProps> = ({
                     : 'bg-amber-400/20 text-amber-300'
                 }`}
               >
-                {periodHoursDiff >= 0 ? `+${formatHoursES(periodHoursDiff)} h compl.` : `${formatHoursES(periodHoursDiff)} h`}
+                {periodHoursDiff >= 0
+                  ? `+${formatHoursES(periodHoursDiff)} h compl.`
+                  : `${formatHoursES(periodHoursDiff)} h (a compensar · 0h compl.)`}
               </span>
+              {payroll.horasExcesoDiario9h > 0 && (
+                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded font-mono bg-indigo-400/25 text-indigo-200">
+                  +{formatHoursES(payroll.horasExcesoDiario9h)} h (&gt;9h)
+                </span>
+              )}
             </div>
             <span className="text-[11px] text-slate-300 block">
-              {payroll.horasFestivas > 0
-                ? `Obj. ${monthName}: ${formatHoursES(payroll.convenioMonthlyHoursTarget)} h · ${formatHoursES(payroll.horasFestivas)} h festivas excluidas (Total: ${formatHoursES(payroll.totalWorkedHours)} h)`
-                : `Respecto a obj. de ${monthName}: ${formatHoursES(payroll.convenioMonthlyHoursTarget)} h (${payroll.totalDays}d${payroll.vacationDays > 0 ? ` − ${payroll.vacationDays}d vac.` : ''}${payroll.sickDays > 0 ? ` − ${payroll.sickDays}d baja` : ''})`}
+              {payroll.horasFestivas > 0 || payroll.horasFT > 0
+                ? `Teór.: ${formatHoursES(payroll.convenioMonthlyHoursTarget)} h${payroll.horasFestivas > 0 ? ` · ${formatHoursES(payroll.horasFestivas)} h festivas` : ''}${payroll.horasFT > 0 ? ` · ${formatHoursES(payroll.horasFT)} h F/T` : ''} aparte (Total: ${formatHoursES(payroll.totalWorkedHours)} h)`
+                : `Teór. ${monthName}: ${formatHoursES(payroll.convenioMonthlyHoursTarget)} h (${payroll.totalDays}d${payroll.vacationDays > 0 ? ` − ${payroll.vacationDays}d vac.` : ''}${payroll.sickDays > 0 ? ` − ${payroll.sickDays}d baja` : ''})`}
             </span>
           </div>
 
@@ -1060,10 +1067,22 @@ export const NominaView: React.FC<NominaViewProps> = ({
                 <div>
                   <p className="font-semibold text-slate-800">Festivas (Horas)</p>
                   <p className="text-[10px] text-slate-400">
-                    {formatHoursES(payroll.horasFestivas)} h en festivo × {formatCurrency(activeYearRate.horaOrdinaria)}/h (no computan dentro de convenio)
+                    {formatHoursES(payroll.horasFestivas)} h en festivo × {formatCurrency(activeYearRate.horaOrdinaria)}/h (aparte del salario base)
                   </p>
                 </div>
                 <span className="font-bold font-mono text-emerald-700">+{formatCurrency(payroll.horasFestivasAmount)}</span>
+              </div>
+            )}
+
+            {payroll.horasFT > 0 && payroll.horasFTAmount > 0 && (
+              <div className="flex items-center justify-between pt-2">
+                <div>
+                  <p className="font-semibold text-slate-800">Horas F/T (Fiesta / Trabajo)</p>
+                  <p className="text-[10px] text-teal-700">
+                    {formatHoursES(payroll.horasFT)} h en días F/T × {formatCurrency(activeYearRate.horaOrdinaria)}/h (aparte del salario base)
+                  </p>
+                </div>
+                <span className="font-bold font-mono text-teal-700">+{formatCurrency(payroll.horasFTAmount)}</span>
               </div>
             )}
 
@@ -1138,9 +1157,28 @@ export const NominaView: React.FC<NominaViewProps> = ({
                   </div>
                   <p className="text-[10px] text-indigo-700">
                     {formatHoursES(payroll.horasComplementarias || payroll.horasExtra)} h × {formatCurrency(activeYearRate.horaOrdinaria)}/h
-                    {payroll.ordinaryConvenioHours > payroll.convenioMonthlyHoursTarget
-                      ? ` (exceso sobre ${formatHoursES(payroll.convenioMonthlyHoursTarget)} h de convenio en ${payroll.extrasCutoffPeriod})`
-                      : ` (exceso acumulado en ${payroll.extrasCutoffPeriod})`}
+                    {(() => {
+                      const parts: string[] = [];
+                      if (payroll.horasExcesoMensual > 0) {
+                        parts.push(`${formatHoursES(payroll.horasExcesoMensual)} h exceso s/ ${formatHoursES(payroll.convenioMonthlyHoursTarget)} h teór.`);
+                      }
+                      if (payroll.horasExcesoDiario9h > 0) {
+                        parts.push(`${formatHoursES(payroll.horasExcesoDiario9h)} h en turnos >9h`);
+                      }
+                      const manualExtraHrs = Math.max(
+                        0,
+                        Math.round(
+                          ((payroll.horasComplementarias || 0) -
+                            (payroll.horasExcesoMensual || 0) -
+                            (payroll.horasExcesoDiario9h || 0)) *
+                            100
+                        ) / 100
+                      );
+                      if (manualExtraHrs > 0) {
+                        parts.push(`${formatHoursES(manualExtraHrs)} h manuales`);
+                      }
+                      return parts.length > 0 ? ` (${parts.join(' + ')} en ${payroll.extrasCutoffPeriod})` : ` (en ${payroll.extrasCutoffPeriod})`;
+                    })()}
                   </p>
                 </div>
                 <span className="font-extrabold font-mono text-indigo-900 text-sm">+{formatCurrency(payroll.importeHorasExtra)}</span>

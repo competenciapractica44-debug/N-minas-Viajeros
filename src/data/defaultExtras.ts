@@ -62,4 +62,14 @@ export const DEFAULT_EXTRAS: ExtraConcept[] = [
     active: true,
     isTaxable: true,
   },
+  {
+    id: 'extra-ft',
+    name: 'F/T (Fiesta / Trabajo)',
+    amount: 13.62,
+    unit: 'hora',
+    description: 'Horas trabajadas en día marcado como F/T (Fiesta o Trabajo). Se abonan aparte del salario base al mismo precio que hora ordinaria.',
+    tags: ['Convenio', 'Nómina oficial'],
+    active: true,
+    isTaxable: true,
+  },
 ];

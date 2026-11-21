@@ -5,6 +5,8 @@ import { NominaView } from './components/NominaView';
 import { CalendarioView } from './components/CalendarioView';
 import { TurnosBDView } from './components/TurnosBDView';
 import { ExtrasView } from './components/ExtrasView';
+import { StartMenuView } from './components/StartMenuView';
+import { CalendarioAnualView } from './components/CalendarioAnualView';
 import { TurnoEditModal } from './components/TurnoEditModal';
 import { ConvenioModal } from './components/ConvenioModal';
 import { WorkerProfileModal } from './components/WorkerProfileModal';
@@ -16,11 +18,20 @@ import {
   ConvenioInfo,
   ConvenioYearRate,
   WorkerProfile,
+  AnnualCalendarState,
+  AnnualYearOverrideData,
 } from './types';
 import { ALL_INITIAL_SHIFTS } from './data/defaultTurnos';
 import { DEFAULT_EXTRAS } from './data/defaultExtras';
 import { DEFAULT_CONVENIO_ZARAGOZA, getEffectiveYearRate } from './data/convenioZaragoza';
 import { calculateMonthlyPayroll, calculateYearlySalaryEvolution } from './utils/calculator';
+import {
+  deriveDefaultAnnualParams,
+  deriveDefaultAnnualMonths,
+  resolveAnnualParams,
+  resolveAnnualMonths,
+  calculateAnnualLiquidation,
+} from './utils/annualCalendar';
 import { exportToPDF, exportToPDFBlob, exportToExcel } from './utils/exporter';
 
 import { User as FirebaseUser } from 'firebase/auth';
@@ -237,7 +248,7 @@ function writeAssignmentsDirtyFlag(dirty: boolean): void {
 
 export default function App() {
   const [publicPage, setPublicPage] = useState<PublicLegalPage | null>(() => getPublicPageFromUrl());
-  const [currentTab, setCurrentTab] = useState<'turnos' | 'calendario' | 'nomina' | 'extras'>('calendario');
+  const [currentTab, setCurrentTab] = useState<'inicio' | 'turnos' | 'calendario' | 'nomina' | 'extras' | 'anual'>('inicio');
   const [selectedYear, setSelectedYear] = useState(() => Math.max(2026, new Date().getFullYear()));
   const [selectedMonth, setSelectedMonth] = useState(() => {
     const now = new Date();
@@ -268,6 +279,13 @@ export default function App() {
     }
   }, [shifts]);
 
+  const mergeWithDefaultBuiltInExtras = (list: ExtraConcept[]): ExtraConcept[] => {
+    const hasFT = list.some((e) => e.id === 'extra-ft' || e.name.toLowerCase().includes('f/t'));
+    if (hasFT) return list;
+    const defaultFT = DEFAULT_EXTRAS.find((e) => e.id === 'extra-ft');
+    return defaultFT ? [...list, defaultFT] : list;
+  };
+
   // Conceptos vinculados al convenio (sin extras ficticios precargados)
   const [extras, setExtras] = useState<ExtraConcept[]>(() => {
     try {
@@ -275,7 +293,7 @@ export default function App() {
       if (saved) {
         const parsed: ExtraConcept[] = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          return parsed;
+          return mergeWithDefaultBuiltInExtras(parsed);
         }
       }
     } catch (e) {
@@ -387,6 +405,30 @@ export default function App() {
     }
   }, [profile]);
 
+  // Ediciones anuales personalizadas para Calendario Anual / Bolsa de Horas (sincronizadas con Drive)
+  const [annualCalendarData, setAnnualCalendarData] = useState<AnnualCalendarState>(() => {
+    try {
+      const saved = localStorage.getItem('rutanomina_annual_calendar_v1');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') {
+          return parsed as AnnualCalendarState;
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    return {};
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('rutanomina_annual_calendar_v1', JSON.stringify(annualCalendarData));
+    } catch (e) {
+      console.error(e);
+    }
+  }, [annualCalendarData]);
+
   // Modals state
   const [isTurnoModalOpen, setIsTurnoModalOpen] = useState(false);
   const [editingShift, setEditingShift] = useState<ShiftDefinition | null>(null);
@@ -415,8 +457,8 @@ export default function App() {
   const [payrollCalcNonce, setPayrollCalcNonce] = useState(0);
   const [lastPayrollCalculatedAt, setLastPayrollCalculatedAt] = useState<Date>(() => new Date());
   const [isRefreshingForNomina, setIsRefreshingForNomina] = useState(false);
-  const latestStateRef = React.useRef({ shifts, profile, convenio, assignments, extras });
-  latestStateRef.current = { shifts, profile, convenio, assignments, extras };
+  const latestStateRef = React.useRef({ shifts, profile, convenio, assignments, extras, annualCalendarData });
+  latestStateRef.current = { shifts, profile, convenio, assignments, extras, annualCalendarData };
 
   // Sincronizar navegación URL (?page=privacidad / ?page=terminos)
   useEffect(() => {
@@ -588,10 +630,31 @@ export default function App() {
           const driveExtras = await readDriveJsonFile<ExtraConcept[]>(token, extrasFile.id);
           if (driveExtras && Array.isArray(driveExtras) && driveExtras.length > 0) {
             isApplyingRemoteSyncRef.current = true;
-            setExtras(driveExtras);
+            setExtras(mergeWithDefaultBuiltInExtras(driveExtras));
           }
         } else {
           await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'catalogo_extras.json', currentSnapshot.extras);
+        }
+
+        // 6. Ajustes personalizados del Calendario Anual y Bolsa de Horas
+        const annualFile = await findFileInFolder(token, 'calendario_anual_bolsa.json', folders.nominasFolderId);
+        if (annualFile) {
+          const driveAnnual = await readDriveJsonFile<AnnualCalendarState>(token, annualFile.id);
+          if (driveAnnual && typeof driveAnnual === 'object') {
+            const mergedAnnual: AnnualCalendarState = {
+              ...driveAnnual,
+              ...currentSnapshot.annualCalendarData,
+            };
+            isApplyingRemoteSyncRef.current = true;
+            setAnnualCalendarData(mergedAnnual);
+          }
+        } else if (Object.keys(currentSnapshot.annualCalendarData).length > 0) {
+          await saveOrUpdateDriveJsonFile(
+            token,
+            folders.nominasFolderId,
+            'calendario_anual_bolsa.json',
+            currentSnapshot.annualCalendarData
+          );
         }
 
         // Consultar nóminas archivadas en la subcarpeta
@@ -651,6 +714,7 @@ export default function App() {
           saveOrUpdateDriveJsonFile(accessToken, driveFolders.nominasFolderId, 'convenio_2026.json', convenio),
           saveOrUpdateDriveJsonFile(accessToken, driveFolders.nominasFolderId, 'cuadrante_asignaciones.json', assignments),
           saveOrUpdateDriveJsonFile(accessToken, driveFolders.nominasFolderId, 'catalogo_extras.json', extras),
+          saveOrUpdateDriveJsonFile(accessToken, driveFolders.nominasFolderId, 'calendario_anual_bolsa.json', annualCalendarData),
         ];
         if (profile.name.trim().length > 0) {
           uploads.push(
@@ -673,7 +737,7 @@ export default function App() {
     }, 1500);
 
     return () => clearTimeout(timer);
-  }, [currentUser, accessToken, driveFolders, shifts, profile, convenio, assignments, extras]);
+  }, [currentUser, accessToken, driveFolders, shifts, profile, convenio, assignments, extras, annualCalendarData]);
 
   // Cierre de sesión
   const handleLogout = async () => {
@@ -838,7 +902,7 @@ export default function App() {
   };
 
   const handleSelectTab = (tab: string) => {
-    const nextTab = tab as 'turnos' | 'calendario' | 'nomina' | 'extras';
+    const nextTab = tab as 'inicio' | 'turnos' | 'calendario' | 'nomina' | 'extras' | 'anual';
     setCurrentTab(nextTab);
     if (nextTab === 'nomina') {
       void recalculatePayrollFromCalendar(true);
@@ -879,6 +943,37 @@ export default function App() {
       profile
     );
   }, [selectedYear, assignments, shiftsMap, convenio, profile, payrollCalcNonce]);
+
+  // Computed Annual Calendar & Bolsa de Horas summary (synced with RutaNomina + overrides)
+  const annualSummary = useMemo(() => {
+    const yearOverride = annualCalendarData[selectedYear];
+    const defaultParams = deriveDefaultAnnualParams(profile, convenio, selectedYear);
+    const defaultMonths = deriveDefaultAnnualMonths(
+      selectedYear,
+      profile,
+      assignments,
+      shifts,
+      convenio
+    );
+    const effectiveParams = resolveAnnualParams(defaultParams, yearOverride);
+    const effectiveMonths = resolveAnnualMonths(defaultMonths, yearOverride);
+    return calculateAnnualLiquidation(selectedYear, effectiveParams, effectiveMonths);
+  }, [selectedYear, profile, convenio, assignments, shifts, annualCalendarData]);
+
+  const handleUpdateAnnualYearOverride = (
+    year: number,
+    nextOverride: AnnualYearOverrideData | null
+  ) => {
+    setAnnualCalendarData((prev) => {
+      const copy = { ...prev };
+      if (!nextOverride || (!nextOverride.paramOverrides && !nextOverride.monthOverrides)) {
+        delete copy[year];
+      } else {
+        copy[year] = nextOverride;
+      }
+      return copy;
+    });
+  };
 
   useEffect(() => {
     setLastPayrollCalculatedAt(new Date());
@@ -1152,7 +1247,7 @@ export default function App() {
 
       {/* Main View Area */}
       <main className="flex-1">
-        {!profile.name.trim() && (
+        {!profile.name.trim() && currentTab !== 'inicio' && (
           <div className="max-w-5xl mx-auto px-4 pt-3">
             <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-amber-900">
               <p>
@@ -1170,6 +1265,42 @@ export default function App() {
               </button>
             </div>
           </div>
+        )}
+
+        {currentTab === 'inicio' && (
+          <StartMenuView
+            profile={profile}
+            selectedYear={selectedYear}
+            selectedMonthName={MONTH_NAMES[selectedMonth - 1]}
+            yearRate={currentYearRate}
+            annualSummary={annualSummary}
+            assignedDaysCount={
+              assignments.filter((a) => a.date?.startsWith(`${selectedYear}-`)).length
+            }
+            user={currentUser}
+            isSyncing={isDriveSyncing}
+            onOpenProfileModal={() => setIsProfileModalOpen(true)}
+            onOpenConvenioModal={() => setIsConvenioModalOpen(true)}
+            onSelectTab={handleSelectTab}
+            onOpenLogin={() => setIsLoginModalOpen(true)}
+            onManualSync={handleManualSync}
+          />
+        )}
+
+        {currentTab === 'anual' && (
+          <CalendarioAnualView
+            selectedYear={selectedYear}
+            onChangeYear={(yr) => setSelectedYear(yr)}
+            profile={profile}
+            convenio={convenio}
+            assignments={assignments}
+            shifts={shifts}
+            yearOverride={annualCalendarData[selectedYear]}
+            onUpdateYearOverride={handleUpdateAnnualYearOverride}
+            onSyncCommonToProfile={(partial) =>
+              void handleSaveProfile({ ...profile, ...partial })
+            }
+          />
         )}
 
         {currentTab === 'turnos' && (

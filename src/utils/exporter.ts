@@ -106,7 +106,7 @@ export function buildPDFDoc(
   doc.setTextColor(30, 58, 138);
   doc.setFontSize(8);
   doc.text(
-    `TRABAJADOS: ${payroll.workedDays}d  |  VAC. (ART. 9): ${payroll.vacationPlusDays}d  |  CONV.: ${formatHoursLabel(payroll.ordinaryConvenioHours)}h${payroll.horasFestivas > 0 ? ` + ${formatHoursLabel(payroll.horasFestivas)}h FEST.` : ''}  |  NOCT: ${payroll.nightHours}h`,
+    `TRABAJADOS: ${payroll.workedDays}d  |  VAC. (ART. 9): ${payroll.vacationPlusDays}d  |  CONV.: ${formatHoursLabel(payroll.ordinaryConvenioHours)}h${payroll.horasFestivas > 0 ? ` + ${formatHoursLabel(payroll.horasFestivas)}h FEST.` : ''}${payroll.horasFT > 0 ? ` + ${formatHoursLabel(payroll.horasFT)}h F/T` : ''}  |  NOCT: ${payroll.nightHours}h`,
     18,
     startY + 7.5
   );
@@ -544,9 +544,11 @@ export function exportToExcel(
     ['Días de Vacaciones (Plus Art. 9 en período)', payroll.vacationPlusDays, 'días', `Dentro del corte ${payroll.extrasCutoffPeriod}`, DAYS_FMT],
     ['Días Festivos / Domingos en período', payroll.holidayDays, 'festivos', `Dentro del corte ${payroll.extrasCutoffPeriod}`, DAYS_FMT],
     ['Horas Nocturnas (22:00 a 06:00)', payroll.nightHours, 'horas', 'Computadas en período de corte', HOURS_FMT],
-    ['Horas Totales Realizadas en Período', payroll.totalWorkedHours, 'horas', 'Suma total trabajada en el período (ordinarias + festivas)', HOURS_FMT],
-    ['Horas Ordinarias dentro de Convenio', payroll.ordinaryConvenioHours, 'horas', 'Computan para jornada anual/mensual (excluye horas festivas)', HOURS_FMT],
-    ['Horas Festivas (Art. 17 · Fuera de Convenio)', payroll.horasFestivas, 'horas', 'Jornadas en festivo marcado: se pagan igual y no cuentan en convenio', HOURS_FMT],
+    ['Horas Totales Realizadas en Período', payroll.totalWorkedHours, 'horas', 'Suma total trabajada (ordinarias, >9h, festivas y F/T)', HOURS_FMT],
+    ['Horas Ordinarias Salario Base (hasta 9h/día)', payroll.ordinaryConvenioHours, 'horas', 'Excluye festivos, días F/T y excesos diarios >9h', HOURS_FMT],
+    ['Horas Festivas (Art. 17 · Aparte Base)', payroll.horasFestivas, 'horas', 'Jornadas en festivo: se abonan aparte y no suman a convenio', HOURS_FMT],
+    ['Horas F/T (Fiesta / Trabajo · Aparte Base)', payroll.horasFT, 'horas', 'Jornadas marcadas F/T: se abonan aparte a hora ordinaria', HOURS_FMT],
+    ['Exceso Turnos > 9h/día (H. Complementarias)', payroll.horasExcesoDiario9h, 'horas', 'Horas diarias por encima de 9h pasan a complementarias', HOURS_FMT],
     [
       `Jornada Anual Convenio a Cumplir (${jornadaPct}%)`,
       payroll.convenioAnnualHoursTarget,
@@ -557,19 +559,19 @@ export function exportToExcel(
       HOURS_FMT,
     ],
     [
-      `Objetivo Mensual Convenio (${jornadaPct}%)`,
+      `Horas Teóricas ${monthName} (${jornadaPct}%)`,
       payroll.convenioMonthlyHoursTarget,
       'horas / mes',
       `Proporcional a ${Math.max(0, payroll.totalDays - payroll.vacationDays - payroll.sickDays)}d activos de ${monthName} sobre ${Math.max(1, getDaysInYear(payroll.year) - ANNUAL_VACATION_DAYS_CONVENIO)}d/año (sin ${ANNUAL_VACATION_DAYS_CONVENIO}d vac.)`,
       HOURS_FMT,
     ],
     [
-      'Diferencia Horas Ordinarias vs Ref. Mensual',
+      'Diferencia Horas Reales vs Teóricas',
       periodHoursDiff,
       'horas',
       periodHoursDiff >= 0
-        ? 'Exceso sobre referencia mensual -> abonado como Hores Complementarias'
-        : 'Por debajo de la referencia mensual equivalente',
+        ? 'Exceso mensual -> abonado como Horas Complementarias'
+        : 'Saldo negativo (0 h compl. mensuales · Salario Base 100%, a compensar)',
       HOURS_FMT,
     ],
   ];

@@ -38,7 +38,7 @@ import {
   calculateTotalHours,
   calculateMonthlyConvenioHoursTarget,
 } from '../utils/calculator';
-import { getEffectiveYearRate, getOfficialConvenioExtraAmount } from '../data/convenioZaragoza';
+import { getEffectiveYearRate, getOfficialConvenioExtraAmount, isFTExtraName } from '../data/convenioZaragoza';
 import { getOfficialHolidaysForYear, DetectedHolidayInfo } from '../data/spanishHolidays';
 import { ConfirmModal } from './ConfirmModal';
 
@@ -79,6 +79,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
   const [selectedExtraConceptId, setSelectedExtraConceptId] = useState('');
   const [customExtraName, setCustomExtraName] = useState('');
   const [customExtraAmount, setCustomExtraAmount] = useState(25.00);
+  const [customExtraQuantity, setCustomExtraQuantity] = useState<number | undefined>(undefined);
   const [showRemoveShiftConfirm, setShowRemoveShiftConfirm] = useState(false);
   const [extraToRemove, setExtraToRemove] = useState<{ id: string; name: string } | null>(null);
 
@@ -181,6 +182,34 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
     currentAssignment.isHoliday ||
     currentAssignment.extras?.some((e) => e.name.toLowerCase().includes('plus festivo'))
   );
+
+  // Extra F/T (Fiesta / Trabajo) activo en el día seleccionado
+  const hasManualFT = Boolean(
+    currentAssignment.extras?.some((e) => isFTExtraName(e.name))
+  );
+
+  // Horas trabajadas del día seleccionado (turno + prolongación)
+  const selectedDayShiftTotalHours = useMemo(() => {
+    const isWorkingShift = Boolean(
+      currentShift &&
+      currentShift.code !== 'D' &&
+      currentShift.code !== 'V' &&
+      currentShift.code !== 'B' &&
+      !currentAssignment.isRest &&
+      !currentAssignment.isVacation &&
+      !currentAssignment.isSickLeave
+    );
+    let shiftH = 0;
+    if (isWorkingShift && currentShift) {
+      if (currentAssignment.customStartTime && currentAssignment.customEndTime) {
+        shiftH = calculateTotalHours(currentAssignment.customStartTime, currentAssignment.customEndTime);
+      } else {
+        shiftH = computeShiftRateFromConvenio(currentShift, activeYearRate).totalHours;
+      }
+    }
+    const lateH = (currentAssignment.lateFinishMinutes || 0) / 60;
+    return Math.round((shiftH + lateH) * 100) / 100;
+  }, [currentShift, currentAssignment, activeYearRate]);
 
   // Extras visibles debajo del panel sin duplicar el Plus Festivo
   const visibleDayExtras = useMemo(
@@ -463,6 +492,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
         if (asg.isHoliday || dayHasPlusFestivoExtra) {
           festivosCount++;
         }
+        let dayShiftWorkedH = 0;
         if (asg.shiftCode === 'D' || asg.isRest) {
           descansosCount++;
         } else if (asg.shiftCode === 'V' || asg.isVacation) {
@@ -472,17 +502,27 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
           const shiftDef = shiftsMap.get(asg.shiftCode) || shifts.find((s) => s.code === asg.shiftCode);
           if (shiftDef) {
             if (asg.customStartTime && asg.customEndTime) {
-              monthWorkedHours += calculateTotalHours(asg.customStartTime, asg.customEndTime);
+              dayShiftWorkedH = calculateTotalHours(asg.customStartTime, asg.customEndTime);
             } else {
-              monthWorkedHours += computeShiftRateFromConvenio(shiftDef, activeYearRate).totalHours;
+              dayShiftWorkedH = computeShiftRateFromConvenio(shiftDef, activeYearRate).totalHours;
             }
+            monthWorkedHours += dayShiftWorkedH;
           }
         }
+        const dayLateH = (asg.lateFinishMinutes || 0) / 60;
+        const dayTotalWithLate = dayShiftWorkedH + dayLateH;
         if (asg.extras) {
           asg.extras.forEach((e) => {
             const lowerName = e.name.toLowerCase();
             if (asg.isHoliday && lowerName.includes('plus festivo')) return;
             if (!isPuntualidadEnabledInProfile && (lowerName.includes('puntualidad') || lowerName.includes('inicio temprano'))) return;
+            if (isFTExtraName(e.name)) {
+              const ftHrs = dayTotalWithLate > 0
+                ? dayTotalWithLate
+                : (e.quantity && e.quantity > 0 ? e.quantity : (e.amount > 0 ? e.amount / horaOrdinariaRate : 0));
+              extrasTotal += parseFloat((ftHrs * horaOrdinariaRate).toFixed(2));
+              return;
+            }
             const convAmt = getOfficialConvenioExtraAmount(e.name, activeYearRate);
             const qty = e.quantity && e.quantity > 0 ? e.quantity : 1;
             const isHourlyOfficial =
@@ -663,9 +703,16 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
     const extrasSum =
       currentAssignment.extras?.reduce((sum, e) => {
         const lower = e.name.toLowerCase();
-        // Evitar doble cómputo de Plus Festivo, Retén, Quebranto o Conductor
+        // Evitar doble cómputo de Plus Festivo, Retén, Quebranto, Conductor o F/T sobre turno ya valorado en base
         if (lower.includes('plus festivo')) {
           return sum;
+        }
+        if (isFTExtraName(e.name)) {
+          if (currentShift && currentShift.code !== 'D' && currentShift.code !== 'V' && currentShift.code !== 'B') {
+            return sum;
+          }
+          const ftHrs = e.quantity && e.quantity > 0 ? e.quantity : (e.amount > 0 ? e.amount / horaOrdinariaRate : 0);
+          return sum + parseFloat((ftHrs * horaOrdinariaRate).toFixed(2));
         }
         if ((lower.includes('reten') || lower.includes('retén')) && dayPlusStatus.hasRetenShift) {
           return sum;
@@ -824,8 +871,10 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
 
     const newExtra = {
       id: `dayextra-${Date.now()}`,
+      conceptId: selectedExtraConceptId || undefined,
       name,
       amount: isAddingReten ? plusRetenRate : amount,
+      ...(customExtraQuantity !== undefined && customExtraQuantity > 0 ? { quantity: customExtraQuantity } : {}),
     };
 
     updatedExtras.push(newExtra);
@@ -837,6 +886,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
     setIsAddingExtraModal(false);
     setSelectedExtraConceptId('');
     setCustomExtraName('');
+    setCustomExtraQuantity(undefined);
   };
 
   const handleRemoveExtra = (extraId: string) => {
@@ -964,6 +1014,9 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
             const dayHasManualHolidayPlus = Boolean(
               asg?.isHoliday || asg?.extras?.some((e) => e.name.toLowerCase().includes('plus festivo'))
             );
+            const dayHasFT = Boolean(
+              asg?.extras?.some((e) => isFTExtraName(e.name))
+            );
             const detectedHoliday = officialHolidaysMap.get(dStr);
 
             const isRest = shiftCode === 'D' || asg?.isRest;
@@ -1052,6 +1105,14 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                     {dayHasManualHolidayPlus && (
                       <span className="text-[10px] leading-none" title={`Plus Festivo manual (+${formatCurrency(plusFestivoRate)})`}>
                         🎉
+                      </span>
+                    )}
+                    {dayHasFT && (
+                      <span
+                        className="text-[7px] font-black px-1 py-0.2 rounded bg-teal-600 text-white leading-tight"
+                        title="Día F/T (Fiesta / Trabajo): horas abonadas aparte del salario base"
+                      >
+                        F/T
                       </span>
                     )}
                     {hasExtras && (
@@ -1290,6 +1351,16 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                           Plus festivo (+{formatCurrency(shiftRateCalc.holidayAmount)})
                         </span>
                       )}
+                      {hasManualFT && !isHoliday && (
+                        <span className="px-1.5 py-0.5 rounded bg-teal-100 text-teal-900 font-bold text-[10px]">
+                          F/T · {selectedDayShiftTotalHours.toLocaleString('es-ES')} h aparte de Salario Base
+                        </span>
+                      )}
+                      {!isHoliday && !hasManualFT && selectedDayShiftTotalHours > 9 && (
+                        <span className="px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-900 font-bold text-[10px]">
+                          +{parseFloat((selectedDayShiftTotalHours - 9).toFixed(2)).toLocaleString('es-ES')} h (&gt;9h) a Complementarias
+                        </span>
+                      )}
                     </div>
                     <span className="text-[10px] font-bold text-slate-500 uppercase bg-slate-200/70 px-1.5 py-0.5 rounded">
                       Convenio {selectedYear}
@@ -1353,6 +1424,50 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                 </span>
                 {hasManualPlusFestivo && (
                   <Check className="w-3 h-3 text-amber-800 stroke-[3]" />
+                )}
+              </button>
+
+              {/* Botón manual para marcar el día como F/T (Fiesta / Trabajo) */}
+              <button
+                type="button"
+                onClick={() => {
+                  const currentExtras = currentAssignment.extras || [];
+                  if (hasManualFT) {
+                    const filtered = currentExtras.filter((e) => !isFTExtraName(e.name));
+                    onUpdateAssignment(selectedDateStr, { extras: filtered });
+                  } else {
+                    const h = selectedDayShiftTotalHours > 0 ? selectedDayShiftTotalHours : undefined;
+                    const amt = h ? parseFloat((h * horaOrdinariaRate).toFixed(2)) : horaOrdinariaRate;
+                    onUpdateAssignment(selectedDateStr, {
+                      extras: [
+                        ...currentExtras,
+                        {
+                          id: `dayextra-ft-${Date.now()}`,
+                          conceptId: 'extra-ft',
+                          name: 'F/T (Fiesta / Trabajo)',
+                          amount: amt,
+                          ...(h ? { quantity: h } : {}),
+                          notes: 'Trabajo en día F/T: horas aparte del salario base',
+                        },
+                      ],
+                    });
+                  }
+                }}
+                className={`text-xs font-bold px-2.5 py-1 rounded-lg border flex items-center gap-1.5 transition-all ${
+                  hasManualFT
+                    ? 'bg-teal-100 border-teal-400 text-teal-900 ring-1 ring-teal-300 shadow-2xs'
+                    : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-teal-50 hover:border-teal-200 hover:text-teal-800'
+                }`}
+                title={`Marcar o quitar extra F/T (Fiesta / Trabajo). Las horas trabajadas ese día van aparte del salario base a ${formatCurrency(horaOrdinariaRate)}/h`}
+              >
+                <Sparkles className="w-3.5 h-3.5 text-teal-700" />
+                <span>
+                  {hasManualFT && selectedDayShiftTotalHours > 0
+                    ? `F/T (${selectedDayShiftTotalHours.toLocaleString('es-ES')} h)`
+                    : 'F/T (Fiesta / Trabajo)'}
+                </span>
+                {hasManualFT && (
+                  <Check className="w-3 h-3 text-teal-800 stroke-[3]" />
                 )}
               </button>
 
@@ -1729,29 +1844,44 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
           {visibleDayExtras.length > 0 ? (
             <div className="space-y-2">
               {visibleDayExtras.map((extra) => {
+                const isFT = isFTExtraName(extra.name);
                 const convAmt = getOfficialConvenioExtraAmount(extra.name, activeYearRate);
-                const qty = extra.quantity && extra.quantity > 0 ? extra.quantity : 1;
+                const qty = isFT
+                  ? (selectedDayShiftTotalHours > 0
+                      ? selectedDayShiftTotalHours
+                      : (extra.quantity && extra.quantity > 0 ? extra.quantity : 1))
+                  : (extra.quantity && extra.quantity > 0 ? extra.quantity : 1);
                 const isHourlyOfficial =
+                  isFT ||
                   extra.name.toLowerCase().includes('festiva') ||
                   extra.name.toLowerCase().includes('complementaria');
                 const displayedAmount =
-                  convAmt !== null
+                  isFT && selectedDayShiftTotalHours > 0
+                    ? parseFloat((selectedDayShiftTotalHours * horaOrdinariaRate).toFixed(2))
+                    : convAmt !== null
                     ? (isHourlyOfficial && extra.quantity === undefined ? extra.amount : parseFloat((qty * convAmt).toFixed(2)))
                     : extra.amount;
                 return (
                 <div
                   key={extra.id}
-                  className="flex items-center justify-between p-2.5 bg-amber-50/50 rounded-xl border border-amber-200/60 text-xs"
+                  className={`flex items-center justify-between p-2.5 rounded-xl border text-xs ${
+                    isFT
+                      ? 'bg-teal-50/70 border-teal-200/80'
+                      : 'bg-amber-50/50 border-amber-200/60'
+                  }`}
                 >
                   <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                    <span className={`w-2 h-2 rounded-full ${isFT ? 'bg-teal-600' : 'bg-amber-500'}`}></span>
                     <div>
-                      <p className="font-semibold text-slate-800">{extra.name}</p>
+                      <p className="font-semibold text-slate-800">
+                        {extra.name}
+                        {isFT && qty > 0 && ` (${qty.toLocaleString('es-ES')} h)`}
+                      </p>
                       {extra.notes && <p className="text-[10px] text-slate-500">{extra.notes}</p>}
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="font-bold font-mono text-emerald-700">
+                    <span className={`font-bold font-mono ${isFT ? 'text-teal-800' : 'text-emerald-700'}`}>
                       +{formatCurrency(displayedAmount)}
                     </span>
                     <button
@@ -2149,7 +2279,20 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                       if (found) {
                         setCustomExtraName(found.name);
                         const convAmt = getOfficialConvenioExtraAmount(found.name, activeYearRate);
-                        setCustomExtraAmount(convAmt ?? found.amount);
+                        const unitAmt = convAmt ?? found.amount;
+                        if (found.unit === 'hora' || isFTExtraName(found.name)) {
+                          const defaultHours =
+                            isFTExtraName(found.name) && selectedDayShiftTotalHours > 0
+                              ? selectedDayShiftTotalHours
+                              : 1;
+                          setCustomExtraQuantity(defaultHours);
+                          setCustomExtraAmount(parseFloat((defaultHours * unitAmt).toFixed(2)));
+                        } else {
+                          setCustomExtraQuantity(undefined);
+                          setCustomExtraAmount(unitAmt);
+                        }
+                      } else {
+                        setCustomExtraQuantity(undefined);
                       }
                     }}
                     className="w-full text-xs py-2 px-3 rounded-xl border border-slate-200 bg-white"
@@ -2160,7 +2303,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                       const convAmt = getOfficialConvenioExtraAmount(e.name, activeYearRate);
                       return (
                       <option key={e.id} value={e.id}>
-                        {e.name} (+{formatCurrency(convAmt ?? e.amount)})
+                        {e.name} (+{formatCurrency(convAmt ?? e.amount)}{e.unit === 'hora' ? '/h' : ''})
                       </option>
                       );
                     })}
@@ -2179,13 +2322,41 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                       setCustomExtraName(val);
                       const convAmt = getOfficialConvenioExtraAmount(val, activeYearRate);
                       if (convAmt !== null) {
-                        setCustomExtraAmount(convAmt);
+                        const qty = customExtraQuantity && customExtraQuantity > 0 ? customExtraQuantity : 1;
+                        setCustomExtraAmount(parseFloat((qty * convAmt).toFixed(2)));
                       }
                     }}
                     placeholder="ej. Plus retén o Limpieza interior autocar"
                     className="w-full text-xs py-2 px-3 rounded-xl border border-slate-200"
                   />
                 </div>
+
+                {(isFTExtraName(customExtraName) ||
+                  customExtraName.toLowerCase().includes('festiva') ||
+                  customExtraName.toLowerCase().includes('complementaria')) && (
+                  <div>
+                    <label className="text-xs font-semibold text-slate-600 block mb-1">
+                      Horas a computar ({formatCurrency(horaOrdinariaRate)}/h)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.25"
+                      min="0.25"
+                      value={customExtraQuantity ?? 1}
+                      onChange={(e) => {
+                        const h = parseFloat(e.target.value) || 0;
+                        setCustomExtraQuantity(h);
+                        setCustomExtraAmount(parseFloat((h * horaOrdinariaRate).toFixed(2)));
+                      }}
+                      className="w-full text-xs py-2 px-3 rounded-xl border border-slate-200 font-mono font-bold"
+                    />
+                    {isFTExtraName(customExtraName) && (
+                      <p className="text-[10.5px] text-teal-700 mt-1 font-semibold">
+                        Al indicar F/T en un día con turno asignado, sus horas van aparte del salario base automáticamente a {formatCurrency(horaOrdinariaRate)}/h.
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 <div>
                   <label className="text-xs font-semibold text-slate-600 block mb-1">
