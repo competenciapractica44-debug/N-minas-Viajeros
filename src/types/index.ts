@@ -54,6 +54,7 @@ export interface DayAssignment {
   date: string; // "YYYY-MM-DD"
   shiftId?: string; // References ShiftDefinition.id or special 'D' (Descanso), 'R' (Reserva), 'V' (Vacaciones), 'B' (Baja)
   shiftCode?: string;
+  shiftSnapshot?: ShiftDefinition; // Instantánea congelada del turno en meses anteriores o validados
   isHoliday?: boolean;
   isSunday?: boolean;
   isRest?: boolean;
@@ -267,6 +268,23 @@ export interface PayrollBreakdown {
   ssEmpresaFogasa: number; // 0.20%
   ssEmpresaMEI: number; // 0.58%
   totalCosteEmpresa: number;
+
+  // Trazabilidad de validación mensual y arrastre de horas
+  carriedHoursBalance?: number;
+  carriedDeficitAppliedHours?: number;
+  remainingYearRecalculatedHours?: number;
+  hasMidYearJornadaChange?: boolean;
+
+  // Bolsa de horas (generación, descuento en vacaciones y saldo empleado/empresa)
+  cuotaFijaMensualContrato?: number;
+  bolsaSaldoAnterior?: number;
+  bolsaGeneradaReservaMes?: number;
+  bolsaDescontadaVacacionesMes?: number;
+  bolsaHorasMes?: number;
+  bolsaHorasAcumulada?: number;
+  deficitAnteriorPendiente?: number;
+  deficitPendienteAlCierre?: number;
+  diferenciaRealVsTeoricasMes?: number;
 }
 
 export interface MonthlySalaryEvolution {
@@ -283,7 +301,38 @@ export interface MonthlySalaryEvolution {
   workedDays: number;
   totalHours: number;
   ordinaryConvenioHours?: number;
+  isValidated?: boolean;
+  jornadaPct?: number;
+  irpfPercentage?: number;
 }
+
+export interface ValidatedMonthRecord {
+  monthKey: string; // YYYY-MM (ej: 2026-03)
+  year: number;
+  month: number; // 1 a 12
+  validatedAt: string; // ISO timestamp
+  jornadaPct: number; // % de jornada aplicado y congelado al validar
+  contractType: 'indefinido' | 'temporal' | 'tiempo_parcial';
+  irpfPercentage: number; // % de retención IRPF aplicado y congelado al validar
+  salaryBaseRateMode?: 'convenio_53_18' | 'masats_39_89';
+  prorrateoPagasExtra?: 'tres_pagas' | 'una_paga' | 'ninguna';
+  extrasCutoffMode?: ExtrasCutoffMode;
+  profileSnapshot: WorkerProfile;
+  horasRealizadasMesNatural: number;
+  horasTeoricasMes: number;
+  saldoMesHoras: number;
+  bolsaAcumuladaAlCierre: number;
+  filledDaysCount: number;
+  daysInMonth: number;
+  payrollSnapshot: PayrollBreakdown;
+  shiftsSnapshot?: ShiftDefinition[];
+  assignmentsSnapshot?: DayAssignment[];
+  yearRateSnapshot?: ConvenioYearRate;
+  drivePdfFileName?: string;
+  driveJsonFileName?: string;
+}
+
+export type ValidatedMonthsMap = Record<string, ValidatedMonthRecord>;
 
 export type AnnualExtrasPayMode = 'prorrateadas' | 'integras' | 'mixta_marzo_prorr';
 export type BolsaRepartoMode = 'lineal' | 'equilibrado';
@@ -319,4 +368,5 @@ export interface AnnualYearOverrideData {
 }
 
 export type AnnualCalendarState = Record<number, AnnualYearOverrideData>;
+
 

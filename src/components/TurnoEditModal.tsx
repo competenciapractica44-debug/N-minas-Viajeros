@@ -776,6 +776,11 @@ export const TurnoEditModal: React.FC<TurnoEditModalProps> = ({
 
         {/* Modal Bottom Actions */}
         <div className="p-4 bg-slate-50 border-t border-slate-200 space-y-2 sticky bottom-0">
+          {shiftToEdit && (
+            <p className="text-[11px] text-slate-600 bg-white border border-slate-200/80 rounded-xl px-3 py-1.5 leading-snug">
+              Los cambios de duración, horario o pluses aplicarán a partir del mes activo sin modificar automáticamente nóminas validadas ni turnos ya introducidos en meses anteriores.
+            </p>
+          )}
           <button
             type="button"
             onClick={handleSave}

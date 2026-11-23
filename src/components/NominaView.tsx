@@ -11,6 +11,9 @@ import {
   ChevronUp,
   Cloud,
   RefreshCw,
+  Lock,
+  Unlock,
+  ShieldCheck,
 } from 'lucide-react';
 import {
   PayrollBreakdown,
@@ -19,11 +22,15 @@ import {
   MonthlySalaryEvolution,
   DayAssignment,
   ShiftDefinition,
+  ValidatedMonthRecord,
+  ValidatedMonthsMap,
 } from '../types';
 import { getEffectiveYearRate } from '../data/convenioZaragoza';
 import { formatCurrency } from '../utils/exporter';
 import { ANNUAL_VACATION_DAYS_CONVENIO, getDaysInYear } from '../utils/calculator';
+import { AnnualLiquidationResult } from '../utils/annualCalendar';
 import { YearlySalaryChart } from './YearlySalaryChart';
+import { ConfirmModal } from './ConfirmModal';
 
 interface NominaViewProps {
   payroll: PayrollBreakdown;
@@ -44,6 +51,12 @@ interface NominaViewProps {
   lastCalculatedAt?: Date;
   isRecalculating?: boolean;
   onRecalculate?: () => void;
+  validatedMonth?: ValidatedMonthRecord;
+  validatedMonths?: ValidatedMonthsMap;
+  annualSummary?: AnnualLiquidationResult;
+  isValidatingMonth?: boolean;
+  onValidateMonth?: () => Promise<{ success: boolean; driveSaved: boolean; message: string }>;
+  onUnvalidateMonth?: () => Promise<void> | void;
 }
 
 export const NominaView: React.FC<NominaViewProps> = ({
@@ -65,8 +78,16 @@ export const NominaView: React.FC<NominaViewProps> = ({
   lastCalculatedAt,
   isRecalculating,
   onRecalculate,
+  validatedMonth,
+  annualSummary,
+  isValidatingMonth,
+  onValidateMonth,
+  onUnvalidateMonth,
 }) => {
   const [showExtrasDetails, setShowExtrasDetails] = useState(false);
+  const [showUnvalidateConfirm, setShowUnvalidateConfirm] = useState(false);
+  const [showIncompleteValidateConfirm, setShowIncompleteValidateConfirm] = useState(false);
+  const [validationToast, setValidationToast] = useState<string | null>(null);
 
   const isPartTime = profile.contractType === 'tiempo_parcial';
   const currentJornadaPercentage = isPartTime
@@ -284,6 +305,9 @@ export const NominaView: React.FC<NominaViewProps> = ({
     if (asg.isRest || uc === 'D' || asg.shiftId === 'D') return 'Descanso / Fiesta (D)';
     if (asg.isSickLeave || uc === 'B' || asg.shiftId === 'B') return 'Baja / IT (B)';
     const code = (asg.shiftCode || asg.shiftId || '').trim();
+    if (asg.shiftSnapshot) {
+      return `Turno ${asg.shiftSnapshot.code} (${asg.shiftSnapshot.startTime}–${asg.shiftSnapshot.endTime})`;
+    }
     if (code) {
       const def = shiftsByCode.get(code.toUpperCase());
       return def ? `Turno ${def.code} (${def.startTime}–${def.endTime})` : `Turno ${code}`;
@@ -430,6 +454,43 @@ export const NominaView: React.FC<NominaViewProps> = ({
 
           {/* Quick Export Action Buttons */}
           <div className="flex flex-wrap items-center gap-2">
+            {onValidateMonth && !validatedMonth && (
+              <button
+                type="button"
+                disabled={isValidatingMonth}
+                onClick={() => {
+                  const prefix = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-`;
+                  const daysTotal = new Date(selectedYear, selectedMonth, 0).getDate();
+                  const filledCount = assignments.filter((a) => a.date?.startsWith(prefix) && hasRecord(a)).length;
+                  if (filledCount >= daysTotal) {
+                    void onValidateMonth().then((res) => {
+                      if (res?.message) {
+                        setValidationToast(res.message);
+                        window.setTimeout(() => setValidationToast(null), 6000);
+                      }
+                    });
+                  } else {
+                    setShowIncompleteValidateConfirm(true);
+                  }
+                }}
+                className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-3.5 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-extrabold rounded-xl shadow-xs transition-colors cursor-pointer disabled:opacity-60"
+                title="Congelar el % de jornada y el % IRPF de este mes y guardar su nómina"
+              >
+                <ShieldCheck className="w-4 h-4" />
+                <span>{isValidatingMonth ? 'Validando...' : 'Validar Mes'}</span>
+              </button>
+            )}
+            {validatedMonth && onUnvalidateMonth && (
+              <button
+                type="button"
+                onClick={() => setShowUnvalidateConfirm(true)}
+                className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-2.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 text-xs font-bold rounded-xl border border-emerald-400/40 transition-colors cursor-pointer"
+                title="Este mes está validado y protegido. Pulsa para reabrirlo si necesitas editarlo."
+              >
+                <Lock className="w-3.5 h-3.5" />
+                <span>Validada · Reabrir</span>
+              </button>
+            )}
             {onOpenDriveNominasModal && (
               <button
                 onClick={onOpenDriveNominasModal}
@@ -456,6 +517,12 @@ export const NominaView: React.FC<NominaViewProps> = ({
             </button>
           </div>
         </div>
+
+        {validationToast && (
+          <div className="mt-3 bg-emerald-500/25 border border-emerald-400/40 text-emerald-100 px-3.5 py-2 rounded-xl text-xs font-bold">
+            {validationToast}
+          </div>
+        )}
 
         {/* Mini KPI row inside hero card */}
         <div className="mt-6 pt-4 border-t border-white/10 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
@@ -542,21 +609,28 @@ export const NominaView: React.FC<NominaViewProps> = ({
           </div>
         </div>
 
-        {/* Live recalculation & no-auto-save confirmation strip */}
+        {/* Live recalculation / Validated frozen banner */}
         <div className="mt-4 pt-3 border-t border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[11px]">
           <div className="flex items-center gap-2 text-slate-300">
-            <span className={`w-2 h-2 rounded-full shrink-0 ${isRecalculating ? 'bg-amber-400 animate-ping' : 'bg-emerald-400'}`}></span>
-            <span>
-              {isRecalculating
-                ? 'Sincronizando y recalculando nómina con los datos del calendario...'
-                : `Calculada en vivo desde el calendario (${
-                    lastCalculatedAt
-                      ? lastCalculatedAt.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-                      : 'ahora'
-                  }) · No se guarda hasta que elijas archivarla o descargarla`}
-            </span>
+            <span className={`w-2 h-2 rounded-full shrink-0 ${validatedMonth ? 'bg-emerald-400' : isRecalculating ? 'bg-amber-400 animate-ping' : 'bg-sky-400'}`}></span>
+            {validatedMonth ? (
+              <span className="text-emerald-200">
+                <strong>Nómina validada el {new Date(validatedMonth.validatedAt).toLocaleDateString('es-ES')}</strong>{' '}
+                (Jornada {validatedMonth.jornadaPct}% · IRPF {validatedMonth.irpfPercentage}%). Los cambios posteriores de Jornada, IRPF o Turnos solo aplican a meses sin validar.
+              </span>
+            ) : (
+              <span>
+                {isRecalculating
+                  ? 'Sincronizando y recalculando nómina con los datos del calendario...'
+                  : `Calculada en vivo desde el calendario (${
+                      lastCalculatedAt
+                        ? lastCalculatedAt.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                        : 'ahora'
+                    }) · Pulsa "Validar Mes" cuando completes el mes para guardar nómina y fijar IRPF, jornada y turnos`}
+              </span>
+            )}
           </div>
-          {onRecalculate && (
+          {!validatedMonth && onRecalculate && (
             <button
               type="button"
               onClick={onRecalculate}
@@ -569,6 +643,26 @@ export const NominaView: React.FC<NominaViewProps> = ({
             </button>
           )}
         </div>
+
+        {(payroll.carriedDeficitAppliedHours || (annualSummary && annualSummary.validatedMonthsCount > 0)) && (
+          <div className="mt-2.5 bg-white/10 border border-white/15 rounded-xl px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-200">
+            <span>
+              <strong>Arrastre de meses validados ({annualSummary?.validatedMonthsCount || 0}/12):</strong>{' '}
+              saldo acumulado{' '}
+              <strong className="font-mono text-white">
+                {formatHoursES(annualSummary?.saldoArrastradoValidado ?? payroll.carriedHoursBalance ?? 0)} h
+              </strong>
+              {payroll.carriedDeficitAppliedHours && payroll.carriedDeficitAppliedHours > 0
+                ? ` · Compensadas ${formatHoursES(payroll.carriedDeficitAppliedHours)} h de déficit previo antes de generar complementarias`
+                : ''}
+            </span>
+            {annualSummary && annualSummary.unvalidatedMonthsCount > 0 && (
+              <span className="font-mono text-sky-200 font-bold">
+                Resto año ({Math.round(payroll.partTimeFactor * 100)}%): {formatHoursES(annualSummary.horasPendientesAjustadasResto)} h ({formatHoursES(annualSummary.cuotaMensualAjustadaResto)} h/mes)
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Salario Base Mode Selector Pill (Convenio 53.18 vs Tarifa alternativa) */}
@@ -592,8 +686,9 @@ export const NominaView: React.FC<NominaViewProps> = ({
         <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-blue-200/80 shadow-2xs shrink-0 w-full sm:w-auto">
           <button
             type="button"
+            disabled={Boolean(validatedMonth)}
             onClick={() => onUpdateProfile({ salaryBaseRateMode: 'convenio_53_18' })}
-            className={`flex-1 sm:flex-none px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+            className={`flex-1 sm:flex-none px-3 py-1.5 rounded-lg text-xs font-bold transition-all disabled:opacity-60 ${
               !isMasatsBaseMode
                 ? 'bg-blue-600 text-white shadow-2xs'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
@@ -603,8 +698,9 @@ export const NominaView: React.FC<NominaViewProps> = ({
           </button>
           <button
             type="button"
+            disabled={Boolean(validatedMonth)}
             onClick={() => onUpdateProfile({ salaryBaseRateMode: 'masats_39_89' })}
-            className={`flex-1 sm:flex-none px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+            className={`flex-1 sm:flex-none px-3 py-1.5 rounded-lg text-xs font-bold transition-all disabled:opacity-60 ${
               isMasatsBaseMode
                 ? 'bg-blue-600 text-white shadow-2xs'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
@@ -715,6 +811,238 @@ export const NominaView: React.FC<NominaViewProps> = ({
             </table>
           </div>
         </div>
+
+      {/* Apartado Específico: Bolsa de Horas, Vacaciones y Saldo (A favor del Empleado vs Empresa) */}
+      {(() => {
+        const formatSignedH = (val: number) => {
+          const rounded = Math.round(val * 100) / 100;
+          if (Math.abs(rounded) < 0.005) return '0,00 h';
+          return `${rounded > 0 ? '+' : '−'}${formatHoursES(Math.abs(rounded))} h`;
+        };
+
+        const rawDiff =
+          payroll.diferenciaRealVsTeoricasMes !== undefined
+            ? payroll.diferenciaRealVsTeoricasMes
+            : parseFloat((payroll.ordinaryConvenioHours - payroll.convenioMonthlyHoursTarget).toFixed(2));
+        const deficitPrevio = payroll.deficitAnteriorPendiente ?? 0;
+        const deficitCompensado = payroll.carriedDeficitAppliedHours ?? 0;
+        const deficitAlCierre =
+          payroll.deficitPendienteAlCierre !== undefined
+            ? payroll.deficitPendienteAlCierre
+            : rawDiff < 0
+              ? parseFloat((deficitPrevio + rawDiff).toFixed(2))
+              : parseFloat(Math.min(0, deficitPrevio + deficitCompensado).toFixed(2));
+
+        const cuotaFija =
+          payroll.cuotaFijaMensualContrato ??
+          parseFloat((payroll.convenioAnnualHoursTarget / 12).toFixed(2));
+        const bolsaAnterior = payroll.bolsaSaldoAnterior ?? payroll.carriedHoursBalance ?? 0;
+        const activeYearDays = Math.max(1, getDaysInYear(payroll.year) - ANNUAL_VACATION_DAYS_CONVENIO);
+        const dailyRateEst = (payroll.convenioAnnualHoursBase * payroll.partTimeFactor) / activeYearDays;
+        const reservaMes =
+          payroll.bolsaGeneradaReservaMes ??
+          parseFloat((payroll.totalDays * dailyRateEst - cuotaFija).toFixed(2));
+        const descVacMes =
+          payroll.bolsaDescontadaVacacionesMes ??
+          parseFloat((payroll.vacationDays * dailyRateEst).toFixed(2));
+        const movimientoBolsaMes =
+          payroll.bolsaHorasMes ??
+          parseFloat((payroll.ordinaryConvenioHours - payroll.horasExcesoMensual + payroll.sickDays * dailyRateEst - cuotaFija).toFixed(2));
+        const bolsaCierre =
+          payroll.bolsaHorasAcumulada ?? parseFloat((bolsaAnterior + movimientoBolsaMes).toFixed(2));
+
+        const isBolsaPositive = bolsaCierre > 0.004;
+        const isBolsaNegative = bolsaCierre < -0.004;
+        const hasDeficitDebt = deficitAlCierre < -0.004;
+
+        return (
+          <div className="bg-white rounded-3xl border border-slate-200/90 shadow-xs overflow-hidden">
+            <div className="p-4 sm:p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-slate-50/70">
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="px-2 py-0.5 rounded-md bg-indigo-100 text-indigo-800 text-[10px] font-bold font-mono uppercase">
+                    Bolsa de Horas
+                  </span>
+                  <h3 className="text-sm font-bold text-slate-900">
+                    Cálculo de Complementarias, Descuento de Vacaciones y Saldo de Horas
+                  </h3>
+                </div>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Las horas <strong>festivas{payroll.horasFT > 0 ? ' y F/T' : ''}</strong> se cobran aparte sí o sí y no entran en este cálculo. La bolsa se genera mes a mes y se descuenta al disfrutar vacaciones.
+                </p>
+              </div>
+
+              <div className="shrink-0">
+                {isBolsaPositive ? (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-extrabold font-mono">
+                    <span>Saldo POSITIVO (a favor del empleado):</span>
+                    <span>{formatSignedH(bolsaCierre)}</span>
+                  </span>
+                ) : isBolsaNegative ? (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-50 text-rose-800 border border-rose-200 text-xs font-extrabold font-mono">
+                    <span>Saldo NEGATIVO (debe el empleado):</span>
+                    <span>{formatSignedH(bolsaCierre)}</span>
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 text-slate-700 border border-slate-200 text-xs font-extrabold font-mono">
+                    <span>Saldo Bolsa: 0,00 h</span>
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="p-4 sm:p-5 grid grid-cols-1 lg:grid-cols-3 gap-3.5 text-xs">
+              {/* Bloque 1: Cálculo de Horas Complementarias del Mes */}
+              <div className="rounded-2xl border border-slate-200/80 bg-slate-50/60 p-3.5 space-y-2">
+                <p className="text-[11px] font-extrabold uppercase tracking-wider text-slate-700">
+                  1. Complementarias del Mes
+                </p>
+                <div className="space-y-1.5 text-[11px]">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-600">Horas reales ordinarias (sin fest./F.T):</span>
+                    <span className="font-mono font-bold text-slate-900">{formatHoursES(payroll.ordinaryConvenioHours)} h</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-600">(−) Horas teóricas del mes:</span>
+                    <span className="font-mono font-bold text-slate-700">−{formatHoursES(payroll.convenioMonthlyHoursTarget)} h</span>
+                  </div>
+                  <div className="flex items-center justify-between pt-1 border-t border-slate-200">
+                    <span className="font-semibold text-slate-800">Diferencia mes (Real − Teóricas):</span>
+                    <span className={`font-mono font-extrabold ${rawDiff >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                      {formatSignedH(rawDiff)}
+                    </span>
+                  </div>
+                  {deficitCompensado > 0 && (
+                    <div className="flex items-center justify-between text-amber-800 bg-amber-50 px-2 py-1 rounded-lg border border-amber-200/80">
+                      <span>(−) Descuento déficit anterior:</span>
+                      <span className="font-mono font-bold">−{formatHoursES(deficitCompensado)} h</span>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between pt-1 border-t border-slate-200">
+                    <span className="font-bold text-indigo-900">Exceso mensual a cobrar:</span>
+                    <span className="font-mono font-extrabold text-indigo-700">{formatHoursES(payroll.horasExcesoMensual)} h</span>
+                  </div>
+                  {(payroll.horasExcesoDiario9h > 0 || payroll.horasFestivas > 0 || payroll.horasFT > 0) && (
+                    <div className="text-[10px] text-slate-500 pt-1 leading-snug">
+                      {payroll.horasExcesoDiario9h > 0 && (
+                        <span>+{formatHoursES(payroll.horasExcesoDiario9h)} h por turnos &gt;9h a complementarias. </span>
+                      )}
+                      {(payroll.horasFestivas > 0 || payroll.horasFT > 0) && (
+                        <span>
+                          Aparte: {payroll.horasFestivas > 0 ? `${formatHoursES(payroll.horasFestivas)} h festivas` : ''}
+                          {payroll.horasFestivas > 0 && payroll.horasFT > 0 ? ' + ' : ''}
+                          {payroll.horasFT > 0 ? `${formatHoursES(payroll.horasFT)} h F/T` : ''} cobradas directo.
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Bloque 2: Bolsa de Horas y Descuento en Vacaciones */}
+              <div className="rounded-2xl border border-slate-200/80 bg-slate-50/60 p-3.5 space-y-2">
+                <p className="text-[11px] font-extrabold uppercase tracking-wider text-slate-700">
+                  2. Bolsa Anual (Enero = 0,00 h)
+                </p>
+                <div className="space-y-1.5 text-[11px]">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-600">Bolsa acumulada mes anterior:</span>
+                    <span className={`font-mono font-bold ${bolsaAnterior >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                      {formatSignedH(bolsaAnterior)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-600">Generación reserva mes (vs {formatHoursES(cuotaFija)} h):</span>
+                    <span className={`font-mono font-bold ${reservaMes >= 0 ? 'text-emerald-700' : 'text-slate-700'}`}>
+                      {formatSignedH(reservaMes)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-600">
+                      Descuento vacaciones ({payroll.vacationDays}d en {monthName}):
+                    </span>
+                    <span className={`font-mono font-bold ${descVacMes > 0 ? 'text-amber-700' : 'text-slate-400'}`}>
+                      {descVacMes > 0 ? `−${formatHoursES(descVacMes)} h` : '0,00 h'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-600">Movimiento neto bolsa este mes:</span>
+                    <span className={`font-mono font-bold ${movimientoBolsaMes >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                      {formatSignedH(movimientoBolsaMes)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between pt-1 border-t border-slate-200">
+                    <span className="font-bold text-slate-900">Bolsa al cierre de {monthName}:</span>
+                    <span className={`font-mono font-extrabold ${isBolsaPositive ? 'text-emerald-700' : isBolsaNegative ? 'text-rose-700' : 'text-slate-800'}`}>
+                      {formatSignedH(bolsaCierre)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Bloque 3: Estado del Saldo (Empleado vs Empresa) */}
+              <div
+                className={`rounded-2xl border p-3.5 flex flex-col justify-between space-y-2 ${
+                  hasDeficitDebt || isBolsaNegative
+                    ? 'border-rose-200 bg-rose-50/60'
+                    : isBolsaPositive
+                      ? 'border-emerald-200 bg-emerald-50/60'
+                      : 'border-slate-200 bg-slate-50/60'
+                }`}
+              >
+                <div className="space-y-1.5">
+                  <p className="text-[11px] font-extrabold uppercase tracking-wider text-slate-800">
+                    3. Situación del Saldo
+                  </p>
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-[11px] font-semibold text-slate-700">
+                      {isBolsaPositive
+                        ? 'A favor del empleado:'
+                        : isBolsaNegative
+                          ? 'A favor de la empresa (las debe):'
+                          : 'Saldo de bolsa:'}
+                    </span>
+                    <span
+                      className={`text-lg font-black font-mono ${
+                        isBolsaPositive ? 'text-emerald-700' : isBolsaNegative ? 'text-rose-700' : 'text-slate-800'
+                      }`}
+                    >
+                      {formatSignedH(bolsaCierre)}
+                    </span>
+                  </div>
+                  <p className="text-[11px] leading-snug text-slate-600">
+                    {isBolsaPositive
+                      ? 'Saldo positivo acumulado a favor del trabajador para cubrir futuros días de vacaciones.'
+                      : isBolsaNegative
+                        ? 'Saldo negativo a favor de la empresa: incluye vacaciones disfrutadas por adelantado o horas pendientes de cubrir durante el año.'
+                        : 'Las horas trabajadas y las vacaciones disfrutadas quedan exactamente cuadradas.'}
+                  </p>
+                </div>
+
+                <div
+                  className={`pt-2 border-t text-[11px] ${
+                    hasDeficitDebt
+                      ? 'border-rose-200 text-rose-900'
+                      : 'border-slate-200/70 text-slate-700'
+                  }`}
+                >
+                  <div className="flex items-center justify-between font-bold">
+                    <span>Déficit a descontar en próx. excesos:</span>
+                    <span className={`font-mono ${hasDeficitDebt ? 'text-rose-700' : 'text-emerald-700'}`}>
+                      {hasDeficitDebt ? formatSignedH(deficitAlCierre) : '0,00 h'}
+                    </span>
+                  </div>
+                  {hasDeficitDebt && (
+                    <p className="text-[10px] text-rose-700 mt-0.5 leading-snug">
+                      El empleado debe {formatHoursES(Math.abs(deficitAlCierre))} h respecto a las teóricas; se descontarán en los próximos meses que sobren horas antes de cobrar complementarias.
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Visualización de Datos Recharts: Evolución Anual del Salario Neto */}
       <YearlySalaryChart
@@ -1547,6 +1875,43 @@ export const NominaView: React.FC<NominaViewProps> = ({
           Incluye cotizaciones empresariales a la Seguridad Social (23,60% CC + 5,50% Desempleo + 0,60% FP + 0,20% FOGASA + MEI).
         </p>
       </div>
+
+      <ConfirmModal
+        isOpen={showIncompleteValidateConfirm}
+        title={`Validar ${monthName} ${selectedYear}`}
+        message={`Es posible que aún queden días sin asignar en ${monthName}.\n\nAl validar, se guardará esta nómina con Jornada del ${currentJornadaPercentage}% e IRPF del ${profile.irpfPercentage}%, y se llevará el saldo de horas resultante a los meses siguientes. ¿Deseas validar el mes ahora?`}
+        confirmText="Sí, validar y guardar nómina"
+        cancelText="Cancelar"
+        isDestructive={false}
+        onConfirm={() => {
+          setShowIncompleteValidateConfirm(false);
+          if (onValidateMonth) {
+            void onValidateMonth().then((res) => {
+              if (res?.message) {
+                setValidationToast(res.message);
+                window.setTimeout(() => setValidationToast(null), 6000);
+              }
+            });
+          }
+        }}
+        onCancel={() => setShowIncompleteValidateConfirm(false)}
+      />
+
+      <ConfirmModal
+        isOpen={showUnvalidateConfirm}
+        title={`¿Reabrir nómina de ${monthName} ${selectedYear}?`}
+        message={`Esta nómina estaba validada y congelada con Jornada ${validatedMonth?.jornadaPct ?? 100}% e IRPF ${validatedMonth?.irpfPercentage ?? 0}%.\n\nSi la reabres, volverá a calcularse con los parámetros actuales de tu ficha.`}
+        confirmText="Sí, reabrir mes"
+        cancelText="Mantener validada"
+        isDestructive={true}
+        onConfirm={() => {
+          setShowUnvalidateConfirm(false);
+          if (onUnvalidateMonth) {
+            void onUnvalidateMonth();
+          }
+        }}
+        onCancel={() => setShowUnvalidateConfirm(false)}
+      />
     </div>
   );
 };

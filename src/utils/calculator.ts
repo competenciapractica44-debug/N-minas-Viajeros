@@ -9,6 +9,7 @@ import {
   PayrollExtraItemDetail,
   MonthlySalaryEvolution,
   PayrollLineItem,
+  ValidatedMonthsMap,
 } from '../types';
 import { getEffectiveYearRate, getOfficialConvenioExtraAmount, isFTExtraName } from '../data/convenioZaragoza';
 import { ALL_INITIAL_SHIFTS } from '../data/defaultTurnos';
@@ -38,6 +39,9 @@ function resolveShiftDefinition(
   shiftsMap: Map<string, ShiftDefinition>
 ): ShiftDefinition | undefined {
   if (!assignment) return undefined;
+  if (assignment.shiftSnapshot) {
+    return assignment.shiftSnapshot;
+  }
   const rawCode = normalizeShiftCodeCandidate(assignment.shiftCode);
   const rawId = assignment.shiftId ? String(assignment.shiftId).trim() : undefined;
 
@@ -419,7 +423,8 @@ export function calculateMonthlyPayroll(
   yearRate: ConvenioYearRate,
   profile: WorkerProfile,
   year: number,
-  month: number
+  month: number,
+  validatedMonths?: ValidatedMonthsMap
 ): PayrollBreakdown {
   const monthKey = `${year}-${String(month).padStart(2, '0')}`;
   const daysInMonth = new Date(year, month, 0).getDate();
@@ -507,6 +512,7 @@ export function calculateMonthlyPayroll(
         ...normalizedItem,
         shiftCode: incomingHasShift ? normalizedItem.shiftCode : existing.shiftCode,
         shiftId: incomingHasShift ? normalizedItem.shiftId : existing.shiftId,
+        shiftSnapshot: incomingHasShift ? normalizedItem.shiftSnapshot : existing.shiftSnapshot,
         isRest: incomingHasShift ? normalizedItem.isRest : existing.isRest,
         isVacation: incomingHasShift ? normalizedItem.isVacation : existing.isVacation,
         isSickLeave: incomingHasShift ? normalizedItem.isSickLeave : existing.isSickLeave,
@@ -1422,18 +1428,207 @@ export function calculateMonthlyPayroll(
     (finalPuntualidadCount * plusPuntualidadUnitRate).toFixed(2)
   );
 
-  // Horas Convenio objetivo (Art. 14, escalado por % de jornada y repartido en días activos del año sin 31d vac.)
+  // Horas Convenio objetivo (Art. 14, escalado por % de jornada de cada mes validado/actual)
   const convenioAnnualHoursBase =
     yearRate.horasJornadaAnual && yearRate.horasJornadaAnual > 0 ? yearRate.horasJornadaAnual : 1776;
-  const convenioAnnualHoursTarget = parseFloat((convenioAnnualHoursBase * partTimeFactor).toFixed(2));
+  const currentJornadaPct = Math.round(partTimeFactor * 100);
+  const yearValidatedRecords = validatedMonths
+    ? Object.values(validatedMonths)
+        .filter((v) => v.year === year)
+        .sort((a, b) => a.month - b.month)
+    : [];
+  const hasMidYearJornadaChange = yearValidatedRecords.some(
+    (v) => Math.round(v.jornadaPct) !== currentJornadaPct
+  );
+
+  let convenioAnnualHoursTarget = parseFloat((convenioAnnualHoursBase * partTimeFactor).toFixed(2));
+  if (hasMidYearJornadaChange) {
+    const daysInYearCount = getDaysInYear(year);
+    const activeDaysInYearCount = Math.max(1, daysInYearCount - ANNUAL_VACATION_DAYS_CONVENIO);
+    let weightedSum = 0;
+    for (let mIdx = 1; mIdx <= 12; mIdx++) {
+      const mKey = `${year}-${String(mIdx).padStart(2, '0')}`;
+      const vRec = validatedMonths?.[mKey];
+      const factorM = vRec ? Math.min(100, Math.max(1, vRec.jornadaPct)) / 100 : partTimeFactor;
+      const daysInM = new Date(year, mIdx, 0).getDate();
+      const estVacM = (daysInM * ANNUAL_VACATION_DAYS_CONVENIO) / daysInYearCount;
+      const activeM =
+        mIdx === month
+          ? Math.max(0, daysInM - vacationDays - sickDays)
+          : vRec
+            ? Math.max(0, vRec.payrollSnapshot.totalDays - vRec.payrollSnapshot.vacationDays - vRec.payrollSnapshot.sickDays)
+            : Math.max(0, daysInM - estVacM);
+      const weightRatio =
+        mIdx === month || vRec
+          ? activeM / activeDaysInYearCount
+          : (daysInM / daysInYearCount);
+      weightedSum += convenioAnnualHoursBase * weightRatio * factorM;
+    }
+    convenioAnnualHoursTarget = parseFloat(weightedSum.toFixed(2));
+  }
+
   const monthlyTargetInfo = calculateMonthlyConvenioHoursTarget(
-    convenioAnnualHoursTarget,
+    parseFloat((convenioAnnualHoursBase * partTimeFactor).toFixed(2)),
     year,
     month,
     vacationDays,
     sickDays
   );
   const convenioMonthlyHoursTarget = monthlyTargetInfo.monthlyTargetHours;
+
+  // Bolsa de horas y saldo de compensación desde Enero (0,00 h al 1 de enero) hasta el mes anterior
+  const activeDaysInYearForBag = Math.max(1, getDaysInYear(year) - ANNUAL_VACATION_DAYS_CONVENIO);
+  let runningBolsa = 0;
+  let runningDeficit = 0; // <= 0 horas negativas pendientes de compensar en meses siguientes con exceso
+
+  for (let prevM = 1; prevM < month; prevM++) {
+    const prevKey = `${year}-${String(prevM).padStart(2, '0')}`;
+    const vRec = validatedMonths?.[prevKey];
+
+    let mOrd = 0;
+    let mTarget = 0;
+    let mVac = 0;
+    let mSick = 0;
+    let mFactor = partTimeFactor;
+    let mPaidExcess = 0;
+    let hasPrevActivity = false;
+
+    if (vRec && vRec.payrollSnapshot) {
+      hasPrevActivity = true;
+      mOrd = vRec.payrollSnapshot.ordinaryConvenioHours;
+      mTarget = vRec.payrollSnapshot.convenioMonthlyHoursTarget;
+      mVac = vRec.payrollSnapshot.vacationDays;
+      mSick = vRec.payrollSnapshot.sickDays;
+      mFactor = vRec.jornadaPct ? Math.min(100, Math.max(1, vRec.jornadaPct)) / 100 : vRec.payrollSnapshot.partTimeFactor;
+      mPaidExcess = vRec.payrollSnapshot.horasExcesoMensual || 0;
+    } else {
+      const prevDaysCount = new Date(year, prevM, 0).getDate();
+      const prevCutoffRange = getExtrasDateRange(year, prevM, cutoffMode, customStartDay);
+      const prevPrefix = `${year}-${String(prevM).padStart(2, '0')}-`;
+
+      // Verificar si el mes previo no validado tiene turnos, vacaciones o bajas registradas
+      for (let d = 1; d <= prevDaysCount; d++) {
+        const dStr = `${prevPrefix}${String(d).padStart(2, '0')}`;
+        const asg = assignmentsByDate.get(dStr);
+        if (!asg) continue;
+        const uc = asg.shiftCode?.trim().toUpperCase();
+        if (asg.isVacation || uc === 'V' || asg.shiftId === 'V') {
+          mVac++;
+          hasPrevActivity = true;
+        } else if (asg.isSickLeave || uc === 'B' || asg.shiftId === 'B') {
+          mSick++;
+          hasPrevActivity = true;
+        } else if (asg.isRest || uc === 'D' || asg.shiftId === 'D') {
+          hasPrevActivity = true;
+        } else if (asg.shiftCode || asg.shiftId || (asg.lateFinishMinutes && asg.lateFinishMinutes > 0)) {
+          hasPrevActivity = true;
+        }
+      }
+
+      const prevCutoffDates = getDateRangeStrings(prevCutoffRange.startDateStr, prevCutoffRange.endDateStr);
+      for (const dateStr of prevCutoffDates) {
+        const asg = assignmentsByDate.get(dateStr);
+        if (!asg) continue;
+        const uc = asg.shiftCode?.trim().toUpperCase();
+        const isOff = Boolean(
+          asg.isRest || uc === 'D' || asg.shiftId === 'D' ||
+          asg.isVacation || uc === 'V' || asg.shiftId === 'V' ||
+          asg.isSickLeave || uc === 'B' || asg.shiftId === 'B'
+        );
+        if (isOff) {
+          hasPrevActivity = true;
+          continue;
+        }
+        const dayExtras = asg.extras || [];
+        const { dayPlusFestivoQty } = extractDayPlusQuantities(dayExtras);
+        const isPaidHolidayDay = Boolean(asg.isHoliday) || dayPlusFestivoQty > 0;
+        const dayHasFT = dayExtras.some((e) => isFTExtraName(e.name));
+        const resolvedShiftDef = resolveShiftDefinition(asg, shiftsMap);
+        const hasWorkedShift = Boolean(
+          (resolvedShiftDef && resolvedShiftDef.code !== 'D' && resolvedShiftDef.code !== 'V' && resolvedShiftDef.code !== 'B') ||
+          (!resolvedShiftDef && (asg.shiftCode || asg.shiftId))
+        );
+
+        let dayWorkedHrs = 0;
+        if (hasWorkedShift) {
+          hasPrevActivity = true;
+          if (asg.customStartTime && asg.customEndTime) {
+            dayWorkedHrs = calculateTotalHours(asg.customStartTime, asg.customEndTime);
+          } else if (resolvedShiftDef) {
+            dayWorkedHrs = computeShiftRateFromConvenio(resolvedShiftDef, yearRate, { isHoliday: Boolean(asg.isHoliday) }).totalHours;
+          }
+        }
+        if (asg.lateFinishMinutes && asg.lateFinishMinutes > 0) {
+          hasPrevActivity = true;
+          dayWorkedHrs += asg.lateFinishMinutes / 60;
+        }
+        if (!isPaidHolidayDay && !dayHasFT && dayWorkedHrs > 0) {
+          mOrd += Math.min(9, dayWorkedHrs);
+        }
+      }
+
+      mOrd = Math.round(mOrd * 100) / 100;
+      const mAnnualTarget = parseFloat((convenioAnnualHoursBase * mFactor).toFixed(2));
+      mTarget = calculateMonthlyConvenioHoursTarget(mAnnualTarget, year, prevM, mVac, mSick).monthlyTargetHours;
+    }
+
+    if (!hasPrevActivity) continue;
+
+    const mDiff = mOrd - mTarget;
+    if (!vRec || !vRec.payrollSnapshot) {
+      const mDeficitOwed = Math.max(0, -runningDeficit);
+      const mAppliedDeficit = mDiff > 0 ? Math.min(mDiff, mDeficitOwed) : 0;
+      mPaidExcess = Math.max(0, mDiff - mAppliedDeficit);
+    }
+
+    if (mDiff < 0) {
+      runningDeficit += mDiff;
+    } else {
+      const absorbedToDeficit = Math.max(0, mDiff - mPaidExcess);
+      runningDeficit = Math.min(0, runningDeficit + absorbedToDeficit);
+    }
+
+    const mAnnualTarget = convenioAnnualHoursBase * mFactor;
+    const mDailyRate = mAnnualTarget / activeDaysInYearForBag;
+    const mCuotaFija = mAnnualTarget / 12;
+    const mSickCredit = mSick * mDailyRate;
+    runningBolsa += (mOrd - mPaidExcess + mSickCredit) - mCuotaFija;
+  }
+
+  const bolsaSaldoAnterior = Math.round(runningBolsa * 100) / 100;
+  const deficitAnteriorPendiente = Math.round(runningDeficit * 100) / 100;
+  const carriedHoursBalance = bolsaSaldoAnterior;
+
+  let remainingBaseHoursFromMonth = 0;
+  for (let mIdx = 1; mIdx <= 12; mIdx++) {
+    const mKey = `${year}-${String(mIdx).padStart(2, '0')}`;
+    if (validatedMonths?.[mKey]) continue;
+    const vacM = mIdx === month ? vacationDays : 0;
+    const sickM = mIdx === month ? sickDays : 0;
+    remainingBaseHoursFromMonth += calculateMonthlyConvenioHoursTarget(
+      parseFloat((convenioAnnualHoursBase * partTimeFactor).toFixed(2)),
+      year,
+      mIdx,
+      vacM,
+      sickM
+    ).monthlyTargetHours;
+  }
+  // Ajustar proporcionalmente a las vacaciones anuales reglamentarias si las futuras no se han asignado aún
+  const unvalidatedMonthsCount = Array.from({ length: 12 }, (_, i) => i + 1).filter(
+    (mIdx) => !validatedMonths?.[`${year}-${String(mIdx).padStart(2, '0')}`]
+  ).length;
+  const estAnnualVacDiscount =
+    unvalidatedMonthsCount > 0 && unvalidatedMonthsCount < 12
+      ? Math.max(0, ANNUAL_VACATION_DAYS_CONVENIO - yearValidatedRecords.reduce((s, v) => s + (v.payrollSnapshot?.vacationDays || 0), 0) - vacationDays) *
+        ((convenioAnnualHoursBase * partTimeFactor) / activeDaysInYearForBag)
+      : 0;
+  const remainingYearRecalculatedHours =
+    yearValidatedRecords.length > 0 || hasMidYearJornadaChange
+      ? Math.max(
+          0,
+          Math.round((remainingBaseHoursFromMonth - estAnnualVacDiscount - carriedHoursBalance) * 100) / 100
+        )
+      : undefined;
 
   // 5. Horas festivas (Convenio: horaOrdinaria) - Jornadas en festivo marcado (aparte de salario base)
   const horaOrdinariaUnitRate = yearRate.horaOrdinaria ?? 13.62;
@@ -1448,13 +1643,35 @@ export function calculateMonthlyPayroll(
     (finalFTHours * horaOrdinariaUnitRate).toFixed(2)
   );
 
-  // 6. Horas complementarias: (Horas realizadas reales hasta 9h/día sin Festivos ni F/T - Horas teóricas) + exceso diario > 9h + manuales
-  // Si (realizadas - teóricas) < 0, no se generan complementarias mensuales (cobra salario base íntegro y se compensa en meses siguientes)
+  // 6. Horas complementarias: (Horas realizadas reales hasta 9h/día sin Festivos ni F/T - Horas teóricas - déficit previo arrastrado) + exceso diario > 9h + manuales
+  // Si (realizadas - teóricas) < 0, no se generan complementarias mensuales (cobra salario base íntegro y se compensa en meses siguientes que sobren horas)
   const ordinaryConvenioHours = Math.round(ordinaryShiftHours * 100) / 100;
+  const rawMonthlyDiff = Math.round((ordinaryConvenioHours - convenioMonthlyHoursTarget) * 100) / 100;
+  const carriedDeficitOwed = Math.max(0, -runningDeficit);
+  const carriedDeficitAppliedHours =
+    rawMonthlyDiff > 0 ? Math.round(Math.min(rawMonthlyDiff, carriedDeficitOwed) * 100) / 100 : 0;
   const monthlyExcessOverTheoretical = Math.max(
     0,
-    Math.round((ordinaryConvenioHours - convenioMonthlyHoursTarget) * 100) / 100
+    Math.round((rawMonthlyDiff - carriedDeficitAppliedHours) * 100) / 100
   );
+  const deficitPendienteAlCierre =
+    rawMonthlyDiff < 0
+      ? Math.round((runningDeficit + rawMonthlyDiff) * 100) / 100
+      : Math.round(Math.min(0, runningDeficit + carriedDeficitAppliedHours) * 100) / 100;
+
+  // Desglose de Bolsa de Horas del mes (generación reserva vacaciones + descuento por vacaciones disfrutadas + desviación trabajada)
+  const currentAnnualTargetExact = convenioAnnualHoursBase * partTimeFactor;
+  const currentDailyRateExact = currentAnnualTargetExact / activeDaysInYearForBag;
+  const cuotaFijaMensualContrato = Math.round((currentAnnualTargetExact / 12) * 100) / 100;
+  const bolsaGeneradaReservaMes =
+    Math.round((daysInMonth * currentDailyRateExact - currentAnnualTargetExact / 12) * 100) / 100;
+  const bolsaDescontadaVacacionesMes =
+    Math.round((vacationDays * currentDailyRateExact) * 100) / 100;
+  const sickCreditCurr = sickDays * currentDailyRateExact;
+  const bolsaHorasMes =
+    Math.round(((ordinaryConvenioHours - monthlyExcessOverTheoretical + sickCreditCurr) - currentAnnualTargetExact / 12) * 100) / 100;
+  const bolsaHorasAcumulada = Math.round((bolsaSaldoAnterior + bolsaHorasMes) * 100) / 100;
+
   const roundedDailyOver9h = Math.round(dailyExcessOver9hHours * 100) / 100;
   const finalComplementariasHours =
     Math.round((monthlyExcessOverTheoretical + roundedDailyOver9h + explicitComplementariasHours) * 100) / 100;
@@ -2024,19 +2241,35 @@ export function calculateMonthlyPayroll(
     ssEmpresaFogasa,
     ssEmpresaMEI,
     totalCosteEmpresa,
+
+    carriedHoursBalance,
+    carriedDeficitAppliedHours,
+    remainingYearRecalculatedHours,
+    hasMidYearJornadaChange,
+
+    cuotaFijaMensualContrato,
+    bolsaSaldoAnterior,
+    bolsaGeneradaReservaMes,
+    bolsaDescontadaVacacionesMes,
+    bolsaHorasMes,
+    bolsaHorasAcumulada,
+    deficitAnteriorPendiente,
+    deficitPendienteAlCierre,
+    diferenciaRealVsTeoricasMes: rawMonthlyDiff,
   };
 }
 
 /**
  * Calculates monthly net salary evolution across the entire selected year (12 months)
- * Computes exact payroll for months with logged assignments and realistic projection for unlogged months
+ * Preserves validated monthly payroll snapshots (IRPF & % jornada) and computes live/projected estimates for unvalidated months
  */
 export function calculateYearlySalaryEvolution(
   year: number,
   assignments: DayAssignment[],
   shiftsMap: Map<string, ShiftDefinition>,
   convenio: ConvenioInfo,
-  profile: WorkerProfile
+  profile: WorkerProfile,
+  validatedMonths?: ValidatedMonthsMap
 ): MonthlySalaryEvolution[] {
   const yearRate = getEffectiveYearRate(convenio, year);
 
@@ -2049,9 +2282,40 @@ export function calculateYearlySalaryEvolution(
     'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
   ];
 
+  const currentJornadaPct =
+    profile.contractType === 'tiempo_parcial'
+      ? Math.min(100, Math.max(1, profile.partTimePercentage ?? 50))
+      : 100;
+
   const result: MonthlySalaryEvolution[] = [];
 
   for (let m = 1; m <= 12; m++) {
+    const monthKey = `${year}-${String(m).padStart(2, '0')}`;
+    const validatedRecord = validatedMonths?.[monthKey];
+
+    if (validatedRecord && validatedRecord.payrollSnapshot) {
+      const snap = validatedRecord.payrollSnapshot;
+      result.push({
+        month: m,
+        monthName: monthNames[m - 1],
+        fullMonthName: fullMonthNames[m - 1],
+        year,
+        netSalary: snap.liquidoPercibir,
+        grossSalary: snap.totalDevengado,
+        deductions: snap.totalDeducido,
+        hasExtraPay: (snap.pagaExtraIntegraMes || 0) > 0,
+        extraPayName: snap.pagaExtraIntegraNombre,
+        isProjected: false,
+        workedDays: snap.workedDays,
+        totalHours: snap.totalWorkedHours,
+        ordinaryConvenioHours: snap.ordinaryConvenioHours,
+        isValidated: true,
+        jornadaPct: validatedRecord.jornadaPct,
+        irpfPercentage: validatedRecord.irpfPercentage,
+      });
+      continue;
+    }
+
     const monthPrefix = `${year}-${String(m).padStart(2, '0')}-`;
     const cutoffRangeM = getExtrasDateRange(
       year,
@@ -2082,7 +2346,8 @@ export function calculateYearlySalaryEvolution(
         yearRate,
         profile,
         year,
-        m
+        m,
+        validatedMonths
       );
     } else {
       isProjected = true;
@@ -2113,7 +2378,8 @@ export function calculateYearlySalaryEvolution(
         yearRate,
         profile,
         year,
-        m
+        m,
+        validatedMonths
       );
     }
 
@@ -2131,6 +2397,9 @@ export function calculateYearlySalaryEvolution(
       workedDays: payroll.workedDays,
       totalHours: payroll.totalWorkedHours,
       ordinaryConvenioHours: payroll.ordinaryConvenioHours,
+      isValidated: false,
+      jornadaPct: currentJornadaPct,
+      irpfPercentage: profile.irpfPercentage,
     });
   }
 

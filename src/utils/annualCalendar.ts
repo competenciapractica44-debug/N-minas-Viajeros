@@ -8,6 +8,7 @@ import {
   DayAssignment,
   ShiftDefinition,
   SickLeaveContingencyType,
+  ValidatedMonthsMap,
   WorkerProfile,
 } from '../types';
 import { getEffectiveYearRate, isFTExtraName } from '../data/convenioZaragoza';
@@ -65,6 +66,9 @@ export interface AnnualMonthComputedRow extends AnnualMonthBaseRow {
   rachaFinDia: number;
   prevMonthHasBaja: boolean;
   bajaEsContinuacionEfectiva: boolean;
+  isValidated: boolean;
+  effectiveJornadaPct: number;
+  validatedIrpf?: number;
 }
 
 export interface AnnualLiquidationResult {
@@ -94,10 +98,21 @@ export interface AnnualLiquidationResult {
   sumaSaldoMes: number;
   bolsaAcumuladaFinal: number;
   // Totales reales desde Turnos Día y compensación
+  bolsaInicialAnio: number;
   sumaHorasRealizadas: number;
   mesesConTurnosCount: number;
   sumaDiferenciaReal: number;
   bolsaCompensacionFinal: number;
+  // Recálculo del resto del año (meses validados + saldo arrastrado + cambios de % jornada)
+  validatedMonthsCount: number;
+  unvalidatedMonthsCount: number;
+  hasJornadaChangeAcrossMonths: boolean;
+  saldoArrastradoValidado: number;
+  horasRestantesBase: number;
+  horasPendientesAjustadasResto: number;
+  diasComputoRestantes: number;
+  mediaDiariaAjustadaResto: number;
+  cuotaMensualAjustadaResto: number;
   // Totales económicos
   sumaFijo: number;
   sumaPlusVac: number;
@@ -178,6 +193,9 @@ function resolveShiftForAnnual(
   shiftsByCode: Map<string, ShiftDefinition>,
   shiftsById: Map<string, ShiftDefinition>
 ): ShiftDefinition | undefined {
+  if (asg.shiftSnapshot) {
+    return asg.shiftSnapshot;
+  }
   const rawCode = asg.shiftCode ? String(asg.shiftCode).trim().replace(/\/L/gi, '') : '';
   if (rawCode) {
     const found = shiftsByCode.get(rawCode.toUpperCase());
@@ -232,7 +250,8 @@ export function deriveDefaultAnnualMonths(
   profile: WorkerProfile,
   assignments: DayAssignment[],
   shifts: ShiftDefinition[] = [],
-  convenio?: ConvenioInfo
+  convenio?: ConvenioInfo,
+  validatedMonths?: ValidatedMonthsMap
 ): AnnualMonthBaseRow[] {
   const yearRate = getEffectiveYearRate(convenio, year);
   const holidaysMap = getOfficialHolidaysForYear(
@@ -278,6 +297,32 @@ export function deriveDefaultAnnualMonths(
 
   return ANNUAL_MONTH_NAMES.map((mes, idx) => {
     const monthNum = idx + 1;
+    const monthKey = `${year}-${String(monthNum).padStart(2, '0')}`;
+    const vRec = validatedMonths?.[monthKey];
+    const effectiveYearRateForMonth = vRec?.yearRateSnapshot || yearRate;
+
+    const monthShiftsByCode = new Map(shiftsByCode);
+    const monthShiftsById = new Map(shiftsById);
+    if (vRec?.shiftsSnapshot && vRec.shiftsSnapshot.length > 0) {
+      monthShiftsByCode.clear();
+      monthShiftsById.clear();
+      vRec.shiftsSnapshot.forEach((s) => {
+        if (s.code) monthShiftsByCode.set(s.code.trim().toUpperCase(), s);
+        if (s.id) monthShiftsById.set(s.id, s);
+      });
+    }
+
+    const monthAssignmentByDate = new Map(assignmentByDate);
+    if (vRec?.assignmentsSnapshot && vRec.assignmentsSnapshot.length > 0) {
+      const mPrefix = `${monthKey}-`;
+      vRec.assignmentsSnapshot.forEach((sa) => {
+        const key = normalizeDateKeyForAnnual(sa.date);
+        if (key && key.startsWith(mPrefix)) {
+          monthAssignmentByDate.set(key, { ...sa, date: key });
+        }
+      });
+    }
+
     const daysInMonth = new Date(year, monthNum, 0).getDate();
     let habilesCal = 0;
     let vacNat = 0;
@@ -297,7 +342,7 @@ export function deriveDefaultAnnualMonths(
         habilesCal += 1;
       }
 
-      const asg = assignmentByDate.get(dateStr);
+      const asg = monthAssignmentByDate.get(dateStr);
       if (!asg) continue;
 
       const upperCode = (asg.shiftCode || '').trim().toUpperCase();
@@ -328,10 +373,10 @@ export function deriveDefaultAnnualMonths(
           turnosDiarioCount += 1;
           dayHours = calculateTotalHours(asg.customStartTime, asg.customEndTime);
         } else if (asg.shiftCode || asg.shiftId) {
-          const shiftDef = resolveShiftForAnnual(asg, shiftsByCode, shiftsById);
+          const shiftDef = resolveShiftForAnnual(asg, monthShiftsByCode, monthShiftsById);
           if (shiftDef && shiftDef.code !== 'D' && shiftDef.code !== 'V' && shiftDef.code !== 'B') {
             turnosDiarioCount += 1;
-            dayHours = computeShiftRateFromConvenio(shiftDef, yearRate).totalHours;
+            dayHours = computeShiftRateFromConvenio(shiftDef, effectiveYearRateForMonth).totalHours;
           }
         }
         if (asg.lateFinishMinutes && asg.lateFinishMinutes > 0) {
@@ -348,9 +393,9 @@ export function deriveDefaultAnnualMonths(
       2,
       '0'
     )}`;
-    const firstDayAsg = assignmentByDate.get(firstDayKey);
+    const firstDayAsg = monthAssignmentByDate.get(firstDayKey);
     const firstDayIsSick = isAssignmentSickLeave(firstDayAsg);
-    const lastDayIsSick = isAssignmentSickLeave(assignmentByDate.get(lastDayKey));
+    const lastDayIsSick = isAssignmentSickLeave(monthAssignmentByDate.get(lastDayKey));
 
     // Si el empleado rellenó bajas ('B') en Turnos Día en este mes, solo enlaza con el mes anterior
     // cuando la baja termina el último día del mes previo y sigue exactamente en el día 1 de este mes.
@@ -422,7 +467,8 @@ export function resolveAnnualMonths(
 export function calculateAnnualLiquidation(
   year: number,
   params: AnnualEditableParams,
-  months: AnnualMonthBaseRow[]
+  months: AnnualMonthBaseRow[],
+  validatedMonths?: ValidatedMonthsMap
 ): AnnualLiquidationResult {
   const anio = Math.max(2020, Math.min(2040, Math.round(year) || 2026));
   const horasAnuales100 = Math.max(1, Number(params.horasAnuales100) || 1776);
@@ -450,18 +496,6 @@ export function calculateAnnualLiquidation(
     repartoBolsa,
   };
 
-  const jornadaAnualEfectiva = horasAnuales100 * factorJornada;
-  const cuotaFijaMes = jornadaAnualEfectiva / 12;
-
-  const baseMensualEfectiva = baseMes100 * factorJornada;
-  const compMensualEfectiva = compMes100 * factorJornada;
-  const sumaBaseCompMes = baseMensualEfectiva + compMensualEfectiva;
-  const plusVacDiaEfectivo = plusVacDia100 * factorJornada;
-
-  const brutoFijoAnual = sumaBaseCompMes * numPagas;
-  const valorHoraTabla = jornadaAnualEfectiva > 0 ? brutoFijoAnual / jornadaAnualEfectiva : 0;
-  const baseRegDiaria = brutoFijoAnual / 360;
-
   let totalHabilesCal = 0;
   let totalVacNat = 0;
   let totalVacLab = 0;
@@ -476,6 +510,13 @@ export function calculateAnnualLiquidation(
     const bajaNat = Math.max(0, Math.round(Number(m.bajaNat) || 0));
     const bajaLab = Math.max(0, Math.round(Number(m.bajaLab) || 0));
     const diasActivos = Math.max(0, habilesCal - vacLab - bajaLab);
+
+    const monthKey = `${anio}-${String(m.idx + 1).padStart(2, '0')}`;
+    const vRec = validatedMonths?.[monthKey];
+    const isValidated = Boolean(vRec);
+    const effectiveJornadaPct = vRec
+      ? Math.min(100, Math.max(1, Number(vRec.jornadaPct) || jornadaPct))
+      : jornadaPct;
 
     totalHabilesCal += habilesCal;
     totalVacNat += vacNat;
@@ -492,14 +533,39 @@ export function calculateAnnualLiquidation(
       bajaNat,
       bajaLab,
       diasActivos,
+      vRec,
+      isValidated,
+      effectiveJornadaPct,
     };
   });
 
-  const totalDiasComputo = Math.max(1, totalDiasActivos + totalBajaLab);
-  const horasPorDiaActivo = jornadaAnualEfectiva / totalDiasComputo;
+  const hasJornadaChangeAcrossMonths = prelim.some(
+    (m) => Math.round(m.effectiveJornadaPct) !== Math.round(jornadaPct)
+  );
 
-  let bolsaAcumulada = 0;
-  let bolsaCompensacionAcumulada = 0;
+  // Jornada efectiva total ponderada por los meses validados y el % actual en meses pendientes
+  const jornadaAnualEfectiva = hasJornadaChangeAcrossMonths
+    ? prelim.reduce((sum, m) => sum + (horasAnuales100 * (m.effectiveJornadaPct / 100)) / 12, 0)
+    : horasAnuales100 * factorJornada;
+  const cuotaFijaMes = (horasAnuales100 * factorJornada) / 12;
+
+  const baseMensualEfectiva = baseMes100 * factorJornada;
+  const compMensualEfectiva = compMes100 * factorJornada;
+  const sumaBaseCompMesActual = baseMensualEfectiva + compMensualEfectiva;
+  const plusVacDiaEfectivo = plusVacDia100 * factorJornada;
+
+  const brutoFijoAnual = sumaBaseCompMesActual * numPagas;
+  const valorHoraTabla =
+    horasAnuales100 * factorJornada > 0 ? brutoFijoAnual / (horasAnuales100 * factorJornada) : 0;
+
+  const totalDiasComputo = Math.max(1, totalDiasActivos + totalBajaLab);
+  const horasPorDia100 = horasAnuales100 / totalDiasComputo;
+  const horasPorDiaActivo = horasPorDia100 * factorJornada;
+
+  // La bolsa siempre inicia en enero a 0,00 h (ni a favor ni en contra de ejercicios previos)
+  const bolsaInicialAnio = 0;
+  let bolsaAcumulada = bolsaInicialAnio;
+  let bolsaCompensacionAcumulada = bolsaInicialAnio;
   let sumaHorasTeoricasActivas = 0;
   let sumaHorasComputoTeorico = 0;
   let sumaCuotaFija = 0;
@@ -511,6 +577,11 @@ export function calculateAnnualLiquidation(
   let sumaPlusVac = 0;
   let sumaTotalBruto = 0;
 
+  let validatedMonthsCount = 0;
+  let saldoArrastradoValidado = 0;
+  let horasRestantesBase = 0;
+  let diasComputoRestantes = 0;
+
   const prevYearCarry = Math.max(
     0,
     Math.round(Number(prelim[0]?.bajaDiasPreviosAnioAnterior) || 0)
@@ -520,28 +591,37 @@ export function calculateAnnualLiquidation(
   let prevHadBaja = prevYearCarry > 0;
 
   const filas: AnnualMonthComputedRow[] = prelim.map((m) => {
-    // 1. Cálculo teórico (cuadre anual a 0 h)
-    const horasTeoricasActivas = m.diasActivos * horasPorDiaActivo;
-    const horasJustificadasIT = m.bajaLab * horasPorDiaActivo;
+    const monthFactor = m.effectiveJornadaPct / 100;
+    const horasPorDiaMes = horasPorDia100 * monthFactor;
+
+    // 1. Cálculo teórico (cuadre anual a 0 h escalado al % de jornada de ese mes)
+    const horasTeoricasActivas = m.diasActivos * horasPorDiaMes;
+    const horasJustificadasIT = m.bajaLab * horasPorDiaMes;
     const horasComputoTeorico = horasTeoricasActivas + horasJustificadasIT;
 
     const cuotaMes =
       repartoBolsa === 'equilibrado'
-        ? (m.diasActivos + m.bajaLab) * horasPorDiaActivo
-        : cuotaFijaMes;
+        ? (m.diasActivos + m.bajaLab) * horasPorDiaMes
+        : (horasAnuales100 * monthFactor) / 12;
 
     const saldoMes = horasComputoTeorico - cuotaMes;
     bolsaAcumulada += saldoMes;
 
-    // 2. Horas realmente realizadas (mes natural desde Turnos Día o edición manual) y compensación
+    // 2. Horas realmente realizadas (mes natural desde Turnos Día, validación congelada o edición manual) y compensación
     const isHorasManual =
       typeof m.horasReales === 'number' && Number.isFinite(m.horasReales);
     const horasRealizadas = isHorasManual
       ? Math.max(0, m.horasReales as number)
-      : m.horasDiarioMes;
+      : m.vRec
+        ? Math.max(0, m.vRec.horasRealizadasMesNatural)
+        : m.horasDiarioMes;
 
-    const tieneRegistroReal = isHorasManual || m.turnosDiarioCount > 0 || horasRealizadas > 0;
-    const diferenciaRealMes = tieneRegistroReal ? horasRealizadas - horasTeoricasActivas : 0;
+    const tieneRegistroReal =
+      isHorasManual || m.isValidated || m.turnosDiarioCount > 0 || horasRealizadas > 0;
+    // Comp. (R - T) resta las horas teóricas seleccionadas en cabecera (Cuota Fija Mensual o Equilibradas)
+    const diferenciaRealMes = tieneRegistroReal
+      ? horasRealizadas + horasJustificadasIT - cuotaMes
+      : 0;
 
     if (tieneRegistroReal) {
       mesesConTurnosCount += 1;
@@ -549,27 +629,40 @@ export function calculateAnnualLiquidation(
       sumaDiferenciaReal += diferenciaRealMes;
     }
 
-    // 3. Cálculo económico mensual
+    if (m.isValidated) {
+      validatedMonthsCount += 1;
+      saldoArrastradoValidado += diferenciaRealMes;
+    } else {
+      horasRestantesBase += cuotaMes;
+      diasComputoRestantes += m.diasActivos + m.bajaLab;
+    }
+
+    // 3. Cálculo económico mensual usando la jornada efectiva de ese mes
+    const sumaBaseCompMesM = (baseMes100 + compMes100) * monthFactor;
+    const brutoFijoAnualM = sumaBaseCompMesM * numPagas;
+    const baseRegDiariaM = brutoFijoAnualM / 360;
+    const plusVacDiaEfectivoM = plusVacDia100 * monthFactor;
+
     const factorAlta = Math.max(0, (30 - m.bajaNat) / 30);
     let fijoMes = 0;
 
     if (modoExtras === 'prorrateadas') {
-      fijoMes = (brutoFijoAnual / 12) * factorAlta;
+      fijoMes = (brutoFijoAnualM / 12) * factorAlta;
     } else if (modoExtras === 'integras') {
-      fijoMes = sumaBaseCompMes * factorAlta;
+      fijoMes = sumaBaseCompMesM * factorAlta;
       if (m.extraMes && numPagas >= 13) {
-        fijoMes += (sumaBaseCompMes / 12) * factorAlta;
+        fijoMes += (sumaBaseCompMesM / 12) * factorAlta;
       }
       if (m.extraJulDic && numPagas > 13) {
         const extrasRestantes = Math.max(0, numPagas - 13);
-        fijoMes += (sumaBaseCompMes * extrasRestantes) / 2;
+        fijoMes += (sumaBaseCompMesM * extrasRestantes) / 2;
       }
     } else if (modoExtras === 'mixta_marzo_prorr') {
-      const extraMarzoProrr = numPagas >= 13 ? sumaBaseCompMes / 12 : 0;
-      fijoMes = (sumaBaseCompMes + extraMarzoProrr) * factorAlta;
+      const extraMarzoProrr = numPagas >= 13 ? sumaBaseCompMesM / 12 : 0;
+      fijoMes = (sumaBaseCompMesM + extraMarzoProrr) * factorAlta;
       if (m.extraJulDic && numPagas > 13) {
         const extrasRestantes = Math.max(0, numPagas - 13);
-        fijoMes += (sumaBaseCompMes * extrasRestantes) / 2;
+        fijoMes += (sumaBaseCompMesM * extrasRestantes) / 2;
       }
     }
 
@@ -582,7 +675,7 @@ export function calculateAnnualLiquidation(
 
     if (m.bajaNat > 0) {
       if (m.tipoBaja === 'accidente_100') {
-        prestacionIT = m.bajaNat * baseRegDiaria;
+        prestacionIT = m.bajaNat * baseRegDiariaM;
         detalleIT = `IT 100% (${m.bajaNat}d)`;
         rachaInicioDia = 0;
         rachaFinDia = m.bajaNat;
@@ -590,7 +683,7 @@ export function calculateAnnualLiquidation(
         ultimoTipoBaja = 'accidente_100';
         prevHadBaja = true;
       } else if (m.tipoBaja === 'accidente_75') {
-        prestacionIT = m.bajaNat * baseRegDiaria * 0.75;
+        prestacionIT = m.bajaNat * baseRegDiariaM * 0.75;
         detalleIT = `IT 75% (${m.bajaNat}d)`;
         rachaInicioDia = 0;
         rachaFinDia = m.bajaNat;
@@ -616,7 +709,7 @@ export function calculateAnnualLiquidation(
           else if (d <= 20) d60++;
           else d75++;
         }
-        prestacionIT = baseRegDiaria * (0.6 * d60 + 0.75 * d75);
+        prestacionIT = baseRegDiariaM * (0.6 * d60 + 0.75 * d75);
         const rangoTxt = `${inicioAcum + 1}–${finAcum}d`;
         const tramos: string[] = [];
         if (d0 > 0) tramos.push(`${d0}d@0%`);
@@ -636,7 +729,7 @@ export function calculateAnnualLiquidation(
     }
 
     fijoMes += prestacionIT;
-    const plusVacMes = m.vacLab * plusVacDiaEfectivo;
+    const plusVacMes = m.vacLab * plusVacDiaEfectivoM;
     const totalBrutoMes = fijoMes + plusVacMes;
 
     sumaHorasTeoricasActivas += horasTeoricasActivas;
@@ -648,8 +741,10 @@ export function calculateAnnualLiquidation(
     sumaPlusVac += plusVacMes;
     sumaTotalBruto += totalBrutoMes;
 
+    const { vRec: _omitVRec, ...restM } = m;
+
     return {
-      ...m,
+      ...restM,
       horasTeoricasActivas,
       horasJustificadasIT,
       horasComputoTeorico,
@@ -669,11 +764,24 @@ export function calculateAnnualLiquidation(
       rachaFinDia,
       prevMonthHasBaja,
       bajaEsContinuacionEfectiva,
+      isValidated: m.isValidated,
+      effectiveJornadaPct: m.effectiveJornadaPct,
+      validatedIrpf: m.vRec?.irpfPercentage,
     };
   });
 
   const bolsaAcumuladaFinal =
     filas.length > 0 ? filas[filas.length - 1].bolsaAcumulada : 0;
+
+  const unvalidatedMonthsCount = Math.max(0, 12 - validatedMonthsCount);
+  const horasPendientesAjustadasResto = Math.max(
+    0,
+    horasRestantesBase - saldoArrastradoValidado
+  );
+  const mediaDiariaAjustadaResto =
+    diasComputoRestantes > 0 ? horasPendientesAjustadasResto / diasComputoRestantes : 0;
+  const cuotaMensualAjustadaResto =
+    unvalidatedMonthsCount > 0 ? horasPendientesAjustadasResto / unvalidatedMonthsCount : 0;
 
   return {
     anio,
@@ -697,10 +805,20 @@ export function calculateAnnualLiquidation(
     sumaCuotaFija,
     sumaSaldoMes,
     bolsaAcumuladaFinal,
+    bolsaInicialAnio,
     sumaHorasRealizadas,
     mesesConTurnosCount,
     sumaDiferenciaReal,
     bolsaCompensacionFinal: bolsaCompensacionAcumulada,
+    validatedMonthsCount,
+    unvalidatedMonthsCount,
+    hasJornadaChangeAcrossMonths,
+    saldoArrastradoValidado,
+    horasRestantesBase,
+    horasPendientesAjustadasResto,
+    diasComputoRestantes,
+    mediaDiariaAjustadaResto,
+    cuotaMensualAjustadaResto,
     sumaFijo,
     sumaPlusVac,
     sumaTotalBruto,
@@ -798,7 +916,7 @@ export function exportAnnualCalendarToExcel(
     'TIPO BAJA',
     'DÍAS ACTIVOS',
     'HORAS TEÓR. (CUADRE 0)',
-    'CUOTA FIJA',
+    p.repartoBolsa === 'equilibrado' ? 'HORAS EQUIL.' : 'CUOTA FIJA',
     'SALDO TEÓR.',
     'BOLSA TEÓR.',
     'HORAS REAL. (DIARIO)',
@@ -847,28 +965,32 @@ export function exportAnnualCalendarToExcel(
     const prevR = r - 1;
     const bolsaFormula = idx === 0 ? `K${r}` : `L${prevR}+K${r}`;
 
+    const isMixedMonth = m.isValidated && Math.round(m.effectiveJornadaPct) !== Math.round(p.jornadaPct);
+    const pctExpr = isMixedMonth ? `(${m.effectiveJornadaPct}/100)` : '($C$7/100)';
+
     const prevAcumExpr = buildPrevAcumFormula(idx);
     const acumBajaExpr = prevAcumExpr === '0' ? `E${r}` : `(${prevAcumExpr})+E${r}`;
 
-    const brDiariaExpr = '(((($C$9+$C$10)*($C$7/100))*$C$11)/360)';
+    const brDiariaExpr = `(((($C$9+$C$10)*${pctExpr})*$C$11)/360)`;
     const prestacionComunExpr = `(${brDiariaExpr}*(0.6*MAX(0,MIN(20,${acumBajaExpr})-MAX(3,${prevAcumExpr}))+0.75*MAX(0,${acumBajaExpr}-MAX(20,${prevAcumExpr}))))`;
     const prestacionITExpr = `IF(E${r}=0,0,IF(G${r}=1,E${r}*${brDiariaExpr},IF(G${r}=2,E${r}*${brDiariaExpr}*0.75,${prestacionComunExpr})))`;
 
     const factorAltaExpr = `(MAX(0,30-E${r})/30)`;
-    const baseMensualExpr = '(($C$9+$C$10)*($C$7/100))';
+    const baseMensualExpr = `(($C$9+$C$10)*${pctExpr})`;
     const fijoAltaExpr = `IF($C$12=1,((${baseMensualExpr}*$C$11)/12)*${factorAltaExpr},IF($C$12=2,(${baseMensualExpr}*${factorAltaExpr})+(IF($C$11>=13,(${baseMensualExpr}/12)*${factorAltaExpr},0))+IF(R${r}=2,(${baseMensualExpr}*MAX(0,$C$11-13))/2,0),((${baseMensualExpr}+IF($C$11>=13,${baseMensualExpr}/12,0))*${factorAltaExpr})+IF(R${r}=2,(${baseMensualExpr}*MAX(0,$C$11-13))/2,0)))`;
 
     const cuotaFormula =
       p.repartoBolsa === 'equilibrado'
-        ? `(H${r}+F${r})*(($C$6*($C$7/100))/($H$28+$F$28))`
-        : '($C$6*($C$7/100))/12';
+        ? `(H${r}+F${r})*(($C$6*${pctExpr})/($H$28+$F$28))`
+        : `($C$6*${pctExpr})/12`;
 
+    const itHoursExpr = `F${r}*(($C$6*${pctExpr})/($H$28+$F$28))`;
     const difFormula = m.tieneRegistroReal
-      ? `M${r}-(H${r}*(($C$6*($C$7/100))/($H$28+$F$28)))`
+      ? `(M${r}+IF(F${r}>0,${itHoursExpr},0))-J${r}`
       : '0';
 
     wsData.push([
-      m.mes,
+      m.isValidated ? `${m.mes} (${m.effectiveJornadaPct}%)` : m.mes,
       m.habilesCal,
       m.vacNat,
       m.vacLab,
@@ -879,7 +1001,7 @@ export function exportAnnualCalendarToExcel(
       {
         t: 'n',
         v: Number(m.horasComputoTeorico.toFixed(4)),
-        f: `(H${r}+F${r})*(($C$6*($C$7/100))/($H$28+$F$28))`,
+        f: `(H${r}+F${r})*(($C$6*${pctExpr})/($H$28+$F$28))`,
       },
       { t: 'n', v: Number(m.cuotaMes.toFixed(4)), f: cuotaFormula },
       { t: 'n', v: Number(m.saldoMes.toFixed(4)), f: `I${r}-J${r}` },
@@ -887,7 +1009,7 @@ export function exportAnnualCalendarToExcel(
       Number(m.horasRealizadas.toFixed(2)),
       { t: 'n', v: Number(m.diferenciaRealMes.toFixed(2)), f: difFormula },
       { t: 'n', v: Number(m.fijoMes.toFixed(2)), f: `${fijoAltaExpr}+${prestacionITExpr}` },
-      { t: 'n', v: Number(m.plusVacMes.toFixed(2)), f: `D${r}*($C$13*($C$7/100))` },
+      { t: 'n', v: Number(m.plusVacMes.toFixed(2)), f: `D${r}*($C$13*${pctExpr})` },
       { t: 'n', v: Number(m.totalBrutoMes.toFixed(2)), f: `O${r}+P${r}` },
       m.extraJulDic ? 2 : m.extraMes ? 1 : 0,
     ]);
@@ -923,19 +1045,19 @@ export function exportAnnualCalendarToExcel(
   wsData.push([
     'Jornada Anual Efectiva Contrato (h)',
     'JORN_EFEC',
-    { t: 'n', v: res.jornadaAnualEfectiva, f: 'C6*(C7/100)' },
-    'Total horas anuales ajustadas al porcentaje de jornada del empleado',
+    { t: 'n', v: Number(res.jornadaAnualEfectiva.toFixed(2)), f: res.hasJornadaChangeAcrossMonths ? 'SUM(J16:J27)' : 'C6*(C7/100)' },
+    'Total horas anuales ajustadas al porcentaje de jornada de cada mes',
   ]);
   wsData.push([
     'Valor Hora Tabla Convenio (€/h)',
     'VAL_HORA',
-    { t: 'n', v: Number(res.valorHoraTabla.toFixed(2)), f: '((($C$9+$C$10)*($C$7/100))*$C$11)/C32' },
+    { t: 'n', v: Number(res.valorHoraTabla.toFixed(2)), f: '((($C$9+$C$10)*($C$7/100))*$C$11)/C31' },
     'Retribución fija anual dividida entre la jornada anual efectiva',
   ]);
   wsData.push([
     'Media Diaria Cómputo (h/día)',
     'MEDIA_DIA',
-    { t: 'n', v: Number(res.horasPorDiaActivo.toFixed(4)), f: 'C32/MAX(1,H28+F28)' },
+    { t: 'n', v: Number(res.horasPorDiaActivo.toFixed(4)), f: 'C31/MAX(1,H28+F28)' },
     'Horas teóricas equivalentes por día laborable para cuadrar el año a 0',
   ]);
   wsData.push([
@@ -949,6 +1071,12 @@ export function exportAnnualCalendarToExcel(
     'COMP_REAL',
     { t: 'n', v: Number(res.bolsaCompensacionFinal.toFixed(2)), f: 'N28' },
     'Diferencia acumulada entre Horas Realizadas (Turnos Día) y Horas Teóricas',
+  ]);
+  wsData.push([
+    'Bolsa Inicial a 1 de Enero (h)',
+    'BOLSA_INI',
+    { t: 'n', v: res.bolsaInicialAnio },
+    'La bolsa inicia en enero a 0,00 h (ni a favor ni en contra)',
   ]);
 
   const ws = XLSX.utils.aoa_to_sheet(wsData);
@@ -1104,10 +1232,10 @@ export function exportAnnualCalendarToExcel(
   }
 
   for (let c = 0; c <= 3; c++) {
-    const cell = ws[XLSX.utils.encode_cell({ r: 30, c })];
+    const cell = ws[XLSX.utils.encode_cell({ r: 29, c })];
     if (cell) cell.s = estiloCabeceraSeccion;
   }
-  for (let r = 31; r <= 35; r++) {
+  for (let r = 30; r <= 35; r++) {
     for (let c = 0; c <= 3; c++) {
       const cell = ws[XLSX.utils.encode_cell({ r, c })];
       if (!cell) continue;
@@ -1145,11 +1273,12 @@ export function exportAnnualCalendarToExcel(
   if (ws['C11']) ws['C11'].z = '0';
   if (ws['C12']) ws['C12'].z = '0';
   if (ws['C13']) ws['C13'].z = '#,##0.00" €"';
-  if (ws['C32']) ws['C32'].z = '#,##0.00" h"';
-  if (ws['C33']) ws['C33'].z = '#,##0.00" €/h"';
-  if (ws['C34']) ws['C34'].z = '0.0000" h/día"';
-  if (ws['C35']) ws['C35'].z = '0" días"';
-  if (ws['C36']) ws['C36'].z = '+#,##0.00" h";-#,##0.00" h";0.00" h"';
+  if (ws['C31']) ws['C31'].z = '#,##0.00" h"';
+  if (ws['C32']) ws['C32'].z = '#,##0.00" €/h"';
+  if (ws['C33']) ws['C33'].z = '0.0000" h/día"';
+  if (ws['C34']) ws['C34'].z = '0" días"';
+  if (ws['C35']) ws['C35'].z = '+#,##0.00" h";-#,##0.00" h";0.00" h"';
+  if (ws['C36']) ws['C36'].z = '#,##0.00" h"';
 
   ws['!cols'] = [
     { wch: 30 },
@@ -1172,7 +1301,7 @@ export function exportAnnualCalendarToExcel(
     { wch: 14 },
   ];
 
-  ws['!rows'] = Array.from({ length: 37 }, (_, idx) => {
+  ws['!rows'] = Array.from({ length: 36 }, (_, idx) => {
     if (idx === 0) return { hpt: 28 };
     if (idx === 1) return { hpt: 20 };
     if (idx === 14) return { hpt: 30 };

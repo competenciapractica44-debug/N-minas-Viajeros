@@ -23,6 +23,8 @@ import {
   Search,
   X,
   MapPin,
+  Lock,
+  Unlock,
 } from 'lucide-react';
 import {
   DayAssignment,
@@ -30,6 +32,8 @@ import {
   ExtraConcept,
   ConvenioInfo,
   WorkerProfile,
+  ValidatedMonthRecord,
+  ValidatedMonthsMap,
 } from '../types';
 import { formatCurrency } from '../utils/exporter';
 import {
@@ -38,6 +42,7 @@ import {
   calculateTotalHours,
   calculateMonthlyConvenioHoursTarget,
 } from '../utils/calculator';
+import { AnnualLiquidationResult, formatHoras } from '../utils/annualCalendar';
 import { getEffectiveYearRate, getOfficialConvenioExtraAmount, isFTExtraName } from '../data/convenioZaragoza';
 import { getOfficialHolidaysForYear, DetectedHolidayInfo } from '../data/spanishHolidays';
 import { ConfirmModal } from './ConfirmModal';
@@ -54,6 +59,13 @@ interface CalendarioViewProps {
   profile?: WorkerProfile;
   onEditShift?: (shift: ShiftDefinition) => void;
   onOpenProfile?: () => void;
+  validatedMonth?: ValidatedMonthRecord;
+  validatedMonths?: ValidatedMonthsMap;
+  annualSummary?: AnnualLiquidationResult;
+  isValidatingMonth?: boolean;
+  onValidateMonth?: () => Promise<{ success: boolean; driveSaved: boolean; message: string }>;
+  onUnvalidateMonth?: () => Promise<void> | void;
+  onGoToNomina?: () => void;
 }
 
 const MONTH_NAMES = [
@@ -73,6 +85,13 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
   profile,
   onEditShift,
   onOpenProfile,
+  validatedMonth,
+  validatedMonths,
+  annualSummary,
+  isValidatingMonth,
+  onValidateMonth,
+  onUnvalidateMonth,
+  onGoToNomina,
 }) => {
   const [selectedDayNumber, setSelectedDayNumber] = useState(1);
   const [isAddingExtraModal, setIsAddingExtraModal] = useState(false);
@@ -82,6 +101,9 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
   const [customExtraQuantity, setCustomExtraQuantity] = useState<number | undefined>(undefined);
   const [showRemoveShiftConfirm, setShowRemoveShiftConfirm] = useState(false);
   const [extraToRemove, setExtraToRemove] = useState<{ id: string; name: string } | null>(null);
+  const [showIncompleteValidateConfirm, setShowIncompleteValidateConfirm] = useState(false);
+  const [showUnvalidateConfirm, setShowUnvalidateConfirm] = useState(false);
+  const [validationFeedback, setValidationFeedback] = useState<string | null>(null);
 
   // Terminado más tarde del turno (horas y minutos sin pasos mínimos)
   const [isLateSectionOpen, setIsLateSectionOpen] = useState(false);
@@ -120,6 +142,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
   };
 
   // Calendar Math
+  const isMonthLocked = Boolean(validatedMonth);
   const daysInMonth = new Date(selectedYear, selectedMonth, 0).getDate();
   const firstDayOfMonth = new Date(selectedYear, selectedMonth - 1, 1).getDay(); // 0 is Sun, 1 is Mon
   const startDayOffset = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1; // 0 = Mon, 6 = Sun
@@ -146,12 +169,15 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
   }, [assignments, selectedDateStr]);
 
   const currentShift = useMemo(() => {
+    if (currentAssignment.shiftSnapshot) {
+      return currentAssignment.shiftSnapshot;
+    }
     if (!currentAssignment.shiftCode) return null;
     return (
       shiftsMap.get(currentAssignment.shiftCode) ||
       shifts.find((s) => s.code === currentAssignment.shiftCode)
     );
-  }, [shiftsMap, shifts, currentAssignment.shiftCode]);
+  }, [shiftsMap, shifts, currentAssignment.shiftCode, currentAssignment.shiftSnapshot]);
 
   const activeYearRate = useMemo(
     () => getEffectiveYearRate(convenio, selectedYear),
@@ -272,7 +298,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
     const usageCount = new Map<string, number>();
     assignments.forEach((a) => {
       if (!a.shiftCode || a.shiftCode === 'D' || a.shiftCode === 'V' || a.shiftCode === 'B') return;
-      const def = shiftsMap.get(a.shiftCode);
+      const def = a.shiftSnapshot || shiftsMap.get(a.shiftCode);
       if (def && matchesDayCategory(def, selectedDayTypeSuggested)) {
         usageCount.set(a.shiftCode, (usageCount.get(a.shiftCode) || 0) + 1);
       }
@@ -455,6 +481,10 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
 
   // Save / Update late finish
   const handleSaveLateFinish = (hours: number, minutes: number, reason: string) => {
+    if (isMonthLocked) {
+      setShowUnvalidateConfirm(true);
+      return;
+    }
     const safeH = Math.max(0, isNaN(hours) ? 0 : Math.floor(hours));
     const safeM = Math.max(0, isNaN(minutes) ? 0 : Math.round(minutes));
     const totalMinutes = safeH * 60 + safeM;
@@ -470,6 +500,10 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
   };
 
   const handleClearLateFinish = () => {
+    if (isMonthLocked) {
+      setShowUnvalidateConfirm(true);
+      return;
+    }
     setLateHoursInput(0);
     setLateMinsInput(0);
     setLateReasonInput('');
@@ -510,7 +544,10 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
           bajasCount++;
         } else if (asg.shiftCode) {
           turnosCount++;
-          const shiftDef = shiftsMap.get(asg.shiftCode) || shifts.find((s) => s.code === asg.shiftCode);
+          const shiftDef =
+            asg.shiftSnapshot ||
+            shiftsMap.get(asg.shiftCode) ||
+            shifts.find((s) => s.code === asg.shiftCode);
           if (shiftDef) {
             if (asg.customStartTime && asg.customEndTime) {
               dayShiftWorkedH = calculateTotalHours(asg.customStartTime, asg.customEndTime);
@@ -783,6 +820,10 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
 
   // Assign shift quickly
   const handleAssignShift = (code: string) => {
+    if (isMonthLocked) {
+      setShowUnvalidateConfirm(true);
+      return;
+    }
     const shift = shiftsMap.get(code) || shifts.find((s) => s.code === code);
     const isReten = Boolean(
       shift?.hasPlusReten !== undefined
@@ -804,6 +845,8 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
 
     onUpdateAssignment(selectedDateStr, {
       shiftCode: code,
+      shiftId: shift?.id,
+      shiftSnapshot: undefined,
       isRest: code === 'D',
       isVacation: code === 'V',
       isSickLeave: code === 'B',
@@ -813,6 +856,10 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
 
   // Add extra to selected day
   const handleAddExtraToDay = () => {
+    if (isMonthLocked) {
+      setShowUnvalidateConfirm(true);
+      return;
+    }
     let name = customExtraName;
     let amount = customExtraAmount;
 
@@ -902,6 +949,10 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
   };
 
   const handleRemoveExtra = (extraId: string) => {
+    if (isMonthLocked) {
+      setShowUnvalidateConfirm(true);
+      return;
+    }
     const currentExtras = currentAssignment.extras || [];
     onUpdateAssignment(selectedDateStr, {
       extras: currentExtras.filter((e) => e.id !== extraId),
@@ -998,6 +1049,154 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
         </span>
       </div>
 
+      {/* Validación Mensual (congela % jornada, % IRPF, nómina y arrastra saldo de horas al resto del año) */}
+      {onValidateMonth && (() => {
+        const filledDaysCount =
+          counters.turnosCount + counters.descansosCount + counters.vacacionesCount + counters.bajasCount;
+        const isMonthComplete = filledDaysCount >= daysInMonth;
+        const currentJornadaPctCal = Math.round(partTimeFactorCal * 100);
+        const currentIrpfCal = profile?.irpfPercentage ?? 0;
+
+        const triggerValidation = async () => {
+          const res = await onValidateMonth();
+          if (res?.message) {
+            setValidationFeedback(res.message);
+            window.setTimeout(() => setValidationFeedback(null), 6000);
+          }
+        };
+
+        return (
+          <div
+            className={`rounded-2xl border p-3.5 space-y-2 text-xs transition-colors ${
+              validatedMonth
+                ? 'bg-emerald-50/85 border-emerald-300 text-emerald-950'
+                : isMonthComplete
+                ? 'bg-indigo-50/80 border-indigo-300 text-indigo-950'
+                : 'bg-slate-50 border-slate-200 text-slate-800'
+            }`}
+          >
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+              <div className="space-y-0.5 min-w-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {validatedMonth ? (
+                    <Lock className="w-4 h-4 text-emerald-700 shrink-0" />
+                  ) : (
+                    <ShieldCheck className="w-4 h-4 text-indigo-600 shrink-0" />
+                  )}
+                  <span className="font-extrabold text-xs">
+                    {validatedMonth
+                      ? `Mes validado · ${MONTH_NAMES[selectedMonth - 1]} ${selectedYear}`
+                      : `Validar mes completo (${filledDaysCount}/${daysInMonth} días rellenados)`}
+                  </span>
+                  {validatedMonth ? (
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-200/70 text-emerald-900 font-bold text-[10px]">
+                      Jornada {validatedMonth.jornadaPct}% · IRPF {validatedMonth.irpfPercentage}%
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded-full bg-white border border-slate-200 text-slate-700 font-bold text-[10px]">
+                      BD actual: Jornada {currentJornadaPctCal}% · IRPF {currentIrpfCal}%
+                    </span>
+                  )}
+                </div>
+                {validatedMonth ? (
+                  <p className="text-[11px] text-emerald-800 leading-snug">
+                    Nómina cerrada en{' '}
+                    <strong className="font-mono">
+                      {formatCurrency(validatedMonth.payrollSnapshot.liquidoPercibir)}
+                    </strong>{' '}
+                    (Saldo mes:{' '}
+                    <strong className="font-mono">
+                      {formatHoras(validatedMonth.saldoMesHoras, true)}
+                    </strong>{' '}
+                    · Bolsa al cierre:{' '}
+                    <strong className="font-mono">
+                      {formatHoras(validatedMonth.bolsaAcumuladaAlCierre, true)}
+                    </strong>
+                    ). Los cambios posteriores de IRPF, Jornada o Turnos no alteran este mes.
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-slate-600 leading-snug">
+                    {isMonthComplete
+                      ? 'Todo el mes tiene turnos/descansos asignados. Al validar se congelan estos porcentajes junto con la nómina exacta y se recalcula el resto del año.'
+                      : `Faltan ${Math.max(0, daysInMonth - filledDaysCount)} días por asignar en ${MONTH_NAMES[selectedMonth - 1]}. Al validar, se guarda la nómina con la jornada e IRPF actuales.`}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                {validatedMonth ? (
+                  <>
+                    {onGoToNomina && (
+                      <button
+                        type="button"
+                        onClick={onGoToNomina}
+                        className="px-3 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-[11px] transition-colors cursor-pointer"
+                      >
+                        Ver Nómina
+                      </button>
+                    )}
+                    {onUnvalidateMonth && (
+                      <button
+                        type="button"
+                        onClick={() => setShowUnvalidateConfirm(true)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-white hover:bg-emerald-100 text-emerald-900 border border-emerald-300 font-bold text-[11px] transition-colors cursor-pointer"
+                      >
+                        <Unlock className="w-3.5 h-3.5" />
+                        <span>Reabrir</span>
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={isValidatingMonth || filledDaysCount === 0}
+                    onClick={() => {
+                      if (isMonthComplete) {
+                        void triggerValidation();
+                      } else {
+                        setShowIncompleteValidateConfirm(true);
+                      }
+                    }}
+                    className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl font-bold text-[11px] shadow-2xs transition-colors cursor-pointer disabled:opacity-50 ${
+                      isMonthComplete
+                        ? 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                        : 'bg-white hover:bg-slate-100 text-slate-800 border border-slate-300'
+                    }`}
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>{isValidatingMonth ? 'Validando...' : 'Validar Mes y Guardar'}</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {annualSummary && annualSummary.validatedMonthsCount > 0 && (
+              <div className="pt-2 border-t border-black/10 flex flex-wrap items-center justify-between gap-2 text-[10px] font-semibold">
+                <span>
+                  Meses validados {selectedYear}: <strong>{annualSummary.validatedMonthsCount}/12</strong> · Saldo arrastrado:{' '}
+                  <strong className="font-mono">{formatHoras(annualSummary.saldoArrastradoValidado, true)}</strong>
+                </span>
+                {annualSummary.unvalidatedMonthsCount > 0 && (
+                  <span>
+                    Pendiente resto del año ({currentJornadaPctCal}%):{' '}
+                    <strong className="font-mono">
+                      {formatHoras(annualSummary.horasPendientesAjustadasResto)}
+                    </strong>{' '}
+                    ({formatHoras(annualSummary.cuotaMensualAjustadaResto)}/mes)
+                  </span>
+                )}
+              </div>
+            )}
+
+            {validationFeedback && (
+              <div className="bg-emerald-600 text-white px-3 py-1.5 rounded-xl text-[11px] font-bold">
+                {validationFeedback}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {/* Calendar Grid Container */}
       <div className="bg-white rounded-3xl p-3 sm:p-4 border border-slate-200 shadow-xs">
         {/* Weekday headers */}
@@ -1026,7 +1225,9 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
             ).padStart(2, '0')}`;
             const asg = assignments.find((a) => a.date === dStr);
             const shiftCode = asg?.shiftCode;
-            const shiftDef = shiftCode ? shiftsMap.get(shiftCode) || shifts.find((s) => s.code === shiftCode) : null;
+            const shiftDef =
+              asg?.shiftSnapshot ||
+              (shiftCode ? shiftsMap.get(shiftCode) || shifts.find((s) => s.code === shiftCode) : null);
             const isSelected = selectedDayNumber === dayNum;
             const visibleCellExtrasCount = (asg?.extras || []).filter(
               (e) => !e.name.toLowerCase().includes('plus festivo')
@@ -1242,11 +1443,15 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                 <button
                   type="button"
                   onClick={() => {
+                    if (isMonthLocked) {
+                      setShowUnvalidateConfirm(true);
+                      return;
+                    }
                     if (currentShift && onEditShift) {
                       onEditShift(currentShift);
                     }
                   }}
-                  title="Ver o editar ficha de este turno"
+                  title={isMonthLocked ? 'Mes validado: reabre el mes para editar manualmente' : 'Ver o editar ficha de este turno'}
                   className="px-2.5 py-1 rounded-lg text-xs font-black transition-transform hover:scale-105"
                   style={{
                     backgroundColor: currentShift ? `${currentShift.color}20` : '#e2e8f0',
@@ -1256,7 +1461,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                   {currentAssignment.shiftCode}
                 </button>
 
-                {currentShift && onEditShift && (
+                {!isMonthLocked && currentShift && onEditShift && (
                   <button
                     type="button"
                     onClick={() => onEditShift(currentShift)}
@@ -1267,31 +1472,56 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                   </button>
                 )}
 
-                <button
-                  type="button"
-                  onClick={() => setShowRemoveShiftConfirm(true)}
-                  title="Eliminar este turno del día (dejar libre)"
-                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 active:scale-90 rounded-lg transition-all"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                {!isMonthLocked && (
+                  <button
+                    type="button"
+                    onClick={() => setShowRemoveShiftConfirm(true)}
+                    title="Eliminar este turno del día (dejar libre)"
+                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 active:scale-90 rounded-lg transition-all"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
               </>
             )}
 
-            <button
-              onClick={() => {
-                const line = prompt('Indica la línea o coche para este día:', currentAssignment.customLine || 'Línea 421 · Coche 304');
-                if (line !== null) {
-                  onUpdateAssignment(selectedDateStr, { customLine: line });
-                }
-              }}
-              title="Modificar línea o coche"
-              className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors text-xs"
-            >
-              <span className="text-[11px] font-medium text-slate-500">Coche</span>
-            </button>
+            {!isMonthLocked && (
+              <button
+                onClick={() => {
+                  const line = prompt('Indica la línea o coche para este día:', currentAssignment.customLine || 'Línea 421 · Coche 304');
+                  if (line !== null) {
+                    onUpdateAssignment(selectedDateStr, { customLine: line });
+                  }
+                }}
+                title="Modificar línea o coche"
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors text-xs"
+              >
+                <span className="text-[11px] font-medium text-slate-500">Coche</span>
+              </button>
+            )}
           </div>
         </div>
+
+        {isMonthLocked && (
+          <div className="bg-emerald-50 border border-emerald-200 rounded-2xl px-3.5 py-2.5 flex items-center justify-between gap-2 text-xs text-emerald-950">
+            <div className="flex items-center gap-2 min-w-0">
+              <Lock className="w-4 h-4 text-emerald-700 shrink-0" />
+              <p className="text-[11px] leading-snug">
+                <strong>Mes validado y congelado:</strong> los turnos, duraciones, pluses e importes de este día quedan fijados. Cualquier cambio deberá ser manual reabriendo el mes.
+              </p>
+            </div>
+            {onUnvalidateMonth && (
+              <button
+                type="button"
+                onClick={() => setShowUnvalidateConfirm(true)}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-white hover:bg-emerald-100 text-emerald-900 border border-emerald-300 font-bold text-[11px] shrink-0 transition-colors cursor-pointer"
+              >
+                <Unlock className="w-3 h-3" />
+                <span>Reabrir</span>
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Shift Details Box */}
         {currentShift ? (
@@ -1406,6 +1636,39 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                       Convenio {selectedYear}
                     </span>
                   </div>
+
+                  {!isMonthLocked && currentAssignment.shiftSnapshot && (() => {
+                    const liveCatalogMatch = shiftsMap.get(currentAssignment.shiftSnapshot.code);
+                    const hasCatalogChanged =
+                      !liveCatalogMatch ||
+                      liveCatalogMatch.startTime !== currentAssignment.shiftSnapshot.startTime ||
+                      liveCatalogMatch.endTime !== currentAssignment.shiftSnapshot.endTime ||
+                      liveCatalogMatch.fixedRate !== currentAssignment.shiftSnapshot.fixedRate ||
+                      Boolean(liveCatalogMatch.hasPlusReten) !== Boolean(currentAssignment.shiftSnapshot.hasPlusReten);
+                    if (!hasCatalogChanged) return null;
+                    return (
+                      <div className="pt-2 border-t border-slate-200/70 flex flex-wrap items-center justify-between gap-2 text-[10.5px]">
+                        <span className="text-amber-800 font-semibold">
+                          Turno histórico conservado (no se modificó automáticamente tras cambiar la BD).
+                        </span>
+                        {liveCatalogMatch && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              onUpdateAssignment(selectedDateStr, {
+                                shiftCode: liveCatalogMatch.code,
+                                shiftId: liveCatalogMatch.id,
+                                shiftSnapshot: undefined,
+                              })
+                            }
+                            className="px-2 py-0.5 rounded-lg bg-white hover:bg-amber-50 text-amber-900 border border-amber-300 font-bold transition-colors cursor-pointer"
+                          >
+                            Aplicar turno actual ({liveCatalogMatch.startTime}-{liveCatalogMatch.endTime})
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               );
             })()
@@ -1423,19 +1686,21 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
               <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
                 Particularidades / Extras del Día
               </span>
-              <button
-                type="button"
-                onClick={() => {
-                  setModalExtraTab('concepto');
-                  setIsAddingExtraModal(true);
-                }}
-                className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1 hover:underline px-1 py-0.5 shrink-0"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Añadir</span>
-              </button>
+              {!isMonthLocked && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setModalExtraTab('concepto');
+                    setIsAddingExtraModal(true);
+                  }}
+                  className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1 hover:underline px-1 py-0.5 shrink-0"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Añadir</span>
+                </button>
+              )}
             </div>
-            <div className="flex flex-wrap items-center gap-1.5">
+            <div className={`flex flex-wrap items-center gap-1.5 ${isMonthLocked ? 'opacity-65 pointer-events-none select-none' : ''}`}>
               {/* Botón único y manual para aplicar o quitar Plus Festivo (40,80 €), sin duplicar en extras */}
               <button
                 type="button"
@@ -1667,7 +1932,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
           </div>
 
           {/* APARTADO DESPLEGABLE: Terminado más tarde de lo que marca el turno */}
-          {isLateSectionOpen ? (
+          {isLateSectionOpen && !isMonthLocked ? (
             <div className="bg-gradient-to-br from-indigo-50/90 via-blue-50/50 to-indigo-50/80 rounded-2xl p-3.5 border border-indigo-200/90 shadow-2xs space-y-3 transition-all animate-in fade-in duration-200">
               <div className="flex items-start justify-between">
                 <div className="flex items-center gap-2">
@@ -1860,22 +2125,26 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                 <span className="font-bold font-mono text-indigo-900">
                   +{formatCurrency(((currentAssignment.lateFinishMinutes || 0) / 60) * horaOrdinariaRate)}
                 </span>
-                <button
-                  type="button"
-                  onClick={() => setIsLateSectionOpen(true)}
-                  className="px-2 py-0.5 text-indigo-600 hover:text-indigo-800 hover:bg-indigo-100 rounded-md transition-colors text-[10px] font-bold"
-                  title="Modificar exceso de tiempo"
-                >
-                  Editar
-                </button>
-                <button
-                  type="button"
-                  onClick={handleClearLateFinish}
-                  className="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors"
-                  title="Eliminar exceso de jornada"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
+                {!isMonthLocked && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setIsLateSectionOpen(true)}
+                      className="px-2 py-0.5 text-indigo-600 hover:text-indigo-800 hover:bg-indigo-100 rounded-md transition-colors text-[10px] font-bold"
+                      title="Modificar exceso de tiempo"
+                    >
+                      Editar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleClearLateFinish}
+                      className="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors"
+                      title="Eliminar exceso de jornada"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           ) : null}
@@ -1924,14 +2193,16 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                     <span className={`font-bold font-mono ${isFT ? 'text-teal-800' : 'text-emerald-700'}`}>
                       +{formatCurrency(displayedAmount)}
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => setExtraToRemove({ id: extra.id, name: extra.name })}
-                      className="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors"
-                      title="Eliminar extra"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    {!isMonthLocked && (
+                      <button
+                        type="button"
+                        onClick={() => setExtraToRemove({ id: extra.id, name: extra.name })}
+                        className="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors"
+                        title="Eliminar extra"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
                 </div>
                 );
@@ -1959,13 +2230,13 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
       </div>
 
       {/* TECLADO DE ASIGNACIÓN RÁPIDA matching screenshot 3 */}
-      <div className="space-y-2 pt-1">
+      <div className={`space-y-2 pt-1 ${isMonthLocked ? 'opacity-55 pointer-events-none select-none' : ''}`}>
         <div className="flex items-center justify-between text-xs px-1">
           <span className="font-bold text-slate-700 uppercase tracking-wide">
             Teclado de Asignación Rápida
           </span>
           <span className="text-blue-600 font-medium">
-            Pulsa para asignar al día {selectedDayNumber}
+            {isMonthLocked ? 'Mes validado (reabrir para editar)' : `Pulsa para asignar al día ${selectedDayNumber}`}
           </span>
         </div>
 
@@ -2610,6 +2881,44 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
           }
         }}
         onCancel={() => setExtraToRemove(null)}
+      />
+      {/* Confirmación para validar mes aunque queden días sin rellenar */}
+      <ConfirmModal
+        isOpen={showIncompleteValidateConfirm}
+        title={`Validar ${MONTH_NAMES[selectedMonth - 1]} ${selectedYear}`}
+        message={`Actualmente hay ${counters.turnosCount + counters.descansosCount + counters.vacacionesCount + counters.bajasCount} de ${daysInMonth} días rellenados en el calendario.\n\nAl validar, se congelarán la jornada (${Math.round(partTimeFactorCal * 100)}%) y el IRPF (${profile?.irpfPercentage ?? 0}%), se guardará la nómina calculada de este mes y se recalcularán las horas del resto del año. ¿Deseas continuar?`}
+        confirmText="Sí, validar y guardar"
+        cancelText="Seguir editando"
+        isDestructive={false}
+        onConfirm={() => {
+          setShowIncompleteValidateConfirm(false);
+          if (onValidateMonth) {
+            void onValidateMonth().then((res) => {
+              if (res?.message) {
+                setValidationFeedback(res.message);
+                window.setTimeout(() => setValidationFeedback(null), 6000);
+              }
+            });
+          }
+        }}
+        onCancel={() => setShowIncompleteValidateConfirm(false)}
+      />
+
+      {/* Confirmación para reabrir un mes validado */}
+      <ConfirmModal
+        isOpen={showUnvalidateConfirm}
+        title={`¿Reabrir ${MONTH_NAMES[selectedMonth - 1]} ${selectedYear}?`}
+        message={`Este mes estaba validado y bloqueado con su jornada (${validatedMonth?.jornadaPct ?? 100}%), IRPF (${validatedMonth?.irpfPercentage ?? 0}%) y turnos de ese momento.\n\nSi lo reabres, podrás editar días manualmente y la nómina volverá a calcularse con los valores y turnos vigentes.`}
+        confirmText="Sí, reabrir mes"
+        cancelText="Mantener validado"
+        isDestructive={true}
+        onConfirm={() => {
+          setShowUnvalidateConfirm(false);
+          if (onUnvalidateMonth) {
+            void onUnvalidateMonth();
+          }
+        }}
+        onCancel={() => setShowUnvalidateConfirm(false)}
       />
     </div>
   );

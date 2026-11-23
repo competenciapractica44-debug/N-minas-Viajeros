@@ -31,6 +31,7 @@ const BACKUP_FILE_NAMES = new Set([
   'cuadrante_asignaciones.json',
   'catalogo_extras.json',
   'calendario_anual_bolsa.json',
+  'meses_validados.json',
 ]);
 
 /**

@@ -133,11 +133,25 @@ export const YearlySalaryChart: React.FC<YearlySalaryChartProps> = ({
             )}
           </div>
 
-          <div className="pt-1.5 border-t border-slate-800 text-[10px] flex items-center justify-between text-slate-400">
-            <span>{item.isProjected ? '📊 Estimación proyectada' : '✅ Cuadrante registrado'}</span>
-            <span className="text-blue-400 font-semibold flex items-center">
-              Ver nómina <ChevronRight className="w-3 h-3 ml-0.5" />
-            </span>
+          <div className="pt-1.5 border-t border-slate-800 space-y-1 text-[10px] text-slate-400">
+            <div className="flex items-center justify-between">
+              <span className={item.isValidated ? 'text-indigo-300 font-semibold' : ''}>
+                {item.isValidated
+                  ? '🔒 Mes validado'
+                  : item.isProjected
+                    ? '📊 Estimación proyectada'
+                    : '✅ Cuadrante registrado'}
+              </span>
+              <span className="text-blue-400 font-semibold flex items-center">
+                Ver nómina <ChevronRight className="w-3 h-3 ml-0.5" />
+              </span>
+            </div>
+            {(item.jornadaPct !== undefined || item.irpfPercentage !== undefined) && (
+              <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono">
+                <span>Jorn. {item.jornadaPct ?? 100}%</span>
+                <span>IRPF {item.irpfPercentage ?? 0}%</span>
+              </div>
+            )}
           </div>
         </div>
       );
@@ -423,6 +437,7 @@ export const YearlySalaryChart: React.FC<YearlySalaryChartProps> = ({
                 }`}
               >
                 <span>{item.monthName}</span>
+                {item.isValidated && <span className="text-[9px]" title="Mes validado">🔒</span>}
                 {item.hasExtraPay && <span className="text-amber-400 text-[10px]">★</span>}
               </button>
             );
@@ -441,6 +456,10 @@ export const YearlySalaryChart: React.FC<YearlySalaryChartProps> = ({
               Bruto
             </span>
           )}
+          <span className="flex items-center gap-1 text-indigo-700 font-medium">
+            <span className="text-[10px]">🔒</span>
+            Validado
+          </span>
           <span className="flex items-center gap-1 text-amber-700">
             <span className="text-amber-500 font-bold">★</span>
             Paga Extra

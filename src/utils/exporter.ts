@@ -185,8 +185,33 @@ export function buildPDFDoc(
   doc.setFont('helvetica', 'normal');
   doc.text(`Base de Cotización S.S.: ${formatCurrency(payroll.baseCotizacionSS)}  |  Total Coste Empresa Estimado: ${formatCurrency(payroll.totalCosteEmpresa)}`, 20, finalY + 14);
 
+  // Bolsa de Horas & Saldo (Positivo empleado / Negativo empresa)
+  const bolsaAcum = payroll.bolsaHorasAcumulada ?? 0;
+  const deficitCierre = payroll.deficitPendienteAlCierre ?? 0;
+  const bolsaY = finalY + 22;
+  const isBolsaNeg = bolsaAcum < -0.004 || deficitCierre < -0.004;
+  doc.setFillColor(isBolsaNeg ? 254 : 239, isBolsaNeg ? 242 : 246, isBolsaNeg ? 242 : 255);
+  doc.roundedRect(14, bolsaY, 182, 14, 2, 2, 'F');
+  doc.setTextColor(isBolsaNeg ? 159 : 30, isBolsaNeg ? 18 : 58, isBolsaNeg ? 57 : 138);
+  doc.setFontSize(8.5);
+  doc.setFont('helvetica', 'bold');
+  const bolsaStatusTxt =
+    bolsaAcum > 0.004
+      ? `Positivo a favor del empleado (+${formatHoursLabel(bolsaAcum)} h)`
+      : bolsaAcum < -0.004
+        ? `Negativo a favor de la empresa · las debe el empleado (${formatHoursLabel(bolsaAcum)} h)`
+        : 'Equilibrado (0,00 h)';
+  doc.text(`BOLSA DE HORAS Y SALDO: ${bolsaStatusTxt}`, 18, bolsaY + 5.5);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.text(
+    `Vacaciones descontadas: -${formatHoursLabel(payroll.bolsaDescontadaVacacionesMes ?? 0)} h  |  Déficit a descontar en próx. excesos: ${deficitCierre < -0.004 ? `${formatHoursLabel(deficitCierre)} h` : '0,00 h'}  |  Festivas/F.T aparte`,
+    18,
+    bolsaY + 10.5
+  );
+
   // Signature lines
-  const sigY = finalY + 28;
+  const sigY = bolsaY + 22;
   if (sigY < 275) {
     doc.setTextColor(100, 116, 139);
     doc.setFontSize(7.5);
@@ -218,7 +243,10 @@ export function buildPDFDoc(
       .filter((a) => a.date >= pdfWindowStart && a.date <= pdfWindowEnd)
       .sort((a, b) => a.date.localeCompare(b.date))
       .map((item) => {
-        const shift = shiftsMap.get(item.shiftCode || '') || Array.from(shiftsMap.values()).find((s) => s.code === item.shiftCode);
+        const shift =
+          item.shiftSnapshot ||
+          shiftsMap.get(item.shiftCode || '') ||
+          Array.from(shiftsMap.values()).find((s) => s.code === item.shiftCode);
         const [, mm, dd] = item.date.split('-');
         const dateBadge = item.date < monthStartStr
           ? `${dd}/${mm} (Ant.)`
@@ -570,8 +598,37 @@ export function exportToExcel(
       periodHoursDiff,
       'horas',
       periodHoursDiff >= 0
-        ? 'Exceso mensual -> abonado como Horas Complementarias'
-        : 'Saldo negativo (0 h compl. mensuales · Salario Base 100%, a compensar)',
+        ? (payroll.carriedDeficitAppliedHours && payroll.carriedDeficitAppliedHours > 0
+            ? `Exceso mensual tras descontar ${formatHoursLabel(payroll.carriedDeficitAppliedHours)} h de déficit previo`
+            : 'Exceso mensual -> abonado como Horas Complementarias')
+        : 'Saldo negativo (0 h compl. mensuales · Salario Base 100%, a compensar en próx. meses)',
+      HOURS_FMT,
+    ],
+    [
+      'Bolsa de Horas · Descuento Vacaciones del Mes',
+      -(payroll.bolsaDescontadaVacacionesMes ?? 0),
+      'horas',
+      `${payroll.vacationDays} días de vacaciones en ${monthName} descontados de la bolsa`,
+      HOURS_FMT,
+    ],
+    [
+      'Saldo Bolsa de Horas al Cierre (Empleado / Empresa)',
+      payroll.bolsaHorasAcumulada ?? 0,
+      'horas',
+      (payroll.bolsaHorasAcumulada ?? 0) > 0.004
+        ? 'Saldo POSITIVO a favor del empleado'
+        : (payroll.bolsaHorasAcumulada ?? 0) < -0.004
+          ? 'Saldo NEGATIVO a favor de la empresa (las debe el empleado)'
+          : 'Saldo equilibrado (0,00 h)',
+      HOURS_FMT,
+    ],
+    [
+      'Déficit de Horas Pendiente (a descontar en próx. excesos)',
+      payroll.deficitPendienteAlCierre ?? 0,
+      'horas',
+      (payroll.deficitPendienteAlCierre ?? 0) < -0.004
+        ? 'Las debe el empleado; se descontarán en próximos meses con exceso'
+        : 'Sin deuda pendiente con la empresa',
       HOURS_FMT,
     ],
   ];
@@ -742,7 +799,10 @@ export function exportToExcel(
     .filter((a) => a.date >= excelWindowStart && a.date <= excelWindowEnd)
     .sort((a, b) => a.date.localeCompare(b.date));
   const cuadranteRows = sortedAssignments.map((item) => {
-    const shift = shiftsMap.get(item.shiftCode || '') || Array.from(shiftsMap.values()).find((s) => s.code === item.shiftCode);
+    const shift =
+      item.shiftSnapshot ||
+      shiftsMap.get(item.shiftCode || '') ||
+      Array.from(shiftsMap.values()).find((s) => s.code === item.shiftCode);
     const extraParts: string[] = [];
     if (item.isHoliday) extraParts.push(`Plus Festivo (+${(activeRate.plusFestivoMayor4h ?? 40.80).toFixed(2)}€)`);
     if (item.extras && item.extras.length > 0) {
