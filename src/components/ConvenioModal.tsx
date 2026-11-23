@@ -81,11 +81,11 @@ const CONCEPTS_METADATA: ConceptDefinition[] = [
   },
   {
     key: 'prorrataPagaDia',
-    label: 'Prorrata Paga Extra por Día (c/u)',
-    article: 'Art. 11 · Masats',
+    label: 'Ref. Histórica Prorrata Masats (c/u)',
+    article: 'Art. 11 · Ref. Masats',
     unit: '€ / día',
     section: 'base',
-    description: 'Cuantía diaria bruta por cada paga extraordinaria prorrateada en recibo Masats (3,28 €/día en 2026).',
+    description: 'Referencia fija del recibo Masats sobre 39,89 €/día (3,28 €/día). En la nómina activa cada paga prorrateada se calcula dinámicamente con Método 1: (30 × Salario Base Diario) / 365 (ej. 3,50 €/día con 42,54 € al 80% o 4,37 €/día al 100%).',
   },
   {
     key: 'salarioBaseAnual',
@@ -144,7 +144,7 @@ const CONCEPTS_METADATA: ConceptDefinition[] = [
     article: 'Art. 9 Convenio',
     unit: '€ / día de vacaciones',
     section: 'plus',
-    description: 'Incentivo de 10,00 €/día de vacaciones retribuidas para contratos al 100% de jornada.',
+    description: 'Incentivo de 10,00 €/día natural de vacaciones retribuidas (31 días en año completo, proporcional al % de jornada).',
   },
   {
     key: 'plusPuntualidadDia',

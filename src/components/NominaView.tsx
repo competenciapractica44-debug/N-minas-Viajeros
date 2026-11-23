@@ -27,7 +27,7 @@ import {
 } from '../types';
 import { getEffectiveYearRate } from '../data/convenioZaragoza';
 import { formatCurrency } from '../utils/exporter';
-import { ANNUAL_VACATION_DAYS_CONVENIO, getDaysInYear } from '../utils/calculator';
+import { ANNUAL_VACATION_DAYS_CONVENIO, getDaysInYear, roundCurrency } from '../utils/calculator';
 import { AnnualLiquidationResult } from '../utils/annualCalendar';
 import { YearlySalaryChart } from './YearlySalaryChart';
 import { ConfirmModal } from './ConfirmModal';
@@ -98,16 +98,33 @@ export const NominaView: React.FC<NominaViewProps> = ({
 
   const isMasatsBaseMode = profile.salaryBaseRateMode === 'masats_39_89';
   const activeYearRate = getEffectiveYearRate(convenio, payroll.year);
-  const convenioBaseDia = parseFloat((activeYearRate.salarioBaseDia * payroll.partTimeFactor).toFixed(2));
-  const masatsBaseDia = parseFloat((activeYearRate.salarioBaseDiaMasats ?? 39.89).toFixed(2));
-  const convenioBaseTotal = parseFloat((payroll.salarioBaseDays * convenioBaseDia).toFixed(2));
-  const masatsBaseTotal = parseFloat((payroll.salarioBaseDays * masatsBaseDia).toFixed(2));
+  const convenioBaseDia = roundCurrency(activeYearRate.salarioBaseDia * payroll.partTimeFactor);
+  const masatsBaseDia = roundCurrency(activeYearRate.salarioBaseDiaMasats ?? 39.89);
+  const convenioBaseTotal = roundCurrency(payroll.salarioBaseDays * convenioBaseDia);
+  const masatsBaseTotal = roundCurrency(payroll.salarioBaseDays * masatsBaseDia);
   const reducedConductorUnitRate =
     activeYearRate.plusConductorPerceptorDiaReducido ??
     parseFloat(((activeYearRate.plusConductorPerceptorDia ?? 6.27) / 2).toFixed(2));
   const prorrateoMode = profile.prorrateoPagasExtra || (profile.prorratearPagasExtra !== false ? 'tres_pagas' : 'ninguna');
   const prorrataNumPagas = prorrateoMode === 'una_paga' ? 1 : 3;
-  const prorrataPerPaga = prorrataNumPagas > 0 ? parseFloat((payroll.prorrataPagasExtra / prorrataNumPagas).toFixed(2)) : 0;
+  const firstProrrataLine = payroll.lines.find(
+    (l) => l.category === 'prorrata' && l.id.startsWith('paga-prorrateada-')
+  );
+  const prorrataPerPaga = firstProrrataLine
+    ? firstProrrataLine.amount
+    : prorrataNumPagas > 0
+      ? Number((((30 * payroll.salarioBaseUnitPrice) / 365) * payroll.prorrataDays).toFixed(2))
+      : 0;
+  const prorrataDailyDisplayRate =
+    payroll.prorrataDailyRate ??
+    Number(((30 * payroll.salarioBaseUnitPrice) / 365).toFixed(2));
+  const liquidatedDaysDisplay = payroll.liquidatedDays ?? payroll.totalDays;
+  const hasPartialContractPeriod =
+    (payroll.periodStartDay !== undefined && payroll.periodStartDay > 1) ||
+    (payroll.periodEndDay !== undefined && payroll.periodEndDay < payroll.totalDays);
+  const liquidatedPeriodBadgeText = hasPartialContractPeriod
+    ? `Del ${payroll.periodStartDay ?? 1} al ${payroll.periodEndDay ?? payroll.totalDays} de ${monthName} (${liquidatedDaysDisplay} días)`
+    : `Mes natural (${payroll.totalDays} días de ${monthName})`;
   const baseIrpf = Math.max(0, payroll.totalDevengado - payroll.dietasExentas);
 
   const formatHoursES = (h: number) =>
@@ -570,14 +587,20 @@ export const NominaView: React.FC<NominaViewProps> = ({
               </span>
               <span
                 className={`text-[10px] font-bold px-1.5 py-0.5 rounded font-mono ${
-                  periodHoursDiff >= 0
+                  payroll.horasExcesoMensual > 0
                     ? 'bg-emerald-400/20 text-emerald-300'
-                    : 'bg-amber-400/20 text-amber-300'
+                    : periodHoursDiff >= 0
+                      ? 'bg-sky-400/20 text-sky-200'
+                      : 'bg-amber-400/20 text-amber-300'
                 }`}
               >
-                {periodHoursDiff >= 0
-                  ? `+${formatHoursES(periodHoursDiff)} h compl.`
-                  : `${formatHoursES(periodHoursDiff)} h (a compensar · 0h compl.)`}
+                {payroll.horasExcesoMensual > 0
+                  ? `+${formatHoursES(payroll.horasExcesoMensual)} h compl.`
+                  : periodHoursDiff >= 0
+                    ? payroll.vacationDays > 0
+                      ? `+${formatHoursES(periodHoursDiff)} h a bolsa/cuota · 0h compl.`
+                      : '0h compl. (compensa déficit)'
+                    : `${formatHoursES(periodHoursDiff)} h (a compensar · 0h compl.)`}
               </span>
               {payroll.horasExcesoDiario9h > 0 && (
                 <span className="text-[10px] font-bold px-1.5 py-0.5 rounded font-mono bg-indigo-400/25 text-indigo-200">
@@ -674,6 +697,7 @@ export const NominaView: React.FC<NominaViewProps> = ({
           <div>
             <h4 className="font-bold text-slate-900 leading-tight">
               Cálculo del Salario Base en Bruto: {payroll.salarioBaseDays} días en {monthName}
+              {hasPartialContractPeriod ? ` (del ${payroll.periodStartDay ?? 1} al ${payroll.periodEndDay ?? payroll.totalDays})` : ''}
             </h4>
             <p className="text-[11px] text-slate-600">
               {isMasatsBaseMode
@@ -695,18 +719,6 @@ export const NominaView: React.FC<NominaViewProps> = ({
             }`}
           >
             Convenio {formatCurrency(convenioBaseDia)} ({formatCurrency(convenioBaseTotal)})
-          </button>
-          <button
-            type="button"
-            disabled={Boolean(validatedMonth)}
-            onClick={() => onUpdateProfile({ salaryBaseRateMode: 'masats_39_89' })}
-            className={`flex-1 sm:flex-none px-3 py-1.5 rounded-lg text-xs font-bold transition-all disabled:opacity-60 ${
-              isMasatsBaseMode
-                ? 'bg-blue-600 text-white shadow-2xs'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
-            }`}
-          >
-            Recibo Masats {formatCurrency(masatsBaseDia)} ({formatCurrency(masatsBaseTotal)})
           </button>
         </div>
       </div>
@@ -836,6 +848,14 @@ export const NominaView: React.FC<NominaViewProps> = ({
         const cuotaFija =
           payroll.cuotaFijaMensualContrato ??
           parseFloat((payroll.convenioAnnualHoursTarget / 12).toFixed(2));
+        const umbralCompl =
+          payroll.umbralComplementariasMes ??
+          (payroll.vacationDays > 0
+            ? parseFloat(Math.max(payroll.convenioMonthlyHoursTarget, cuotaFija).toFixed(2))
+            : payroll.convenioMonthlyHoursTarget);
+        const horasAbsorbidasPorCuotaBolsa = parseFloat(
+          Math.max(0, rawDiff - deficitCompensado - payroll.horasExcesoMensual).toFixed(2)
+        );
         const bolsaAnterior = payroll.bolsaSaldoAnterior ?? payroll.carriedHoursBalance ?? 0;
         const activeYearDays = Math.max(1, getDaysInYear(payroll.year) - ANNUAL_VACATION_DAYS_CONVENIO);
         const dailyRateEst = (payroll.convenioAnnualHoursBase * payroll.partTimeFactor) / activeYearDays;
@@ -848,6 +868,9 @@ export const NominaView: React.FC<NominaViewProps> = ({
         const movimientoBolsaMes =
           payroll.bolsaHorasMes ??
           parseFloat((payroll.ordinaryConvenioHours - payroll.horasExcesoMensual + payroll.sickDays * dailyRateEst - cuotaFija).toFixed(2));
+        const desviacionTrabajadaNoCobrada = parseFloat(
+          (movimientoBolsaMes - (reservaMes - descVacMes)).toFixed(2)
+        );
         const bolsaCierre =
           payroll.bolsaHorasAcumulada ?? parseFloat((bolsaAnterior + movimientoBolsaMes).toFixed(2));
 
@@ -864,11 +887,11 @@ export const NominaView: React.FC<NominaViewProps> = ({
                     Bolsa de Horas
                   </span>
                   <h3 className="text-sm font-bold text-slate-900">
-                    Cálculo de Complementarias, Descuento de Vacaciones y Saldo de Horas
+                    Cálculo de Complementarias, Cuota Fija y Bolsa de Vacaciones
                   </h3>
                 </div>
                 <p className="text-[11px] text-slate-500 mt-0.5">
-                  Las horas <strong>festivas{payroll.horasFT > 0 ? ' y F/T' : ''}</strong> se cobran aparte sí o sí y no entran en este cálculo. La bolsa se genera mes a mes y se descuenta al disfrutar vacaciones.
+                  Las horas <strong>festivas{payroll.horasFT > 0 ? ' y F/T' : ''}</strong> se cobran aparte sí o sí. La bolsa no se cobra en nómina: completa hasta la <strong>cuota fija mensual ({formatHoursES(cuotaFija)} h)</strong> en los meses con vacaciones.
                 </p>
               </div>
 
@@ -907,11 +930,21 @@ export const NominaView: React.FC<NominaViewProps> = ({
                     <span className="font-mono font-bold text-slate-700">−{formatHoursES(payroll.convenioMonthlyHoursTarget)} h</span>
                   </div>
                   <div className="flex items-center justify-between pt-1 border-t border-slate-200">
-                    <span className="font-semibold text-slate-800">Diferencia mes (Real − Teóricas):</span>
+                    <span className="font-semibold text-slate-800">Diferencia (Real − Teóricas):</span>
                     <span className={`font-mono font-extrabold ${rawDiff >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
                       {formatSignedH(rawDiff)}
                     </span>
                   </div>
+                  {payroll.vacationDays > 0 && (
+                    <div className="flex items-center justify-between text-sky-900 bg-sky-50 px-2 py-1 rounded-lg border border-sky-200/80">
+                      <span>Umbral cuota fija mes ({formatHoursES(umbralCompl)} h):</span>
+                      <span className="font-mono font-bold">
+                        {horasAbsorbidasPorCuotaBolsa > 0
+                          ? `−${formatHoursES(horasAbsorbidasPorCuotaBolsa)} h a bolsa`
+                          : 'Cubierto con bolsa'}
+                      </span>
+                    </div>
+                  )}
                   {deficitCompensado > 0 && (
                     <div className="flex items-center justify-between text-amber-800 bg-amber-50 px-2 py-1 rounded-lg border border-amber-200/80">
                       <span>(−) Descuento déficit anterior:</span>
@@ -965,6 +998,22 @@ export const NominaView: React.FC<NominaViewProps> = ({
                       {descVacMes > 0 ? `−${formatHoursES(descVacMes)} h` : '0,00 h'}
                     </span>
                   </div>
+                  {Math.abs(desviacionTrabajadaNoCobrada) > 0.004 && (
+                    <div className="flex items-center justify-between text-sky-900">
+                      <span>Ajuste trabajado a bolsa/déficit:</span>
+                      <span className={`font-mono font-bold ${desviacionTrabajadaNoCobrada >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                        {formatSignedH(desviacionTrabajadaNoCobrada)}
+                      </span>
+                    </div>
+                  )}
+                  {(payroll.horasComplementarias || 0) > 0.004 && (
+                    <div className="flex items-center justify-between text-indigo-800 bg-indigo-50/80 px-2 py-1 rounded-lg border border-indigo-200/70">
+                      <span>Complementarias cobradas (no van a bolsa):</span>
+                      <span className="font-mono font-bold">
+                        −{formatHoursES(payroll.horasComplementarias)} h (excluidas)
+                      </span>
+                    </div>
+                  )}
                   <div className="flex items-center justify-between">
                     <span className="text-slate-600">Movimiento neto bolsa este mes:</span>
                     <span className={`font-mono font-bold ${movimientoBolsaMes >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
@@ -1075,15 +1124,18 @@ export const NominaView: React.FC<NominaViewProps> = ({
                 min={0}
                 max={35}
                 step={0.5}
+                disabled={Boolean(validatedMonth)}
                 value={profile.irpfPercentage}
                 onChange={(e) => onUpdateProfile({ irpfPercentage: parseFloat(e.target.value) || 0 })}
-                className="w-full accent-blue-600 cursor-pointer"
+                className="w-full accent-blue-600 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               />
               <span className="text-[10px] text-slate-400 font-mono">35%</span>
             </div>
           </div>
           <p className="text-[11px] text-slate-500 pt-1">
-            Ajusta tu porcentaje de retención para calcular el impacto inmediato en el líquido mensual a percibir.
+            {validatedMonth
+              ? 'Mes validado con IRPF bloqueado. Pulsa "Validada · Reabrir" arriba si deseas modificarlo.'
+              : 'Ajusta tu porcentaje de retención para calcular el impacto inmediato en el líquido mensual a percibir.'}
           </p>
         </div>
 
@@ -1114,9 +1166,10 @@ export const NominaView: React.FC<NominaViewProps> = ({
                 min={10}
                 max={100}
                 step={5}
+                disabled={Boolean(validatedMonth)}
                 value={currentJornadaPercentage}
                 onChange={(e) => handleJornadaChange(parseInt(e.target.value, 10))}
-                className="w-full accent-amber-600 cursor-pointer"
+                className="w-full accent-amber-600 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               />
               <span className="text-[10px] text-slate-400 font-mono">100%</span>
             </div>
@@ -1132,8 +1185,9 @@ export const NominaView: React.FC<NominaViewProps> = ({
                 <button
                   key={preset}
                   type="button"
+                  disabled={Boolean(validatedMonth)}
                   onClick={() => handleJornadaChange(preset)}
-                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition-colors ${
+                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                     currentJornadaPercentage === preset
                       ? 'bg-amber-600 text-white shadow-2xs'
                       : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
@@ -1175,8 +1229,9 @@ export const NominaView: React.FC<NominaViewProps> = ({
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
           <button
             type="button"
+            disabled={Boolean(validatedMonth)}
             onClick={() => onUpdateProfile({ extrasCutoffMode: 'direxis_25_24' })}
-            className={`p-2.5 rounded-xl border text-left transition-all flex flex-col justify-between ${
+            className={`p-2.5 rounded-xl border text-left transition-all flex flex-col justify-between disabled:opacity-60 disabled:cursor-not-allowed ${
               (profile.extrasCutoffMode || 'direxis_25_24') === 'direxis_25_24'
                 ? 'bg-blue-50/80 border-blue-600 ring-1 ring-blue-600 shadow-2xs'
                 : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
@@ -1193,8 +1248,9 @@ export const NominaView: React.FC<NominaViewProps> = ({
 
           <button
             type="button"
+            disabled={Boolean(validatedMonth)}
             onClick={() => onUpdateProfile({ extrasCutoffMode: 'mes_natural' })}
-            className={`p-2.5 rounded-xl border text-left transition-all flex flex-col justify-between ${
+            className={`p-2.5 rounded-xl border text-left transition-all flex flex-col justify-between disabled:opacity-60 disabled:cursor-not-allowed ${
               profile.extrasCutoffMode === 'mes_natural'
                 ? 'bg-emerald-50/80 border-emerald-600 ring-1 ring-emerald-600 shadow-2xs'
                 : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
@@ -1211,8 +1267,9 @@ export const NominaView: React.FC<NominaViewProps> = ({
 
           <button
             type="button"
+            disabled={Boolean(validatedMonth)}
             onClick={() => onUpdateProfile({ extrasCutoffMode: 'personalizado', customCutoffStartDay: profile.customCutoffStartDay || 25 })}
-            className={`p-2.5 rounded-xl border text-left transition-all flex flex-col justify-between ${
+            className={`p-2.5 rounded-xl border text-left transition-all flex flex-col justify-between disabled:opacity-60 disabled:cursor-not-allowed ${
               profile.extrasCutoffMode === 'personalizado'
                 ? 'bg-purple-50/80 border-purple-600 ring-1 ring-purple-600 shadow-2xs'
                 : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
@@ -1240,6 +1297,7 @@ export const NominaView: React.FC<NominaViewProps> = ({
                 type="number"
                 min={1}
                 max={28}
+                disabled={Boolean(validatedMonth)}
                 value={profile.customCutoffStartDay || 25}
                 onChange={(e) => {
                   const val = Math.max(1, Math.min(28, parseInt(e.target.value, 10) || 1));
@@ -1248,7 +1306,7 @@ export const NominaView: React.FC<NominaViewProps> = ({
                     customCutoffStartDay: val,
                   });
                 }}
-                className="w-16 py-1 px-2 border border-purple-300 rounded-lg text-xs font-mono font-bold text-center bg-white text-purple-950"
+                className="w-16 py-1 px-2 border border-purple-300 rounded-lg text-xs font-mono font-bold text-center bg-white text-purple-950 disabled:opacity-60"
               />
             </div>
             <span className="text-[11px] text-purple-800">
@@ -1299,12 +1357,14 @@ export const NominaView: React.FC<NominaViewProps> = ({
               <div>
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <p className="font-semibold text-slate-800">Salario Base</p>
-                  <span className="text-[9px] font-bold bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded">
-                    Mes natural ({payroll.totalDays} días de {monthName})
+                  <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${hasPartialContractPeriod ? 'bg-blue-100 text-blue-800' : 'bg-slate-100 text-slate-600'}`}>
+                    {liquidatedPeriodBadgeText}
                   </span>
                 </div>
                 <p className="text-[10px] text-slate-400">
-                  {payroll.salarioBaseDays} días ({payroll.workedDays} trabajados + {payroll.restDays} descansos{payroll.vacationDays > 0 ? ` + ${payroll.vacationDays} vac.` : ''}) × {formatCurrency(payroll.salarioBaseUnitPrice)}/día
+                  {hasPartialContractPeriod
+                    ? `${payroll.salarioBaseDays} días liquidados (${payroll.workedDays} trabajados + ${payroll.restDays} descansos${payroll.vacationDays > 0 ? ` + ${payroll.vacationDays} vac.` : ''}) × ${formatCurrency(payroll.salarioBaseUnitPrice)}/día`
+                    : `${payroll.salarioBaseDays} días (${payroll.workedDays} trabajados + ${payroll.restDays} descansos${payroll.vacationDays > 0 ? ` + ${payroll.vacationDays} vac.` : ''}) × ${formatCurrency(payroll.salarioBaseUnitPrice)}/día`}
                   {!isMasatsBaseMode && payroll.partTimeFactor < 1 && ` (${Math.round(payroll.partTimeFactor * 100)}% de ${formatCurrency(activeYearRate.salarioBaseDia)})`}
                 </p>
               </div>
@@ -1319,8 +1379,8 @@ export const NominaView: React.FC<NominaViewProps> = ({
                     <p className="font-bold text-cyan-950">Plus de Vacaciones (Art. 9 Convenio)</p>
                   </div>
                   <p className="text-[10px] text-cyan-700">
-                    {payroll.vacationPlusDays} {payroll.vacationPlusDays === 1 ? 'día disfrutado' : 'días disfrutados'} ×{' '}
-                    {formatCurrency(parseFloat((((activeYearRate.plusVacacionesDia && activeYearRate.plusVacacionesDia > 0 ? activeYearRate.plusVacacionesDia : 10.00)) * payroll.partTimeFactor).toFixed(2)))}/día{' '}
+                    {payroll.vacationPlusDays} {payroll.vacationPlusDays === 1 ? 'día natural disfrutado' : 'días naturales disfrutados'} ×{' '}
+                    {formatCurrency(roundCurrency((activeYearRate.plusVacacionesDia && activeYearRate.plusVacacionesDia > 0 ? activeYearRate.plusVacacionesDia : 10.00) * payroll.partTimeFactor))}/día{' '}
                     {payroll.partTimeFactor < 1
                       ? `(Proporcional al ${Math.round(payroll.partTimeFactor * 100)}% de ${formatCurrency(activeYearRate.plusVacacionesDia && activeYearRate.plusVacacionesDia > 0 ? activeYearRate.plusVacacionesDia : 10.00)})`
                       : '(Contrato al 100%)'}
@@ -1445,14 +1505,14 @@ export const NominaView: React.FC<NominaViewProps> = ({
                     <p className="font-semibold text-slate-800">
                       Prorrata Pagas Extras ({prorrataNumPagas === 1 ? 'Marzo' : 'Marzo, Julio, Dic.'})
                     </p>
-                    <span className="text-[9px] font-bold bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded">
-                      Mes natural ({payroll.totalDays} días)
+                    <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${hasPartialContractPeriod ? 'bg-blue-100 text-blue-800' : 'bg-slate-100 text-slate-600'}`}>
+                      {hasPartialContractPeriod
+                        ? `Del ${payroll.periodStartDay ?? 1} al ${payroll.periodEndDay ?? payroll.totalDays} (${liquidatedDaysDisplay} días)`
+                        : `Mes natural (${payroll.totalDays} días)`}
                     </span>
                   </div>
                   <p className="text-[10px] text-slate-400">
-                    {isMasatsBaseMode
-                      ? `${prorrataNumPagas} ${prorrataNumPagas === 1 ? 'paga prorrateada' : 'pagas prorrateadas'} (${payroll.prorrataDays} días × ${formatCurrency(activeYearRate.prorrataPagaDia ?? 3.28)} = ${formatCurrency(prorrataPerPaga)} c/u)`
-                      : `${prorrataNumPagas} ${prorrataNumPagas === 1 ? 'paga prorrateada' : 'pagas prorrateadas'} (${payroll.prorrataDays.toFixed(2).replace('.', ',')} días base × ${formatCurrency(payroll.salarioBaseUnitPrice)} = ${formatCurrency(prorrataPerPaga)} c/u)`}
+                    {`${prorrataNumPagas} ${prorrataNumPagas === 1 ? 'paga prorrateada' : 'pagas prorrateadas'} (${payroll.prorrataDays.toFixed(2).replace('.', ',')} días × ${formatCurrency(prorrataDailyDisplayRate)}/día = ${formatCurrency(prorrataPerPaga)} c/u)`}
                   </p>
                 </div>
                 <span className="font-bold font-mono text-emerald-700">+{formatCurrency(payroll.prorrataPagasExtra)}</span>
@@ -1488,7 +1548,16 @@ export const NominaView: React.FC<NominaViewProps> = ({
                     {(() => {
                       const parts: string[] = [];
                       if (payroll.horasExcesoMensual > 0) {
-                        parts.push(`${formatHoursES(payroll.horasExcesoMensual)} h exceso s/ ${formatHoursES(payroll.convenioMonthlyHoursTarget)} h teór.`);
+                        const usesQuotaThreshold =
+                          payroll.vacationDays > 0 &&
+                          payroll.umbralComplementariasMes !== undefined &&
+                          payroll.umbralComplementariasMes > payroll.convenioMonthlyHoursTarget;
+                        const refThreshold = usesQuotaThreshold
+                          ? payroll.umbralComplementariasMes!
+                          : payroll.convenioMonthlyHoursTarget;
+                        parts.push(
+                          `${formatHoursES(payroll.horasExcesoMensual)} h exceso s/ ${formatHoursES(refThreshold)} h ${usesQuotaThreshold ? 'cuota fija' : 'teór.'}`
+                        );
                       }
                       if (payroll.horasExcesoDiario9h > 0) {
                         parts.push(`${formatHoursES(payroll.horasExcesoDiario9h)} h en turnos >9h`);

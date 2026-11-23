@@ -186,11 +186,12 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
     const prevMonths = yearOverride?.monthOverrides || {};
     const nextMonths: Record<number, Partial<AnnualMonthEditableFields>> = { ...prevMonths };
     for (let i = 0; i < 12; i++) {
-      nextMonths[i] = {
+      const copy = {
         ...(nextMonths[i] || {}),
         vacNat: 0,
-        vacLab: 0,
       };
+      delete copy.vacLab;
+      nextMonths[i] = copy;
     }
     onUpdateYearOverride(selectedYear, {
       paramOverrides: yearOverride?.paramOverrides,
@@ -600,10 +601,10 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
             )}
             <span>
               {vacMatches
-                ? `Vacaciones cuadradas: ${liquidation.totalVacNat} / ${p.vacReglamentarias} días naturales (${liquidation.totalVacLab} laborables L–V)`
+                ? `Vacaciones cuadradas: ${liquidation.totalVacNat} / ${p.vacReglamentarias} días naturales (todos con plus)`
                 : vacPending
-                ? `Faltan ${difVac} días naturales por asignar (${liquidation.totalVacNat} / ${p.vacReglamentarias} · ${liquidation.totalVacLab} L–V)`
-                : `Exceso de ${Math.abs(difVac)} días naturales sobre convenio (${liquidation.totalVacNat} / ${p.vacReglamentarias} · ${liquidation.totalVacLab} L–V)`}
+                ? `Faltan ${difVac} días naturales por asignar (${liquidation.totalVacNat} / ${p.vacReglamentarias} con plus)`
+                : `Exceso de ${Math.abs(difVac)} días naturales sobre convenio (${liquidation.totalVacNat} / ${p.vacReglamentarias})`}
             </span>
           </div>
 
@@ -771,7 +772,12 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
               <tr>
                 <th className="px-3 py-3 text-left whitespace-nowrap">Mes {p.anio}</th>
                 <th className="px-2 py-3 text-center whitespace-nowrap">Háb. Cal.</th>
-                <th className="px-2 py-3 text-center whitespace-nowrap">Vacac. (Nat / L-V)</th>
+                <th
+                  className="px-2 py-3 text-center whitespace-nowrap"
+                  title="Días naturales de vacaciones disfrutados en el mes (31 días con plus en año completo)"
+                >
+                  Vacaciones
+                </th>
                 <th className="px-2 py-3 text-center whitespace-nowrap">Baja IT (Nat / L-V / Tipo)</th>
                 <th className="px-2 py-3 text-center whitespace-nowrap">Días Activos</th>
                 <th className="px-3 py-3 text-right whitespace-nowrap" title="Horas teóricas calculadas según días activos para cuadrar el año a 0,00 h">
@@ -796,8 +802,8 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                   className="px-3 py-3 text-right whitespace-nowrap bg-emerald-50 text-emerald-950"
                   title={
                     p.repartoBolsa === 'equilibrado'
-                      ? 'Horas Realizadas (+IT) menos las Horas Equilibradas seleccionadas en la cabecera'
-                      : 'Horas Realizadas (+IT) menos la Cuota Fija Mensual seleccionada en la cabecera'
+                      ? 'Horas Realizadas (+IT, excluidas complementarias cobradas) menos Horas Equilibradas'
+                      : 'Horas Realizadas (+IT, excluidas complementarias cobradas) menos Cuota Fija Mensual'
                   }
                 >
                   Comp. (R − T)
@@ -805,9 +811,9 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                 <th className="px-3 py-3 text-right whitespace-nowrap">Fijo Prorr.</th>
                 <th
                   className="px-3 py-3 text-right whitespace-nowrap"
-                  title="Calculado solo sobre vacaciones laborables (Lunes a Viernes); sábados y domingos no cobran plus"
+                  title="Calculado por día natural de vacaciones disfrutado (31 días en año trabajado al completo)"
                 >
-                  Plus Vac. (L–V)
+                  Plus Vac.
                 </th>
                 <th className="px-3 py-3 text-right whitespace-nowrap bg-blue-50 text-blue-950">
                   Total Bruto
@@ -839,7 +845,7 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                 </td>
               </tr>
               {liquidation.filas.map((m) => {
-                const tieneVac = m.vacNat > 0 || m.vacLab > 0;
+                const tieneVac = m.vacNat > 0;
                 const tieneBaja = m.bajaNat > 0 || m.bajaLab > 0;
                 const rowClass = tieneBaja
                   ? 'bg-rose-50/40 hover:bg-rose-50/80'
@@ -914,45 +920,25 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                       />
                     </td>
                     <td className="px-2 py-2 text-center whitespace-nowrap">
-                      <div className="inline-flex items-center justify-center space-x-1">
-                        <input
-                          type="number"
-                          min={0}
-                          max={31}
-                          step={1}
-                          value={m.vacNat}
-                          title="Vacaciones naturales (calcula automáticamente L–V)"
-                          onChange={(e) => {
-                            const natVal = Math.max(0, parseInt(e.target.value, 10) || 0);
-                            const maxHab = Math.max(0, m.habilesCal - m.bajaLab);
-                            handleMonthFieldsChange(m.idx, {
-                              vacNat: natVal,
-                              vacLab: estimateWorkingDaysFromNatural(natVal, maxHab),
-                            });
-                          }}
-                          className="w-12 text-center rounded border border-amber-300 bg-amber-50/60 px-1 py-1 text-xs font-bold text-amber-900 focus:border-amber-600 focus:outline-none"
-                        />
-                        <span className="text-slate-400 font-bold">/</span>
-                        <input
-                          type="number"
-                          min={0}
-                          max={31}
-                          step={1}
-                          value={m.vacLab}
-                          title="Vacaciones laborables (L–V)"
-                          onChange={(e) =>
-                            handleMonthFieldChange(
-                              m.idx,
-                              'vacLab',
-                              Math.max(0, parseInt(e.target.value, 10) || 0)
-                            )
-                          }
-                          className="w-12 text-center rounded border border-amber-300 bg-amber-50/60 px-1 py-1 text-xs font-bold text-amber-900 focus:border-amber-600 focus:outline-none"
-                        />
-                      </div>
-                      {(m.vacNat > 0 || m.vacLab > 0) && (
+                      <input
+                        type="number"
+                        min={0}
+                        max={31}
+                        step={1}
+                        value={m.vacNat}
+                        title="Días naturales de vacaciones disfrutados en el mes (todos cobran plus)"
+                        onChange={(e) => {
+                          const natVal = Math.max(0, Math.min(31, parseInt(e.target.value, 10) || 0));
+                          handleMonthFieldsChange(m.idx, {
+                            vacNat: natVal,
+                            vacLab: undefined,
+                          });
+                        }}
+                        className="w-16 text-center rounded border border-amber-300 bg-amber-50/60 px-1.5 py-1 text-xs font-bold text-amber-900 focus:border-amber-600 focus:outline-none"
+                      />
+                      {m.vacNat > 0 && (
                         <div className="mt-1 text-[10px] font-bold text-amber-800">
-                          {m.vacLab} d. L–V cobrables
+                          {m.vacNat} {m.vacNat === 1 ? 'día' : 'días'} con plus
                         </div>
                       )}
                     </td>
@@ -1108,10 +1094,17 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                           : '—'}
                       </div>
                       {m.tieneRegistroReal && (
-                        <div className={`text-[10px] font-bold ${compAcumClass}`}>
-                          {m.bajaLab > 0 ? 'Incl. +IT · ' : ''}Acum:{' '}
-                          {formatHoras(m.bolsaCompensacionAcumulada, true)}
-                        </div>
+                        <>
+                          {m.horasComplementariasMes > 0.004 && (
+                            <div className="text-[10px] font-bold text-indigo-700">
+                              −{formatHoras(m.horasComplementariasMes)} compl. (no a bolsa)
+                            </div>
+                          )}
+                          <div className={`text-[10px] font-bold ${compAcumClass}`}>
+                            {m.bajaLab > 0 ? 'Incl. +IT · ' : ''}Acum:{' '}
+                            {formatHoras(m.bolsaCompensacionAcumulada, true)}
+                          </div>
+                        </>
                       )}
                     </td>
                     <td className="px-3 py-2.5 text-right text-slate-800 whitespace-nowrap">
@@ -1126,9 +1119,9 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                       }`}
                     >
                       <div>{formatEuro(m.plusVacMes)}</div>
-                      {m.vacLab > 0 && liquidation.plusVacDiaEfectivo > 0 && (
+                      {m.vacNat > 0 && liquidation.plusVacDiaEfectivo > 0 && (
                         <div className="text-[10px] font-semibold text-amber-700">
-                          {m.vacLab}d L–V × {formatEuro(liquidation.plusVacDiaEfectivo)}
+                          {m.vacNat}d × {formatEuro(liquidation.plusVacDiaEfectivo)}
                         </div>
                       )}
                     </td>
@@ -1146,7 +1139,7 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                   {liquidation.totalHabilesCal}
                 </td>
                 <td className="px-2 py-3 text-center text-amber-300 whitespace-nowrap">
-                  {liquidation.totalVacNat} / {liquidation.totalVacLab}
+                  {liquidation.totalVacNat} d.
                 </td>
                 <td className="px-2 py-3 text-center text-rose-300 whitespace-nowrap">
                   {liquidation.totalBajaNat} / {liquidation.totalBajaLab}

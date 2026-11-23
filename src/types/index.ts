@@ -138,6 +138,8 @@ export interface WorkerProfile {
   salaryBaseRateMode?: 'convenio_53_18' | 'masats_39_89'; // 53.18 € Convenio Zaragoza o 39.89 € Recibo Masats
   unionFeeDeduction: number; // e.g. 0.00
   advancePayment: number; // anticipos
+  fechaAlta?: string; // "YYYY-MM-DD" opcional (en la ficha personal del empleado)
+  fechaBaja?: string; // "YYYY-MM-DD" opcional (en la ficha personal del empleado)
 }
 
 export interface PayrollLineItem {
@@ -220,6 +222,10 @@ export interface PayrollBreakdown {
   medioPlusConductorCount: number;
   plusPuntualidadCount: number;
   prorrataDays: number;
+  prorrataDailyRate?: number;
+  liquidatedDays?: number;
+  periodStartDay?: number;
+  periodEndDay?: number;
 
   // Devengos
   salarioBase: number;
@@ -277,6 +283,7 @@ export interface PayrollBreakdown {
 
   // Bolsa de horas (generación, descuento en vacaciones y saldo empleado/empresa)
   cuotaFijaMensualContrato?: number;
+  umbralComplementariasMes?: number;
   bolsaSaldoAnterior?: number;
   bolsaGeneradaReservaMes?: number;
   bolsaDescontadaVacacionesMes?: number;

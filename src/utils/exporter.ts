@@ -13,6 +13,7 @@ import {
   computeShiftRateFromConvenio,
   ANNUAL_VACATION_DAYS_CONVENIO,
   getDaysInYear,
+  roundCurrency,
 } from './calculator';
 
 /**
@@ -54,13 +55,20 @@ export function buildPDFDoc(
   const pageWidth = doc.internal.pageSize.getWidth();
   const activeRate = getEffectiveYearRate(convenio, payroll.year);
   const baseDayRate = profile.salaryBaseRateMode === 'masats_39_89'
-    ? parseFloat((activeRate.salarioBaseDiaMasats ?? 39.89).toFixed(2))
-    : parseFloat((activeRate.salarioBaseDia * payroll.partTimeFactor).toFixed(2));
+    ? roundCurrency(activeRate.salarioBaseDiaMasats ?? 39.89)
+    : roundCurrency(activeRate.salarioBaseDia * payroll.partTimeFactor);
   const jornadaPct = Math.round(payroll.partTimeFactor * 100);
 
   // Primary brand header
   doc.setFillColor(30, 58, 138); // Navy blue
   doc.rect(0, 0, pageWidth, 22, 'F');
+
+  const hasPartialContractPeriod =
+    (payroll.periodStartDay !== undefined && payroll.periodStartDay > 1) ||
+    (payroll.periodEndDay !== undefined && payroll.periodEndDay < payroll.totalDays);
+  const periodLabel = hasPartialContractPeriod
+    ? `Del ${payroll.periodStartDay ?? 1} al ${payroll.periodEndDay ?? payroll.totalDays} de ${monthName} ${payroll.year}`
+    : `${monthName} ${payroll.year}`;
 
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(14);
@@ -69,7 +77,7 @@ export function buildPDFDoc(
   doc.setFontSize(8.5);
   doc.setFont('helvetica', 'normal');
   doc.text(
-    `Período: ${monthName} ${payroll.year} · Corte variables: ${payroll.extrasCutoffPeriod} · Convenio Colectivo Zaragoza`,
+    `Período: ${periodLabel} · Corte variables: ${payroll.extrasCutoffPeriod} · Convenio Colectivo Zaragoza`,
     14,
     18
   );
@@ -511,8 +519,8 @@ export function exportToExcel(
   const wb = XLSX.utils.book_new();
   const activeRate = getEffectiveYearRate(convenio, payroll.year);
   const baseDayRate = profile.salaryBaseRateMode === 'masats_39_89'
-    ? parseFloat((activeRate.salarioBaseDiaMasats ?? 39.89).toFixed(2))
-    : parseFloat((activeRate.salarioBaseDia * payroll.partTimeFactor).toFixed(2));
+    ? roundCurrency(activeRate.salarioBaseDiaMasats ?? 39.89)
+    : roundCurrency(activeRate.salarioBaseDia * payroll.partTimeFactor);
   const jornadaPct = Math.round(payroll.partTimeFactor * 100);
   const periodHoursDiff = parseFloat((payroll.ordinaryConvenioHours - payroll.convenioMonthlyHoursTarget).toFixed(2));
   const CURRENCY_FMT = '#,##0.00 "€"';
@@ -545,10 +553,17 @@ export function exportToExcel(
     return idx;
   };
 
+  const hasPartialContractPeriod =
+    (payroll.periodStartDay !== undefined && payroll.periodStartDay > 1) ||
+    (payroll.periodEndDay !== undefined && payroll.periodEndDay < payroll.totalDays);
+  const partialPeriodNote = hasPartialContractPeriod
+    ? ` (del ${payroll.periodStartDay ?? 1} al ${payroll.periodEndDay ?? payroll.totalDays} por alta/baja)`
+    : '';
+
   // Título & subtítulo
   const rTitle = pushRow1(['RECIBO INDIVIDUAL DE SALARIOS · TRANSPORTE DE VIAJEROS', '', '', ''], 30);
   const rSub = pushRow1(
-    [`Período: ${monthName} ${payroll.year}   |   Ciclo de corte variables: ${payroll.extrasCutoffPeriod}   |   Convenio Colectivo Zaragoza`, '', '', ''],
+    [`Período: ${hasPartialContractPeriod ? `Del ${payroll.periodStartDay ?? 1} al ${payroll.periodEndDay ?? payroll.totalDays} de ${monthName}` : monthName} ${payroll.year}   |   Ciclo de corte variables: ${payroll.extrasCutoffPeriod}   |   Convenio Colectivo Zaragoza`, '', '', ''],
     22
   );
   pushRow1(['', '', '', ''], 10);
@@ -558,14 +573,14 @@ export function exportToExcel(
   pushRow1(['Trabajador:', profile.name?.trim() || 'Sin especificar', 'NIF / NIE:', profile.nif?.trim() || 'Sin especificar'], 22);
   pushRow1(['Categoría Profesional:', profile.category?.trim() || 'Conductor/a Perceptor/a', 'Convenio Aplicable:', 'BOPZ 182 · Zaragoza'], 22);
   pushRow1(['Contrato y Jornada:', contractLabel, 'Régimen Pagas Extras:', prorrateoLabel], 22);
-  const rMetaEnd = pushRow1(['Mes / Año Liquidación:', `${monthName} ${payroll.year}`, 'Fecha de Emisión:', new Date().toLocaleDateString('es-ES')], 22);
+  const rMetaEnd = pushRow1(['Mes / Año Liquidación:', `${monthName} ${payroll.year}${partialPeriodNote}`, 'Fecha de Emisión:', new Date().toLocaleDateString('es-ES')], 22);
   pushRow1(['', '', '', ''], 12);
 
   // Sección I: Datos de Jornada y Horas de Convenio (Art. 14)
   const rSecJornadaTitle = pushRow1(['I. DATOS DE JORNADA Y HORAS POR CONVENIO (ART. 14)', '', '', ''], 24);
   const rSecJornadaHead = pushRow1(['CONCEPTO DE JORNADA', 'VALOR', 'UNIDAD / REFERENCIA', 'DETALLE / OBSERVACIONES'], 22);
   const jornadaRows: Array<[string, number, string, string, string]> = [
-    ['Días Naturales / Pagados Salario Base', payroll.salarioBaseDays, 'días naturales', `De ${payroll.totalDays} días en ${monthName}`, DAYS_FMT],
+    ['Días Naturales / Pagados Salario Base', payroll.salarioBaseDays, 'días naturales', `De ${payroll.totalDays} días en ${monthName}${partialPeriodNote}`, DAYS_FMT],
     ['Días Trabajados en Mes Natural', payroll.workedDays, 'días', 'Turnos asignados en calendario del mes', DAYS_FMT],
     ['Días de Descanso', payroll.restDays, 'días', 'Libranzas y descansos semanales (D)', DAYS_FMT],
     ['Días de Vacaciones en Mes Natural', payroll.vacationDays, 'días', 'Incluidos en Salario Base mensual', DAYS_FMT],
@@ -594,14 +609,25 @@ export function exportToExcel(
       HOURS_FMT,
     ],
     [
+      `Cuota Fija Mensual Contrato (${jornadaPct}%)`,
+      payroll.cuotaFijaMensualContrato ?? parseFloat((payroll.convenioAnnualHoursTarget / 12).toFixed(2)),
+      'horas / mes',
+      'Referencia mensual uniforme (Jornada anual / 12): suma en el año igual a las horas teóricas anuales',
+      HOURS_FMT,
+    ],
+    [
       'Diferencia Horas Reales vs Teóricas',
       periodHoursDiff,
       'horas',
-      periodHoursDiff >= 0
+      payroll.horasExcesoMensual > 0
         ? (payroll.carriedDeficitAppliedHours && payroll.carriedDeficitAppliedHours > 0
-            ? `Exceso mensual tras descontar ${formatHoursLabel(payroll.carriedDeficitAppliedHours)} h de déficit previo`
-            : 'Exceso mensual -> abonado como Horas Complementarias')
-        : 'Saldo negativo (0 h compl. mensuales · Salario Base 100%, a compensar en próx. meses)',
+            ? `Exceso mensual sobre umbral (${formatHoursLabel(payroll.horasExcesoMensual)} h a complementarias tras descontar ${formatHoursLabel(payroll.carriedDeficitAppliedHours)} h de déficit)`
+            : `Exceso mensual -> ${formatHoursLabel(payroll.horasExcesoMensual)} h abonadas como Horas Complementarias`)
+        : periodHoursDiff >= 0
+          ? (payroll.vacationDays > 0
+              ? 'Completan cuota fija / compensan bolsa de vacaciones (0 h compl. en nómina)'
+              : 'Absorbido por déficit de horas previo (0 h compl. en nómina)')
+          : 'Saldo negativo (0 h compl. mensuales · Salario Base 100%, a compensar en próx. meses)',
       HOURS_FMT,
     ],
     [
@@ -609,6 +635,15 @@ export function exportToExcel(
       -(payroll.bolsaDescontadaVacacionesMes ?? 0),
       'horas',
       `${payroll.vacationDays} días de vacaciones en ${monthName} descontados de la bolsa`,
+      HOURS_FMT,
+    ],
+    [
+      'Complementarias Cobradas (Excluidas de Bolsa)',
+      payroll.horasComplementarias || 0,
+      'horas',
+      (payroll.horasComplementarias || 0) > 0.004
+        ? 'Las horas complementarias cobradas en nómina NO se acumulan en la bolsa de horas'
+        : 'Sin horas complementarias cobradas este mes',
       HOURS_FMT,
     ],
     [

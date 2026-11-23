@@ -40,6 +40,8 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
     customCutoffStartDay: profile.customCutoffStartDay || 25,
     hasVacationPlus: profile.hasVacationPlus !== undefined ? profile.hasVacationPlus : true,
     hasPunctualityEarlyStartPlus: profile.hasPunctualityEarlyStartPlus === true,
+    fechaAlta: profile.fechaAlta?.trim() || undefined,
+    fechaBaja: profile.fechaBaja?.trim() || undefined,
   }));
 
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -57,6 +59,8 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
         customCutoffStartDay: profile.customCutoffStartDay || 25,
         hasVacationPlus: profile.hasVacationPlus !== undefined ? profile.hasVacationPlus : true,
         hasPunctualityEarlyStartPlus: profile.hasPunctualityEarlyStartPlus === true,
+        fechaAlta: profile.fechaAlta?.trim() || undefined,
+        fechaBaja: profile.fechaBaja?.trim() || undefined,
       });
     }
   }, [isOpen, profile]);
@@ -85,6 +89,12 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
       setValidationError('Por favor, introduce tu nombre completo para guardar tu perfil y sincronizarlo.');
       return;
     }
+    const cleanAlta = formData.fechaAlta?.trim() || undefined;
+    const cleanBaja = formData.fechaBaja?.trim() || undefined;
+    if (cleanAlta && cleanBaja && cleanBaja < cleanAlta) {
+      setValidationError('La fecha de baja no puede ser anterior a la fecha de alta.');
+      return;
+    }
     setValidationError(null);
     onSaveProfile({
       ...formData,
@@ -96,6 +106,8 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
       autonomousCommunity: formData.autonomousCommunity || activeRegionId,
       locality: (formData.locality || '').trim(),
       prorratearPagasExtra: formData.prorrateoPagasExtra === 'tres_pagas',
+      fechaAlta: cleanAlta,
+      fechaBaja: cleanBaja,
     });
     onClose();
   };
@@ -200,6 +212,94 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
                 placeholder="Ej: Conductor/a Perceptor/a"
                 className="w-full py-2 px-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
+            </div>
+
+            {/* Fechas opcionales de Alta y Baja en la ficha personal del empleado */}
+            <div className="p-3.5 bg-slate-50/90 border border-slate-200 rounded-2xl space-y-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  <CalendarDays className="w-3.5 h-3.5 text-blue-600" />
+                  <span className="font-bold text-slate-900 text-xs">
+                    Fechas de Alta y Baja (Opcional)
+                  </span>
+                </div>
+                {(formData.fechaAlta || formData.fechaBaja) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (validationError) setValidationError(null);
+                      setFormData({ ...formData, fechaAlta: undefined, fechaBaja: undefined });
+                    }}
+                    className="text-[10px] font-bold text-slate-500 hover:text-rose-600 transition-colors"
+                  >
+                    Limpiar fechas
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[11px] font-semibold text-slate-700">
+                      Fecha de Alta
+                    </label>
+                    {formData.fechaAlta && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (validationError) setValidationError(null);
+                          setFormData({ ...formData, fechaAlta: undefined });
+                        }}
+                        className="text-[10px] text-slate-400 hover:text-slate-700"
+                      >
+                        Quitar
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    type="date"
+                    value={formData.fechaAlta || ''}
+                    onChange={(e) => {
+                      if (validationError) setValidationError(null);
+                      setFormData({ ...formData, fechaAlta: e.target.value || undefined });
+                    }}
+                    className="w-full py-2 px-3 rounded-xl border border-slate-200 bg-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[11px] font-semibold text-slate-700">
+                      Fecha de Baja
+                    </label>
+                    {formData.fechaBaja && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (validationError) setValidationError(null);
+                          setFormData({ ...formData, fechaBaja: undefined });
+                        }}
+                        className="text-[10px] text-slate-400 hover:text-slate-700"
+                      >
+                        Quitar
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    type="date"
+                    value={formData.fechaBaja || ''}
+                    onChange={(e) => {
+                      if (validationError) setValidationError(null);
+                      setFormData({ ...formData, fechaBaja: e.target.value || undefined });
+                    }}
+                    className="w-full py-2 px-3 rounded-xl border border-slate-200 bg-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+
+              <p className="text-[10px] text-slate-500 leading-relaxed">
+                Vacías por defecto para liquidar el mes completo. Si el alta o la baja coincide con el mes seleccionado, el salario base y las pagas prorrateadas se ajustan a los días naturales liquidados de ese mes.
+              </p>
             </div>
 
             {/* Localidad y Comunidad Autónoma para detectar festivos locales y regionales */}
@@ -514,7 +614,7 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
                       Prorratear las 3 pagas extras mensualmente
                     </p>
                     <p className="text-[11px] text-slate-500 leading-normal">
-                      Se abona en cada nómina mensual 7,5 días de salario base (equivalente a 90 días anuales repartidos en 12 meses).
+                      Se abona en cada nómina mensual según los días naturales liquidados del mes con devengo diario exacto: (30 días × salario base diario) / 365.
                     </p>
                   </div>
                 </label>
@@ -543,7 +643,7 @@ export const WorkerProfileModal: React.FC<WorkerProfileModalProps> = ({
                       </span>
                     </p>
                     <p className="text-[11px] text-slate-500 leading-normal">
-                      Se prorratea únicamente la paga de Marzo (2,5 días de salario base/mes), y las pagas de Verano (Julio) y Navidad (Diciembre) se abonan completas en su mes (30 días cada una).
+                      Se prorratea únicamente la paga de Marzo por los días naturales del mes ((30 × salario base diario) / 365), y Verano (Julio) y Navidad (Diciembre) se abonan íntegras (30 días cada una).
                     </p>
                   </div>
                 </label>

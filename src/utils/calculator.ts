@@ -9,10 +9,15 @@ import {
   PayrollExtraItemDetail,
   MonthlySalaryEvolution,
   PayrollLineItem,
+  ValidatedMonthRecord,
   ValidatedMonthsMap,
 } from '../types';
 import { getEffectiveYearRate, getOfficialConvenioExtraAmount, isFTExtraName } from '../data/convenioZaragoza';
 import { ALL_INITIAL_SHIFTS } from '../data/defaultTurnos';
+
+export function roundCurrency(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
 
 function normalizeAssignmentDateStr(dateStr?: string): string {
   if (!dateStr) return '';
@@ -414,6 +419,71 @@ export function computeShiftRateFromConvenio(
   };
 }
 
+function parseIsoOrEsDate(dateStr?: string): { year: number; month: number; day: number } | null {
+  if (!dateStr) return null;
+  const trimmed = String(dateStr).trim().split('T')[0];
+  if (!trimmed) return null;
+  const iso = trimmed.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (iso) {
+    return {
+      year: parseInt(iso[1], 10),
+      month: parseInt(iso[2], 10),
+      day: parseInt(iso[3], 10),
+    };
+  }
+  const dmy = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (dmy) {
+    return {
+      year: parseInt(dmy[3], 10),
+      month: parseInt(dmy[2], 10),
+      day: parseInt(dmy[1], 10),
+    };
+  }
+  return null;
+}
+
+/**
+ * Calcula los días naturales liquidados en un mes/año teniendo en cuenta
+ * fechas opcionales de alta y baja del trabajador.
+ */
+export function getLiquidatedMonthPeriod(
+  year: number,
+  month: number,
+  fechaAlta?: string,
+  fechaBaja?: string
+): {
+  diasTotalesMes: number;
+  diaInicio: number;
+  diaFin: number;
+  diasLiquidados: number;
+  hasAltaInMonth: boolean;
+  hasBajaInMonth: boolean;
+} {
+  const diasTotalesMes = new Date(year, month, 0).getDate();
+  const parsedAlta = parseIsoOrEsDate(fechaAlta);
+  const parsedBaja = parseIsoOrEsDate(fechaBaja);
+
+  const hasAltaInMonth = Boolean(parsedAlta && parsedAlta.year === year && parsedAlta.month === month);
+  const hasBajaInMonth = Boolean(parsedBaja && parsedBaja.year === year && parsedBaja.month === month);
+
+  const diaInicio = hasAltaInMonth
+    ? Math.max(1, Math.min(diasTotalesMes, parsedAlta!.day))
+    : 1;
+  const diaFin = hasBajaInMonth
+    ? Math.max(1, Math.min(diasTotalesMes, parsedBaja!.day))
+    : diasTotalesMes;
+  const diasLiquidados = Math.max(0, diaFin - diaInicio + 1);
+
+  return {
+    diasTotalesMes,
+    diaInicio,
+    diaFin,
+    diasLiquidados,
+    hasAltaInMonth,
+    hasBajaInMonth,
+  };
+}
+
 /**
  * Comprehensive payroll calculation according to Zaragoza Transport Collective Agreement & Spanish Labor / Tax Laws
  */
@@ -427,13 +497,15 @@ export function calculateMonthlyPayroll(
   validatedMonths?: ValidatedMonthsMap
 ): PayrollBreakdown {
   const monthKey = `${year}-${String(month).padStart(2, '0')}`;
-  const daysInMonth = new Date(year, month, 0).getDate();
+  const liquidatedPeriod = getLiquidatedMonthPeriod(year, month, profile.fechaAlta, profile.fechaBaja);
+  const daysInMonth = liquidatedPeriod.diasTotalesMes;
 
   let workedDays = 0;
   let restDays = 0;
   let holidayDays = 0;
   let vacationDays = 0;
   let sickDays = 0;
+  let sickDaysInLiquidatedPeriod = 0;
 
   let totalWorkedHours = 0;
   let ordinaryShiftHours = 0;
@@ -581,6 +653,9 @@ export function calculateMonthlyPayroll(
     }
     if (assignment?.isSickLeave || shiftCode === 'B' || assignment?.shiftId === 'B') {
       sickDays++;
+      if (d >= liquidatedPeriod.diaInicio && d <= liquidatedPeriod.diaFin) {
+        sickDaysInLiquidatedPeriod++;
+      }
       continue;
     }
 
@@ -639,7 +714,7 @@ export function calculateMonthlyPayroll(
   const isAutoVacationPlusActive = profile.hasVacationPlus !== false;
   const basePlusVacacionesDiaForDetail =
     yearRate.plusVacacionesDia && yearRate.plusVacacionesDia > 0 ? yearRate.plusVacacionesDia : 10.00;
-  const plusVacacionesDiaForDetail = parseFloat((basePlusVacacionesDiaForDetail * partTimeFactor).toFixed(2));
+  const plusVacacionesDiaForDetail = roundCurrency(basePlusVacacionesDiaForDetail * partTimeFactor);
 
   // =========================================================================
   // 2. PERÍODO DE CORTE DE VARIABLES Y EXTRAS (ej. 25 mes anterior al 24 mes actual)
@@ -663,7 +738,6 @@ export function calculateMonthlyPayroll(
       const dateObj = new Date(cY, cM - 1, cD);
       const dow = dateObj.getDay();
       const isSunday = dow === 0;
-      const isMonToFri = dow >= 1 && dow <= 5;
       const shiftCode = assignment.shiftCode?.trim();
       const upperCode = shiftCode?.toUpperCase();
       const dayExtras = assignment.extras || [];
@@ -687,7 +761,7 @@ export function calculateMonthlyPayroll(
         assignment.shiftId === 'B'
       );
 
-      if (isVacationDay && isMonToFri) {
+      if (isVacationDay) {
         cutoffVacationPlusDays++;
         if (isPrevStretch) {
           prevMonthCutoffVacationDays++;
@@ -1228,16 +1302,13 @@ export function calculateMonthlyPayroll(
           const isVacationDayPostCutoff = Boolean(
             assignment.isVacation || upperCodePost === 'V' || assignment.shiftId === 'V'
           );
-          const [pY, pM, pD] = dateStr.split('-').map(Number);
-          const postDow = new Date(pY, pM - 1, pD).getDay();
-          const isPostMonToFri = postDow >= 1 && postDow <= 5;
-          if (isVacationDayPostCutoff && isPostMonToFri && profile.hasVacationPlus !== false) {
+          if (isVacationDayPostCutoff && profile.hasVacationPlus !== false) {
             const vacRate =
               yearRate.plusVacacionesDia && yearRate.plusVacacionesDia > 0
                 ? yearRate.plusVacacionesDia
                 : 10.00;
             pendingNextMonthExtrasCount++;
-            pendingNextMonthExtrasTotal += parseFloat((vacRate * partTimeFactor).toFixed(2));
+            pendingNextMonthExtrasTotal += roundCurrency(vacRate * partTimeFactor);
           }
           if (shiftDef && shiftDef.code !== 'D' && shiftDef.code !== 'V' && shiftDef.code !== 'B') {
             const calc = computeShiftRateFromConvenio(shiftDef, yearRate, { isHoliday: Boolean(assignment.isHoliday) });
@@ -1574,11 +1645,29 @@ export function calculateMonthlyPayroll(
 
     if (!hasPrevActivity) continue;
 
+    const mAnnualTarget = convenioAnnualHoursBase * mFactor;
+    const mDailyRate = mAnnualTarget / activeDaysInYearForBag;
+    const mCuotaFija = mAnnualTarget / 12;
+    const mSickCredit = mSick * mDailyRate;
+    const mCuotaFijaNetOfSick = Math.max(0, mCuotaFija - mSickCredit);
+
+    const roundH = (v: number): number => {
+      const r = Math.round(v * 100) / 100;
+      return Object.is(r, -0) ? 0 : r;
+    };
+
     const mDiff = mOrd - mTarget;
     if (!vRec || !vRec.payrollSnapshot) {
       const mDeficitOwed = Math.max(0, -runningDeficit);
       const mAppliedDeficit = mDiff > 0 ? Math.min(mDiff, mDeficitOwed) : 0;
-      mPaidExcess = Math.max(0, mDiff - mAppliedDeficit);
+      const mSurplusAfterDeficit = Math.max(0, mDiff - mAppliedDeficit);
+      if (mVac > 0) {
+        const mExcessThreshold = roundH(Math.max(mTarget, mCuotaFijaNetOfSick));
+        const mExcessOverQuota = Math.max(0, mOrd - mExcessThreshold);
+        mPaidExcess = Math.min(mSurplusAfterDeficit, mExcessOverQuota);
+      } else {
+        mPaidExcess = mSurplusAfterDeficit;
+      }
     }
 
     if (mDiff < 0) {
@@ -1588,15 +1677,16 @@ export function calculateMonthlyPayroll(
       runningDeficit = Math.min(0, runningDeficit + absorbedToDeficit);
     }
 
-    const mAnnualTarget = convenioAnnualHoursBase * mFactor;
-    const mDailyRate = mAnnualTarget / activeDaysInYearForBag;
-    const mCuotaFija = mAnnualTarget / 12;
-    const mSickCredit = mSick * mDailyRate;
     runningBolsa += (mOrd - mPaidExcess + mSickCredit) - mCuotaFija;
   }
 
-  const bolsaSaldoAnterior = Math.round(runningBolsa * 100) / 100;
-  const deficitAnteriorPendiente = Math.round(runningDeficit * 100) / 100;
+  const roundHours = (v: number): number => {
+    const r = Math.round(v * 100) / 100;
+    return Object.is(r, -0) ? 0 : r;
+  };
+
+  const bolsaSaldoAnterior = roundHours(runningBolsa);
+  const deficitAnteriorPendiente = roundHours(runningDeficit);
   const carriedHoursBalance = bolsaSaldoAnterior;
 
   let remainingBaseHoursFromMonth = 0;
@@ -1626,55 +1716,68 @@ export function calculateMonthlyPayroll(
     yearValidatedRecords.length > 0 || hasMidYearJornadaChange
       ? Math.max(
           0,
-          Math.round((remainingBaseHoursFromMonth - estAnnualVacDiscount - carriedHoursBalance) * 100) / 100
+          roundHours(remainingBaseHoursFromMonth - estAnnualVacDiscount - carriedHoursBalance)
         )
       : undefined;
 
   // 5. Horas festivas (Convenio: horaOrdinaria) - Jornadas en festivo marcado (aparte de salario base)
   const horaOrdinariaUnitRate = yearRate.horaOrdinaria ?? 13.62;
-  const finalFestivasHours = Math.round((holidayShiftHours + explicitFestivasHours) * 100) / 100;
+  const finalFestivasHours = roundHours(holidayShiftHours + explicitFestivasHours);
   const horasFestivasAmount = parseFloat(
     (finalFestivasHours * horaOrdinariaUnitRate).toFixed(2)
   );
 
   // 5b. Horas F/T (Fiesta / Trabajo) (Convenio: horaOrdinaria) - Aparte del salario base aunque al mismo precio
-  const finalFTHours = Math.round((ftShiftHours + explicitFTHours) * 100) / 100;
+  const finalFTHours = roundHours(ftShiftHours + explicitFTHours);
   const horasFTAmount = parseFloat(
     (finalFTHours * horaOrdinariaUnitRate).toFixed(2)
   );
 
-  // 6. Horas complementarias: (Horas realizadas reales hasta 9h/día sin Festivos ni F/T - Horas teóricas - déficit previo arrastrado) + exceso diario > 9h + manuales
-  // Si (realizadas - teóricas) < 0, no se generan complementarias mensuales (cobra salario base íntegro y se compensa en meses siguientes que sobren horas)
-  const ordinaryConvenioHours = Math.round(ordinaryShiftHours * 100) / 100;
-  const rawMonthlyDiff = Math.round((ordinaryConvenioHours - convenioMonthlyHoursTarget) * 100) / 100;
-  const carriedDeficitOwed = Math.max(0, -runningDeficit);
-  const carriedDeficitAppliedHours =
-    rawMonthlyDiff > 0 ? Math.round(Math.min(rawMonthlyDiff, carriedDeficitOwed) * 100) / 100 : 0;
-  const monthlyExcessOverTheoretical = Math.max(
-    0,
-    Math.round((rawMonthlyDiff - carriedDeficitAppliedHours) * 100) / 100
-  );
-  const deficitPendienteAlCierre =
-    rawMonthlyDiff < 0
-      ? Math.round((runningDeficit + rawMonthlyDiff) * 100) / 100
-      : Math.round(Math.min(0, runningDeficit + carriedDeficitAppliedHours) * 100) / 100;
-
-  // Desglose de Bolsa de Horas del mes (generación reserva vacaciones + descuento por vacaciones disfrutadas + desviación trabajada)
+  // 6. Horas complementarias y Bolsa de Horas:
+  // - En meses sin vacaciones: el umbral es convenioMonthlyHoursTarget (cuota fija + parte que llena la bolsa).
+  // - En meses con vacaciones: la bolsa cubre hasta completar cuotaFijaMensualContrato (con límite 0h);
+  //   las horas entre teóricas y cuota fija no se cobran como complementarias, sino que completan cuota/bolsa.
+  //   Solo generan complementarias mensuales las horas trabajadas por encima de max(teóricas, cuotaFija - IT) tras compensar déficit previo.
   const currentAnnualTargetExact = convenioAnnualHoursBase * partTimeFactor;
   const currentDailyRateExact = currentAnnualTargetExact / activeDaysInYearForBag;
-  const cuotaFijaMensualContrato = Math.round((currentAnnualTargetExact / 12) * 100) / 100;
-  const bolsaGeneradaReservaMes =
-    Math.round((daysInMonth * currentDailyRateExact - currentAnnualTargetExact / 12) * 100) / 100;
-  const bolsaDescontadaVacacionesMes =
-    Math.round((vacationDays * currentDailyRateExact) * 100) / 100;
+  const cuotaFijaMensualContrato = roundHours(currentAnnualTargetExact / 12);
   const sickCreditCurr = sickDays * currentDailyRateExact;
-  const bolsaHorasMes =
-    Math.round(((ordinaryConvenioHours - monthlyExcessOverTheoretical + sickCreditCurr) - currentAnnualTargetExact / 12) * 100) / 100;
-  const bolsaHorasAcumulada = Math.round((bolsaSaldoAnterior + bolsaHorasMes) * 100) / 100;
+  const cuotaFijaNetOfSick = Math.max(0, currentAnnualTargetExact / 12 - sickCreditCurr);
+  const umbralComplementariasMes =
+    vacationDays > 0
+      ? roundHours(Math.max(convenioMonthlyHoursTarget, cuotaFijaNetOfSick))
+      : convenioMonthlyHoursTarget;
 
-  const roundedDailyOver9h = Math.round(dailyExcessOver9hHours * 100) / 100;
+  const ordinaryConvenioHours = roundHours(ordinaryShiftHours);
+  const rawMonthlyDiff = roundHours(ordinaryConvenioHours - convenioMonthlyHoursTarget);
+  const carriedDeficitOwed = Math.max(0, -runningDeficit);
+  const carriedDeficitAppliedHours =
+    rawMonthlyDiff > 0 ? roundHours(Math.min(rawMonthlyDiff, carriedDeficitOwed)) : 0;
+  const surplusAfterDeficit =
+    rawMonthlyDiff > 0 ? Math.max(0, roundHours(rawMonthlyDiff - carriedDeficitAppliedHours)) : 0;
+  const excessOverComplementariasThreshold =
+    Math.max(0, roundHours(ordinaryConvenioHours - umbralComplementariasMes));
+  const monthlyExcessOverTheoretical =
+    vacationDays > 0
+      ? Math.min(surplusAfterDeficit, excessOverComplementariasThreshold)
+      : surplusAfterDeficit;
+  const deficitPendienteAlCierre =
+    rawMonthlyDiff < 0
+      ? roundHours(runningDeficit + rawMonthlyDiff)
+      : roundHours(Math.min(0, runningDeficit + carriedDeficitAppliedHours));
+
+  // Desglose de Bolsa de Horas del mes (generación reserva vacaciones + descuento por vacaciones disfrutadas + aportación/desvío trabajado)
+  const bolsaGeneradaReservaMes =
+    roundHours(daysInMonth * currentDailyRateExact - currentAnnualTargetExact / 12);
+  const bolsaDescontadaVacacionesMes =
+    roundHours(vacationDays * currentDailyRateExact);
+  const bolsaHorasMes =
+    roundHours((ordinaryConvenioHours - monthlyExcessOverTheoretical + sickCreditCurr) - currentAnnualTargetExact / 12);
+  const bolsaHorasAcumulada = roundHours(bolsaSaldoAnterior + bolsaHorasMes);
+
+  const roundedDailyOver9h = roundHours(dailyExcessOver9hHours);
   const finalComplementariasHours =
-    Math.round((monthlyExcessOverTheoretical + roundedDailyOver9h + explicitComplementariasHours) * 100) / 100;
+    roundHours(monthlyExcessOverTheoretical + roundedDailyOver9h + explicitComplementariasHours);
   const importeHorasExtra = parseFloat(
     (finalComplementariasHours * horaOrdinariaUnitRate).toFixed(2)
   );
@@ -1702,14 +1805,16 @@ export function calculateMonthlyPayroll(
   const nocturnidadUnitRate = yearRate.plusNocturnidadHora ?? 2.48;
   const effectiveNocturnidad = parseFloat((roundedNightHours * nocturnidadUnitRate).toFixed(2));
 
-  // 8. Salario Base (Convenio escalado por % de jornada o base fija recibo Masats ya equivalente al 75%)
+  // 8. Salario Base (Convenio escalado por % de jornada o base fija recibo Masats; utiliza dias_liquidados si hay alta/baja en el mes)
   const effectiveBaseDia = isMasatsMode
-    ? parseFloat((yearRate.salarioBaseDiaMasats ?? 39.89).toFixed(2))
-    : parseFloat((yearRate.salarioBaseDia * partTimeFactor).toFixed(2));
-  const paidDays = Math.max(0, daysInMonth - sickDays);
-  const salarioBase = parseFloat((paidDays * effectiveBaseDia).toFixed(2));
+    ? roundCurrency(yearRate.salarioBaseDiaMasats ?? 39.89)
+    : roundCurrency(yearRate.salarioBaseDia * partTimeFactor);
+  const paidDays = Math.max(0, liquidatedPeriod.diasLiquidados - sickDaysInLiquidatedPeriod);
+  const salarioBase = roundCurrency(paidDays * effectiveBaseDia);
 
-  // 9. Prorrateo de pagas extraordinarias (calculado en bruto desde tablas de Convenio)
+  // 9. Prorrateo de pagas extraordinarias — Método 1: devengo por día natural
+  // devengo_diario = (dias_paga_extra * salario_base_diario) / 365 (sin redondeo intermedio)
+  // importe_paga_mes = Number((devengo_diario * dias_liquidados).toFixed(2))
   const prorrateoMode = profile.prorrateoPagasExtra || (profile.prorratearPagasExtra !== false ? 'tres_pagas' : 'ninguna');
   let prorrataPagasExtra = 0;
   let pagaExtraIntegraMes = 0;
@@ -1718,41 +1823,22 @@ export function calculateMonthlyPayroll(
   let prorrataMarzo = 0;
   let prorrataJulio = 0;
   let prorrataDiciemb = 0;
-  let prorrataUnitPrice = yearRate.prorrataPagaDia ?? 3.28;
-  const prorrataQuantity = isMasatsMode
-    ? paidDays
-    : (daysInMonth > 0 ? parseFloat((2.5 * (paidDays / daysInMonth)).toFixed(2)) : 2.5);
+  const diasPagaExtraConvenio = 30;
+  const devengoDiarioExact = (diasPagaExtraConvenio * effectiveBaseDia) / 365;
+  const prorrataUnitPrice = Number(devengoDiarioExact.toFixed(2));
+  const prorrataQuantity = paidDays;
+  const perPagaMethod1 = Number((devengoDiarioExact * prorrataQuantity).toFixed(2));
 
-  const fullExtraPayAmount = parseFloat((30 * effectiveBaseDia).toFixed(2));
+  const fullExtraPayAmount = roundCurrency(diasPagaExtraConvenio * effectiveBaseDia);
 
   if (prorrateoMode === 'tres_pagas') {
-    if (isMasatsMode) {
-      prorrataUnitPrice = parseFloat((yearRate.prorrataPagaDia ?? 3.28).toFixed(2));
-      const perPaga = parseFloat((paidDays * prorrataUnitPrice).toFixed(2));
-      prorrataMarzo = perPaga;
-      prorrataJulio = perPaga;
-      prorrataDiciemb = perPaga;
-      prorrataPagasExtra = parseFloat((perPaga * 3).toFixed(2));
-    } else {
-      prorrataUnitPrice = effectiveBaseDia;
-      const perPaga = parseFloat((prorrataQuantity * prorrataUnitPrice).toFixed(2));
-      prorrataMarzo = perPaga;
-      prorrataJulio = perPaga;
-      prorrataDiciemb = perPaga;
-      prorrataPagasExtra = parseFloat((perPaga * 3).toFixed(2));
-    }
+    prorrataMarzo = perPagaMethod1;
+    prorrataJulio = perPagaMethod1;
+    prorrataDiciemb = perPagaMethod1;
+    prorrataPagasExtra = Number((perPagaMethod1 * 3).toFixed(2));
   } else if (prorrateoMode === 'una_paga') {
-    if (isMasatsMode) {
-      prorrataUnitPrice = parseFloat((yearRate.prorrataPagaDia ?? 3.28).toFixed(2));
-      const perPaga = parseFloat((paidDays * prorrataUnitPrice).toFixed(2));
-      prorrataPagasExtra = perPaga;
-      prorrataMarzo = perPaga;
-    } else {
-      prorrataUnitPrice = effectiveBaseDia;
-      const perPaga = parseFloat((prorrataQuantity * prorrataUnitPrice).toFixed(2));
-      prorrataPagasExtra = perPaga;
-      prorrataMarzo = perPaga;
-    }
+    prorrataMarzo = perPagaMethod1;
+    prorrataPagasExtra = perPagaMethod1;
     if (month === 7) {
       pagaExtraIntegraMes = fullExtraPayAmount;
       pagaExtraIntegraNombre = 'Paga Extraordinaria de Verano (Julio)';
@@ -1774,13 +1860,13 @@ export function calculateMonthlyPayroll(
     }
   }
 
-  // Retribución de Vacaciones según Art. 9 Convenio Colectivo Transporte de Zaragoza (proporcional al % de jornada: 10€/día al 100%, 7,50€/día al 75%)
+  // Retribución de Vacaciones según Art. 9 Convenio Colectivo Transporte de Zaragoza (por día natural de vacaciones, proporcional al % de jornada: 10€/día al 100%, 7,50€/día al 75%)
   const basePlusVacacionesDia =
     yearRate.plusVacacionesDia && yearRate.plusVacacionesDia > 0 ? yearRate.plusVacacionesDia : 10.00;
-  const plusVacacionesDia = parseFloat((basePlusVacacionesDia * partTimeFactor).toFixed(2));
+  const plusVacacionesDia = roundCurrency(basePlusVacacionesDia * partTimeFactor);
   const finalVacationPlusDays = cutoffVacationPlusDays;
   const plusVacaciones = isAutoVacationPlusActive
-    ? parseFloat((finalVacationPlusDays * plusVacacionesDia).toFixed(2))
+    ? roundCurrency(finalVacationPlusDays * plusVacacionesDia)
     : 0;
 
   const retribucionVacacionesBase = parseFloat(
@@ -1967,7 +2053,7 @@ export function calculateMonthlyPayroll(
     });
   }
 
-  const prorrataUnitLabel = isMasatsMode ? 'días' : 'días base';
+  const prorrataUnitLabel = 'días';
   const prorrataQtyLabel = prorrataQuantity.toFixed(2).replace('.', ',');
 
   if (prorrateoMode === 'tres_pagas') {
@@ -2055,12 +2141,13 @@ export function calculateMonthlyPayroll(
   const extraProrrataCotizacion = prorrateoMode === 'tres_pagas'
     ? 0
     : prorrateoMode === 'una_paga'
-      ? parseFloat((5.0 * effectiveBaseDia).toFixed(2))
-      : parseFloat((7.5 * effectiveBaseDia).toFixed(2));
+      ? Math.round(devengoDiarioExact * prorrataQuantity * 2 * 100) / 100
+      : Math.round(devengoDiarioExact * prorrataQuantity * 3 * 100) / 100;
 
   const baseCalculadaSS = regularDevengadoCotizable + extraProrrataCotizacion;
-  const minBaseSS = 1323.00 * (isPartTime ? Math.max(partTimeFactor, 0.4) : 1.0);
-  const maxBaseSS = 4709.25;
+  const contractPeriodFactor = daysInMonth > 0 ? liquidatedPeriod.diasLiquidados / daysInMonth : 1;
+  const minBaseSS = 1323.00 * (isPartTime ? Math.max(partTimeFactor, 0.4) : 1.0) * contractPeriodFactor;
+  const maxBaseSS = 4709.25 * contractPeriodFactor;
 
   const baseCotizacionSS = Math.max(
     minBaseSS,
@@ -2144,6 +2231,10 @@ export function calculateMonthlyPayroll(
     medioPlusConductorCount: finalMedioPlusCount,
     plusPuntualidadCount: finalPuntualidadCount,
     prorrataDays: prorrataQuantity,
+    prorrataDailyRate: prorrataUnitPrice,
+    liquidatedDays: liquidatedPeriod.diasLiquidados,
+    periodStartDay: liquidatedPeriod.diaInicio,
+    periodEndDay: liquidatedPeriod.diaFin,
 
     // Extras Cutoff Configuration info
     extrasCutoffMode: cutoffMode,
@@ -2248,6 +2339,7 @@ export function calculateMonthlyPayroll(
     hasMidYearJornadaChange,
 
     cuotaFijaMensualContrato,
+    umbralComplementariasMes,
     bolsaSaldoAnterior,
     bolsaGeneradaReservaMes,
     bolsaDescontadaVacacionesMes,
@@ -2404,4 +2496,172 @@ export function calculateYearlySalaryEvolution(
   }
 
   return result;
+}
+
+/**
+ * Reconciles legacy validated payroll snapshots whose prorated extra pays
+ * were frozen prior to Method 1 using the snapshot's own frozen Salario Base daily rate.
+ * Preserves the validated month's % jornada, % IRPF, shifts, and contract days.
+ */
+export function reconcileValidatedMonthRecordProrrata(
+  record: ValidatedMonthRecord
+): ValidatedMonthRecord {
+  const snap = record?.payrollSnapshot;
+  if (!snap || !Array.isArray(snap.lines)) return record;
+
+  const baseLine = snap.lines.find((l) => l.id === 'salario-base');
+  const salarioBaseDiario = baseLine?.unitPrice ?? snap.salarioBaseUnitPrice;
+  if (!salarioBaseDiario || salarioBaseDiario <= 0) return record;
+
+  const prorrataLines = snap.lines.filter(
+    (l) => l.category === 'prorrata' && l.id.startsWith('paga-prorrateada-')
+  );
+  if (prorrataLines.length === 0) return record;
+
+  const devengoDiarioExact = (30 * salarioBaseDiario) / 365;
+  const expectedUnitPrice = Number(devengoDiarioExact.toFixed(2));
+
+  let needsUpdate = Math.abs((snap.prorrataDailyRate ?? 0) - expectedUnitPrice) > 0.009;
+  for (const line of prorrataLines) {
+    const qty = line.quantity ?? snap.prorrataDays ?? snap.salarioBaseDays ?? snap.totalDays;
+    const expectedAmount = Number((devengoDiarioExact * qty).toFixed(2));
+    if (
+      Math.abs(line.unitPrice - expectedUnitPrice) > 0.009 ||
+      Math.abs(line.amount - expectedAmount) > 0.009
+    ) {
+      needsUpdate = true;
+      break;
+    }
+  }
+
+  if (!needsUpdate) return record;
+
+  const updatedLines = snap.lines.map((line) => {
+    if (line.category === 'prorrata' && line.id.startsWith('paga-prorrateada-')) {
+      const qty = line.quantity ?? snap.prorrataDays ?? snap.salarioBaseDays ?? snap.totalDays;
+      const expectedAmount = Number((devengoDiarioExact * qty).toFixed(2));
+      return {
+        ...line,
+        unitPrice: expectedUnitPrice,
+        amount: expectedAmount,
+      };
+    }
+    return line;
+  });
+
+  const newProrrataTotal = Number(
+    updatedLines
+      .filter((l) => l.category === 'prorrata' && l.id.startsWith('paga-prorrateada-'))
+      .reduce((acc, l) => acc + l.amount, 0)
+      .toFixed(2)
+  );
+  const deltaProrrata = newProrrataTotal - (snap.prorrataPagasExtra || 0);
+  const newTotalDevengado = Number(((snap.totalDevengado || 0) + deltaProrrata).toFixed(2));
+
+  const isPartTime =
+    (record.contractType ?? record.profileSnapshot?.contractType) === 'tiempo_parcial' ||
+    snap.partTimeFactor < 1;
+  const isTemporal =
+    (record.contractType ?? record.profileSnapshot?.contractType) === 'temporal';
+  const liquidatedDays = snap.liquidatedDays ?? snap.totalDays;
+  const contractPeriodFactor = snap.totalDays > 0 ? liquidatedDays / snap.totalDays : 1;
+
+  const prorrateoMode =
+    record.prorrateoPagasExtra ||
+    record.profileSnapshot?.prorrateoPagasExtra ||
+    (prorrataLines.length === 1 ? 'una_paga' : 'tres_pagas');
+  const prorrataQty = snap.prorrataDays ?? snap.salarioBaseDays ?? liquidatedDays;
+  const extraProrrataCotizacion =
+    prorrateoMode === 'tres_pagas'
+      ? 0
+      : prorrateoMode === 'una_paga'
+        ? Number((devengoDiarioExact * prorrataQty * 2).toFixed(2))
+        : Number((devengoDiarioExact * prorrataQty * 3).toFixed(2));
+
+  const regularDevengadoCotizable =
+    newTotalDevengado - (snap.pagaExtraIntegraMes || 0) - (snap.dietasExentas || 0);
+  const baseCalculadaSS = regularDevengadoCotizable + extraProrrataCotizacion;
+  const minBaseSS =
+    1323.0 * (isPartTime ? Math.max(snap.partTimeFactor, 0.4) : 1.0) * contractPeriodFactor;
+  const maxBaseSS = 4709.25 * contractPeriodFactor;
+  const newBaseCotizacionSS = Number(
+    Math.max(minBaseSS, Math.min(maxBaseSS, baseCalculadaSS)).toFixed(2)
+  );
+
+  const contingenciasComunes = parseFloat((newBaseCotizacionSS * 0.047).toFixed(2));
+  const desempleo = parseFloat(
+    (newBaseCotizacionSS * (isTemporal ? 0.016 : 0.0155)).toFixed(2)
+  );
+  const formacionProfesional = parseFloat((newBaseCotizacionSS * 0.001).toFixed(2));
+  const mei = parseFloat((newBaseCotizacionSS * 0.0015).toFixed(2));
+  const totalSeguridadSocial = parseFloat(
+    (contingenciasComunes + desempleo + formacionProfesional + mei).toFixed(2)
+  );
+
+  const baseIrpf = Math.max(0, newTotalDevengado - (snap.dietasExentas || 0));
+  const retencionIrpf = snap.retencionIrpf ?? record.irpfPercentage ?? 0;
+  const retencionIrpfImporte = parseFloat(((baseIrpf * retencionIrpf) / 100).toFixed(2));
+  const totalDeducido = parseFloat(
+    (
+      totalSeguridadSocial +
+      retencionIrpfImporte +
+      (snap.cuotaSindical || 0) +
+      (snap.anticipos || 0)
+    ).toFixed(2)
+  );
+  const liquidoPercibir = parseFloat((newTotalDevengado - totalDeducido).toFixed(2));
+
+  const ssEmpresaCC = parseFloat((newBaseCotizacionSS * 0.236).toFixed(2));
+  const ssEmpresaDesempleo = parseFloat(
+    (newBaseCotizacionSS * (isTemporal ? 0.067 : 0.055)).toFixed(2)
+  );
+  const ssEmpresaFP = parseFloat((newBaseCotizacionSS * 0.006).toFixed(2));
+  const ssEmpresaFogasa = parseFloat((newBaseCotizacionSS * 0.002).toFixed(2));
+  const ssEmpresaMEI = parseFloat((newBaseCotizacionSS * 0.006).toFixed(2));
+  const totalCosteEmpresa = parseFloat(
+    (
+      newTotalDevengado +
+      ssEmpresaCC +
+      ssEmpresaDesempleo +
+      ssEmpresaFP +
+      ssEmpresaFogasa +
+      ssEmpresaMEI
+    ).toFixed(2)
+  );
+
+  return {
+    ...record,
+    payrollSnapshot: {
+      ...snap,
+      lines: updatedLines,
+      prorrataDailyRate: expectedUnitPrice,
+      prorrataPagasExtra: newProrrataTotal,
+      totalDevengado: newTotalDevengado,
+      baseCotizacionSS: newBaseCotizacionSS,
+      contingenciasComunes,
+      desempleo,
+      formacionProfesional,
+      mei,
+      totalSeguridadSocial,
+      retencionIrpfImporte,
+      totalDeducido,
+      liquidoPercibir,
+      ssEmpresaCC,
+      ssEmpresaDesempleo,
+      ssEmpresaFP,
+      ssEmpresaFogasa,
+      ssEmpresaMEI,
+      totalCosteEmpresa,
+    },
+  };
+}
+
+export function reconcileValidatedMonthsMap(
+  map: ValidatedMonthsMap
+): ValidatedMonthsMap {
+  const reconciled: ValidatedMonthsMap = {};
+  for (const [k, rec] of Object.entries(map || {})) {
+    reconciled[k] = reconcileValidatedMonthRecordProrrata(rec);
+  }
+  return reconciled;
 }

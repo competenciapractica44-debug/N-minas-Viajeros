@@ -26,7 +26,12 @@ import {
 import { ALL_INITIAL_SHIFTS, BAJA_SHIFT, DESCANSO_SHIFT, VACACIONES_SHIFT } from './data/defaultTurnos';
 import { DEFAULT_EXTRAS } from './data/defaultExtras';
 import { DEFAULT_CONVENIO_ZARAGOZA, getEffectiveYearRate } from './data/convenioZaragoza';
-import { calculateMonthlyPayroll, calculateYearlySalaryEvolution, getExtrasDateRange } from './utils/calculator';
+import {
+  calculateMonthlyPayroll,
+  calculateYearlySalaryEvolution,
+  getExtrasDateRange,
+  reconcileValidatedMonthsMap,
+} from './utils/calculator';
 import {
   deriveDefaultAnnualParams,
   deriveDefaultAnnualMonths,
@@ -424,6 +429,8 @@ export default function App() {
           ...parsed,
           hasVacationPlus: parsed.hasVacationPlus !== undefined ? parsed.hasVacationPlus : true,
           hasPunctualityEarlyStartPlus: parsed.hasPunctualityEarlyStartPlus === true,
+          fechaAlta: typeof parsed.fechaAlta === 'string' && parsed.fechaAlta.trim() ? parsed.fechaAlta.trim() : undefined,
+          fechaBaja: typeof parsed.fechaBaja === 'string' && parsed.fechaBaja.trim() ? parsed.fechaBaja.trim() : undefined,
         };
       }
     } catch (e) {
@@ -471,7 +478,7 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed && typeof parsed === 'object') {
-          return parsed as ValidatedMonthsMap;
+          return reconcileValidatedMonthsMap(parsed as ValidatedMonthsMap);
         }
       }
     } catch (e) {
@@ -613,6 +620,8 @@ export default function App() {
               ...driveProfile,
               hasVacationPlus: driveProfile.hasVacationPlus !== undefined ? driveProfile.hasVacationPlus : true,
               hasPunctualityEarlyStartPlus: driveProfile.hasPunctualityEarlyStartPlus === true,
+              fechaAlta: typeof driveProfile.fechaAlta === 'string' && driveProfile.fechaAlta.trim() ? driveProfile.fechaAlta.trim() : undefined,
+              fechaBaja: typeof driveProfile.fechaBaja === 'string' && driveProfile.fechaBaja.trim() ? driveProfile.fechaBaja.trim() : undefined,
             });
           } else if (currentSnapshot.profile.name.trim()) {
             await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'chofer_config.json', currentSnapshot.profile);
@@ -722,10 +731,13 @@ export default function App() {
         if (validatedFile) {
           const driveValidated = await readDriveJsonFile<ValidatedMonthsMap>(token, validatedFile.id);
           if (driveValidated && typeof driveValidated === 'object') {
-            const mergedValidated = mergeValidatedMonths(
-              latestStateRef.current.validatedMonths,
-              driveValidated,
-              isLocalDirty
+            const reconciledDrive = reconcileValidatedMonthsMap(driveValidated);
+            const mergedValidated = reconcileValidatedMonthsMap(
+              mergeValidatedMonths(
+                latestStateRef.current.validatedMonths,
+                reconciledDrive,
+                isLocalDirty
+              )
             );
             isApplyingRemoteSyncRef.current = true;
             setValidatedMonths(mergedValidated);
@@ -974,6 +986,8 @@ export default function App() {
             ...driveProfile,
             hasVacationPlus: driveProfile.hasVacationPlus !== undefined ? driveProfile.hasVacationPlus : true,
             hasPunctualityEarlyStartPlus: driveProfile.hasPunctualityEarlyStartPlus === true,
+            fechaAlta: typeof driveProfile.fechaAlta === 'string' && driveProfile.fechaAlta.trim() ? driveProfile.fechaAlta.trim() : undefined,
+            fechaBaja: typeof driveProfile.fechaBaja === 'string' && driveProfile.fechaBaja.trim() ? driveProfile.fechaBaja.trim() : undefined,
           };
           if (JSON.stringify(normalizedDriveProfile) !== JSON.stringify(cur.profile)) {
             isApplyingRemoteSyncRef.current = true;
@@ -1303,7 +1317,26 @@ export default function App() {
   };
 
   // Export triggers (respetando perfil, turnos, asignaciones y convenio congelados si el mes ya fue validado)
-  const effectiveExportProfile = currentValidatedRecord?.profileSnapshot || profile;
+  const effectiveExportProfile: WorkerProfile = useMemo(() => {
+    if (!currentValidatedRecord) return profile;
+    if (currentValidatedRecord.profileSnapshot) {
+      return currentValidatedRecord.profileSnapshot;
+    }
+    return {
+      ...profile,
+      irpfPercentage: currentValidatedRecord.irpfPercentage,
+      partTimePercentage: currentValidatedRecord.jornadaPct,
+      contractType:
+        currentValidatedRecord.contractType ??
+        (currentValidatedRecord.jornadaPct < 100 ? 'tiempo_parcial' : 'indefinido'),
+      salaryBaseRateMode:
+        currentValidatedRecord.salaryBaseRateMode ?? profile.salaryBaseRateMode,
+      prorrateoPagasExtra:
+        currentValidatedRecord.prorrateoPagasExtra ?? profile.prorrateoPagasExtra,
+      extrasCutoffMode:
+        currentValidatedRecord.extrasCutoffMode ?? profile.extrasCutoffMode,
+    };
+  }, [currentValidatedRecord, profile]);
 
   const handleExportPDF = () => {
     const monthName = MONTH_NAMES[selectedMonth - 1];
@@ -1811,7 +1844,7 @@ export default function App() {
             shifts={effectiveViewShifts}
             extrasList={extras.filter((e) => e.active)}
             convenio={effectiveViewConvenio}
-            profile={currentValidatedRecord?.profileSnapshot || profile}
+            profile={effectiveExportProfile}
             onEditShift={handleEditTurno}
             onOpenProfile={() => setIsProfileModalOpen(true)}
             validatedMonth={currentValidatedRecord}
@@ -1827,7 +1860,7 @@ export default function App() {
         {currentTab === 'nomina' && (
           <NominaView
             payroll={monthlyPayroll}
-            profile={currentValidatedRecord?.profileSnapshot || profile}
+            profile={effectiveExportProfile}
             convenio={effectiveViewConvenio}
             assignments={effectiveViewAssignments}
             shifts={effectiveViewShifts}
