@@ -283,6 +283,9 @@ export interface PayrollBreakdown {
 
   // Bolsa de horas (generación, descuento en vacaciones y saldo empleado/empresa)
   cuotaFijaMensualContrato?: number;
+  cuotaFijaEnteraAnual?: number;
+  isPostVacacionesRegularizado?: boolean;
+  lastVacationMonthYear?: number;
   umbralComplementariasMes?: number;
   bolsaSaldoAnterior?: number;
   bolsaGeneradaReservaMes?: number;

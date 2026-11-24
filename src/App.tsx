@@ -1090,9 +1090,10 @@ export default function App() {
       profile,
       selectedYear,
       selectedMonth,
-      validatedMonths
+      validatedMonths,
+      annualCalendarData[selectedYear]
     );
-  }, [assignments, shiftsMap, currentYearRate, profile, selectedYear, selectedMonth, validatedMonths, payrollCalcNonce]);
+  }, [assignments, shiftsMap, currentYearRate, profile, selectedYear, selectedMonth, validatedMonths, annualCalendarData, payrollCalcNonce]);
 
   const monthlyPayroll = currentValidatedRecord?.payrollSnapshot || liveMonthlyPayroll;
 
@@ -1104,9 +1105,10 @@ export default function App() {
       shiftsMap,
       convenio,
       profile,
-      validatedMonths
+      validatedMonths,
+      annualCalendarData[selectedYear]
     );
-  }, [selectedYear, assignments, shiftsMap, convenio, profile, validatedMonths, payrollCalcNonce]);
+  }, [selectedYear, assignments, shiftsMap, convenio, profile, validatedMonths, annualCalendarData, payrollCalcNonce]);
 
   // Computed Annual Calendar & Bolsa de Horas summary (synced with RutaNomina + overrides + meses validados)
   const annualSummary = useMemo(() => {
@@ -1142,7 +1144,7 @@ export default function App() {
 
   useEffect(() => {
     setLastPayrollCalculatedAt(new Date());
-  }, [assignments, shifts, convenio, profile, selectedYear, selectedMonth]);
+  }, [assignments, shifts, convenio, profile, selectedYear, selectedMonth, annualCalendarData]);
 
   // Proteger meses validados y turnos ya introducidos en meses anteriores frente a cambios automáticos del catálogo
   const isProtectedAssignmentDate = (dateStr?: string): boolean => {
@@ -1428,6 +1430,8 @@ export default function App() {
       const frozenShiftsMap = new Map<string, ShiftDefinition>();
       frozenShiftsSnapshot.forEach((s) => frozenShiftsMap.set(s.code, s));
 
+      const yOverride = annualCalendarData[yearToValidate];
+
       // Recalcular nómina exacta del mes con el perfil, turnos y asignaciones congelados
       const payrollSnapshot = calculateMonthlyPayroll(
         assignments,
@@ -1436,11 +1440,11 @@ export default function App() {
         frozenProfile,
         yearToValidate,
         monthToValidate,
-        validatedMonths
+        validatedMonths,
+        yOverride
       );
 
       // Calcular balance anual del mes para llevar el arrastre de horas exacto
-      const yOverride = annualCalendarData[yearToValidate];
       const defParams = deriveDefaultAnnualParams(frozenProfile, convenio, yearToValidate);
       const defMonths = deriveDefaultAnnualMonths(
         yearToValidate,

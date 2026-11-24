@@ -14,7 +14,13 @@ import {
 import { getEffectiveYearRate, isFTExtraName } from '../data/convenioZaragoza';
 import { ALL_INITIAL_SHIFTS } from '../data/defaultTurnos';
 import { getOfficialHolidaysForYear } from '../data/spanishHolidays';
-import { calculateTotalHours, computeShiftRateFromConvenio } from './calculator';
+import {
+  ANNUAL_VACATION_DAYS_CONVENIO,
+  AnnualScheduleMonthInput,
+  calculateTotalHours,
+  computeAnnualHoursSchedule,
+  computeShiftRateFromConvenio,
+} from './calculator';
 
 export const ANNUAL_MONTH_NAMES = [
   'Enero',
@@ -549,7 +555,21 @@ export function calculateAnnualLiquidation(
   const jornadaAnualEfectiva = hasJornadaChangeAcrossMonths
     ? prelim.reduce((sum, m) => sum + (horasAnuales100 * (m.effectiveJornadaPct / 100)) / 12, 0)
     : horasAnuales100 * factorJornada;
-  const cuotaFijaMes = (horasAnuales100 * factorJornada) / 12;
+
+  const scheduleInputs: AnnualScheduleMonthInput[] = prelim.map((m) => ({
+    month: m.idx + 1,
+    daysInMonth: new Date(anio, m.idx + 1, 0).getDate(),
+    vacDays: m.vacNat,
+    sickDays: m.bajaNat,
+    partTimeFactor: m.effectiveJornadaPct / 100,
+  }));
+  const annualSchedule = computeAnnualHoursSchedule(
+    anio,
+    horasAnuales100,
+    scheduleInputs,
+    vacReglamentarias
+  );
+  const cuotaFijaMes = annualSchedule.cuotaFijaEnteraDefault;
 
   const baseMensualEfectiva = baseMes100 * factorJornada;
   const compMensualEfectiva = compMes100 * factorJornada;
@@ -594,22 +614,22 @@ export function calculateAnnualLiquidation(
   let ultimoTipoBaja: SickLeaveContingencyType | null = prevYearCarry > 0 ? 'comun' : null;
   let prevHadBaja = prevYearCarry > 0;
 
-  const filas: AnnualMonthComputedRow[] = prelim.map((m) => {
-    const monthFactor = m.effectiveJornadaPct / 100;
-    const horasPorDiaMes = horasPorDia100 * monthFactor;
+  const filas: AnnualMonthComputedRow[] = prelim.map((m, idx) => {
+    const schedM = annualSchedule.months[idx];
 
-    // 1. Cálculo teórico (cuadre anual a 0 h escalado al % de jornada de ese mes)
-    const horasTeoricasActivas = m.diasActivos * horasPorDiaMes;
-    const horasJustificadasIT = m.bajaLab * horasPorDiaMes;
+    // 1. Cálculo teórico (cuota fija redondeada al entero superior, bolsa a 0 en último mes de vac., y regularización posterior)
+    const horasTeoricasActivas = schedM.horasTeoricas;
+    const horasJustificadasIT = schedM.sickCredit;
     const horasComputoTeorico = horasTeoricasActivas + horasJustificadasIT;
 
     const cuotaMes =
       repartoBolsa === 'equilibrado'
-        ? (m.diasActivos + m.bajaLab) * horasPorDiaMes
-        : (horasAnuales100 * monthFactor) / 12;
+        ? horasComputoTeorico
+        : schedM.cuotaForBolsa;
 
     const saldoMes = horasComputoTeorico - cuotaMes;
     bolsaAcumulada += saldoMes;
+    if (Math.abs(bolsaAcumulada) < 1e-9) bolsaAcumulada = 0;
 
     // 2. Horas realmente realizadas (mes natural desde Turnos Día, validación congelada o edición manual) y compensación
     const isHorasManual =
@@ -681,6 +701,7 @@ export function calculateAnnualLiquidation(
     }
 
     // 3. Cálculo económico mensual usando la jornada efectiva de ese mes
+    const monthFactor = m.effectiveJornadaPct / 100;
     const sumaBaseCompMesM = (baseMes100 + compMes100) * monthFactor;
     const brutoFijoAnualM = sumaBaseCompMesM * numPagas;
     const baseRegDiariaM = brutoFijoAnualM / 360;
@@ -1024,17 +1045,10 @@ export function exportAnnualCalendarToExcel(
     const baseMensualExpr = `(($C$9+$C$10)*${pctExpr})`;
     const fijoAltaExpr = `IF($C$12=1,((${baseMensualExpr}*$C$11)/12)*${factorAltaExpr},IF($C$12=2,(${baseMensualExpr}*${factorAltaExpr})+(IF($C$11>=13,(${baseMensualExpr}/12)*${factorAltaExpr},0))+IF(R${r}=2,(${baseMensualExpr}*MAX(0,$C$11-13))/2,0),((${baseMensualExpr}+IF($C$11>=13,${baseMensualExpr}/12,0))*${factorAltaExpr})+IF(R${r}=2,(${baseMensualExpr}*MAX(0,$C$11-13))/2,0)))`;
 
-    const cuotaFormula =
-      p.repartoBolsa === 'equilibrado'
-        ? `(H${r}+F${r})*(($C$6*${pctExpr})/($H$28+$F$28))`
-        : `($C$6*${pctExpr})/12`;
-
-    const itHoursExpr = `F${r}*(($C$6*${pctExpr})/($H$28+$F$28))`;
+    const itHoursVal = Number((m.horasJustificadasIT || 0).toFixed(4));
     const paidComplVal = Number((m.horasComplementariasMes || 0).toFixed(2));
     const difFormula = m.tieneRegistroReal
-      ? paidComplVal > 0
-        ? `(M${r}+IF(F${r}>0,${itHoursExpr},0)-${paidComplVal})-J${r}`
-        : `(M${r}+IF(F${r}>0,${itHoursExpr},0))-J${r}`
+      ? `(M${r}${itHoursVal > 0 ? `+${itHoursVal}` : ''}${paidComplVal > 0 ? `-${paidComplVal}` : ''})-J${r}`
       : '0';
 
     wsData.push([
@@ -1046,12 +1060,10 @@ export function exportAnnualCalendarToExcel(
       m.bajaLab,
       m.tipoBaja === 'accidente_100' ? 1 : m.tipoBaja === 'accidente_75' ? 2 : 0,
       { t: 'n', v: m.diasActivos, f: `MAX(0,B${r}-D${r}-F${r})` },
-      {
-        t: 'n',
-        v: Number(m.horasComputoTeorico.toFixed(4)),
-        f: `(H${r}+F${r})*(($C$6*${pctExpr})/($H$28+$F$28))`,
-      },
-      { t: 'n', v: Number(m.cuotaMes.toFixed(4)), f: cuotaFormula },
+      Number(m.horasComputoTeorico.toFixed(4)),
+      p.repartoBolsa === 'equilibrado'
+        ? { t: 'n', v: Number(m.cuotaMes.toFixed(4)), f: `I${r}` }
+        : Number(m.cuotaMes.toFixed(4)),
       { t: 'n', v: Number(m.saldoMes.toFixed(4)), f: `I${r}-J${r}` },
       { t: 'n', v: Number(m.bolsaAcumulada.toFixed(4)), f: bolsaFormula },
       Number(m.horasRealizadas.toFixed(2)),

@@ -610,9 +610,11 @@ export function exportToExcel(
     ],
     [
       `Cuota Fija Mensual Contrato (${jornadaPct}%)`,
-      payroll.cuotaFijaMensualContrato ?? parseFloat((payroll.convenioAnnualHoursTarget / 12).toFixed(2)),
+      payroll.cuotaFijaMensualContrato ?? Math.ceil(payroll.convenioAnnualHoursTarget / 12),
       'horas / mes',
-      'Referencia mensual uniforme (Jornada anual / 12): suma en el año igual a las horas teóricas anuales',
+      payroll.isPostVacacionesRegularizado
+        ? 'Cuota regularizada tras disfrutar los 31 días de vacaciones para cuadrar exactamente la jornada anual'
+        : 'Cuota fija mensual redondeada al entero superior (se regulariza tras los 31 días de vacaciones)',
       HOURS_FMT,
     ],
     [

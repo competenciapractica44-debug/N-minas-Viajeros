@@ -615,7 +615,7 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                 {formatHoras(liquidation.jornadaAnualEfectiva)}
               </strong>
             </span>
-            <span>
+            <span title="Cuota fija mensual redondeada al entero superior (se regulariza en los últimos meses tras disfrutar los 31 días de vacaciones)">
               Cuota base:{' '}
               <strong className="text-slate-950">
                 {formatHoras(liquidation.cuotaFijaMes)}/mes
@@ -788,7 +788,7 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                   title={
                     p.repartoBolsa === 'equilibrado'
                       ? 'Horas teóricas equilibradas según días activos + IT del mes'
-                      : 'Cuota fija mensual uniforme (jornada anual efectiva / 12)'
+                      : 'Cuota fija mensual redondeada al entero superior; tras disfrutar los 31 días de vacaciones, regulariza los meses restantes para cuadrar el año y dejar la bolsa a 0,00 h'
                   }
                 >
                   {p.repartoBolsa === 'equilibrado' ? 'Horas Equil.' : 'Cuota Fija'}
@@ -1036,7 +1036,15 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                       )}
                     </td>
                     <td className="px-3 py-2.5 text-right text-slate-500 whitespace-nowrap">
-                      {formatHoras(m.cuotaMes)}
+                      <div>{formatHoras(m.cuotaMes)}</div>
+                      {p.repartoBolsa !== 'equilibrado' &&
+                        m.vacNat === 0 &&
+                        m.bajaNat === 0 &&
+                        Math.abs(m.cuotaMes - liquidation.cuotaFijaMes) > 0.004 && (
+                          <div className="text-[10px] font-semibold text-indigo-700">
+                            Regularizada
+                          </div>
+                        )}
                     </td>
                     <td className={`px-3 py-2.5 text-right whitespace-nowrap ${saldoClass}`}>
                       {formatHoras(m.saldoMes, true)}

@@ -847,7 +847,14 @@ export const NominaView: React.FC<NominaViewProps> = ({
 
         const cuotaFija =
           payroll.cuotaFijaMensualContrato ??
-          parseFloat((payroll.convenioAnnualHoursTarget / 12).toFixed(2));
+          Math.ceil(payroll.convenioAnnualHoursTarget / 12);
+        const cuotaFijaEnteraAnual =
+          payroll.cuotaFijaEnteraAnual ?? Math.ceil(payroll.convenioAnnualHoursTarget / 12);
+        const isPostVacReg = Boolean(payroll.isPostVacacionesRegularizado);
+        const lastVacMonthName =
+          payroll.lastVacationMonthYear && payroll.lastVacationMonthYear >= 1 && payroll.lastVacationMonthYear <= 12
+            ? ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'][payroll.lastVacationMonthYear - 1]
+            : null;
         const umbralCompl =
           payroll.umbralComplementariasMes ??
           (payroll.vacationDays > 0
@@ -889,9 +896,17 @@ export const NominaView: React.FC<NominaViewProps> = ({
                   <h3 className="text-sm font-bold text-slate-900">
                     Cálculo de Complementarias, Cuota Fija y Bolsa de Vacaciones
                   </h3>
+                  {isPostVacReg && (
+                    <span className="px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+                      Regularizada post-vacaciones
+                    </span>
+                  )}
                 </div>
                 <p className="text-[11px] text-slate-500 mt-0.5">
-                  Las horas <strong>festivas{payroll.horasFT > 0 ? ' y F/T' : ''}</strong> se cobran aparte sí o sí. La bolsa no se cobra en nómina: completa hasta la <strong>cuota fija mensual ({formatHoursES(cuotaFija)} h)</strong> en los meses con vacaciones.
+                  Las horas <strong>festivas{payroll.horasFT > 0 ? ' y F/T' : ''}</strong> se cobran aparte sí o sí.{' '}
+                  {isPostVacReg
+                    ? `Disfrutados los 31 días de vacaciones${lastVacMonthName ? ` (fin en ${lastVacMonthName}, bolsa a 0,00 h)` : ''}, la cuota se regulariza a ${formatHoursES(cuotaFija)} h para cuadrar la jornada anual.`
+                    : `Cuota fija entera redondeada por encima (${formatHoursES(cuotaFijaEnteraAnual)} h/mes); la bolsa cubre los meses con vacaciones hasta quedar a 0,00 h en las últimas vacaciones.`}
                 </p>
               </div>
 
@@ -985,7 +1000,9 @@ export const NominaView: React.FC<NominaViewProps> = ({
                     </span>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-slate-600">Generación reserva mes (vs {formatHoursES(cuotaFija)} h):</span>
+                    <span className="text-slate-600">
+                      Generación reserva mes (vs {formatHoursES(cuotaFija)} h{isPostVacReg ? ' reg.' : ''}):
+                    </span>
                     <span className={`font-mono font-bold ${reservaMes >= 0 ? 'text-emerald-700' : 'text-slate-700'}`}>
                       {formatSignedH(reservaMes)}
                     </span>
