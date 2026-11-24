@@ -9,6 +9,7 @@ import {
   ArrowUpRight,
   Sliders,
   Lock,
+  Unlock,
 } from 'lucide-react';
 import {
   AnnualEditableParams,
@@ -31,6 +32,7 @@ import {
   exportAnnualCalendarToExcel,
   formatEuro,
   formatHoras,
+  getVoluntary8hBlockOptions,
   mapAnnualExtrasModeToProfile,
   resolveAnnualMonths,
   resolveAnnualParams,
@@ -236,6 +238,34 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
       hasVacationPlus: effectiveParams.plusVacDia100 > 0,
     });
     showToast('Jornada, pagas extras y plus de vacaciones guardados en tu Perfil y Google Drive.');
+  };
+
+  const handleVoluntaryConsentChange = (enabled: boolean, hours: number) => {
+    const cleanHours = enabled ? Math.round(Math.max(0, hours) * 100) / 100 : 0;
+    const isActive = enabled && cleanHours > 0;
+    onSyncCommonToProfile({
+      voluntaryHours15Enabled: isActive,
+      voluntaryHours15Hours: cleanHours,
+    });
+    if (
+      yearOverride?.paramOverrides &&
+      ('voluntarias15Activas' in yearOverride.paramOverrides ||
+        'voluntarias15Horas' in yearOverride.paramOverrides)
+    ) {
+      const nextOverrides = { ...yearOverride.paramOverrides };
+      delete nextOverrides.voluntarias15Activas;
+      delete nextOverrides.voluntarias15Horas;
+      onUpdateYearOverride(selectedYear, {
+        paramOverrides: Object.keys(nextOverrides).length > 0 ? nextOverrides : undefined,
+        monthOverrides: yearOverride.monthOverrides,
+        updatedAt: new Date().toISOString(),
+      });
+    }
+    showToast(
+      isActive
+        ? `Consentimiento activado: ${formatHoras(cleanHours)} voluntarias (máx. 15%).`
+        : 'Horas voluntarias del 15% desactivadas.'
+    );
   };
 
   const handleDescargarExcel = () => {
@@ -615,8 +645,14 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                 {formatHoras(liquidation.jornadaAnualEfectiva)}
               </strong>
             </span>
-            <span title="Tope máximo de horas realizadas totales al año (Jornada anual teórica + 30%)">
-              Límite +30%:{' '}
+            <span
+              title={
+                liquidation.esJornadaCompleta
+                  ? 'Jornada completa (100%): tope legal máximo de 80 horas extraordinarias anuales'
+                  : 'Tope máximo de horas realizadas totales al año (Jornada anual teórica + 30%)'
+              }
+            >
+              {liquidation.esJornadaCompleta ? 'Límite +80 h:' : 'Límite +30%:'}{' '}
               <strong className="text-slate-950 font-mono tabular-nums">
                 {formatHoras(liquidation.topeMaximoHoras30Anual)}
               </strong>{' '}
@@ -624,12 +660,20 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                 (+{formatHoras(liquidation.limiteComplementarias30Horas)})
               </span>
             </span>
-            <span title="Horas complementarias voluntarias (15% sobre la jornada anual efectiva)">
-              Voluntarias 15%:{' '}
-              <strong className="text-indigo-800 font-mono tabular-nums">
-                {formatHoras(liquidation.horasVoluntarias15Anual)}
-              </strong>
-            </span>
+            {!liquidation.esJornadaCompleta && (
+              <span title="Horas complementarias voluntarias (hasta el 15% sobre la jornada anual efectiva, requiere consentimiento del empleado en bloques de 8h)">
+                Voluntarias 15%:{' '}
+                <strong
+                  className={`font-mono tabular-nums ${
+                    liquidation.voluntarias15Activas ? 'text-indigo-800' : 'text-slate-500'
+                  }`}
+                >
+                  {liquidation.voluntarias15Activas
+                    ? `${formatHoras(liquidation.horasVoluntarias15Activadas)} / ${formatHoras(liquidation.horasVoluntarias15Anual)}`
+                    : `0,00 h / ${formatHoras(liquidation.horasVoluntarias15Anual)}`}
+                </strong>
+              </span>
+            )}
             <span title="Cuota fija mensual redondeada al entero superior (se regulariza en los últimos meses tras disfrutar los 31 días de vacaciones)">
               Cuota base:{' '}
               <strong className="text-slate-950 font-mono tabular-nums">
@@ -652,10 +696,22 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                 {formatHoras(liquidation.bolsaInicialAnio)}
               </strong>
             </span>
-            <span>
-              Real Diario:{' '}
-              <strong className="text-emerald-800 font-mono tabular-nums">
+            <span title="Horas realizadas en Turnos Día (verde) más horas teóricas de meses sin turnos (violeta) para estimar el cierre anual">
+              Real + Prev.:{' '}
+              <strong className="text-emerald-700 font-mono tabular-nums">
                 {formatHoras(liquidation.sumaHorasRealizadas)}
+              </strong>
+              {liquidation.horasPendientesMesesSinRegistro > 0.004 && (
+                <>
+                  {' + '}
+                  <strong className="text-violet-700 font-mono tabular-nums">
+                    {formatHoras(liquidation.horasPendientesMesesSinRegistro)}
+                  </strong>
+                </>
+              )}
+              {' = '}
+              <strong className="text-slate-950 font-mono tabular-nums">
+                {formatHoras(liquidation.horasEstimadasCierreAnual)}
               </strong>
             </span>
             <span>
@@ -689,13 +745,31 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
           const isPaceRisk = liquidation.riesgoSuperarLimite30PorRitmo;
           const isNear =
             !isExceeded && !isPaceRisk && liquidation.porcentajeMargen30Consumido >= 80;
+          const isVolActive = liquidation.voluntarias15Activas;
+          const activeVolHours = liquidation.horasVoluntarias15Activadas;
+          const effectiveCap = liquidation.topeMaximoConVoluntariasAnual;
+          const effectiveMarginCap = Math.round(
+            (liquidation.limiteComplementarias30Horas + activeVolHours) * 100
+          ) / 100;
+          const volBlockOptions = getVoluntary8hBlockOptions(liquidation.horasVoluntarias15Anual);
+
           const realWidthPct = Math.min(100, Math.max(0, liquidation.porcentajeLlenadoTope30));
           const projectedWidthPct = Math.min(100, Math.max(realWidthPct, liquidation.porcentajeEstimadoTope30));
           const baseMarkerPct =
-            liquidation.topeMaximoHoras30Anual > 0
-              ? (liquidation.jornadaAnualEfectiva / liquidation.topeMaximoHoras30Anual) * 100
+            effectiveCap > 0
+              ? (liquidation.jornadaAnualEfectiva / effectiveCap) * 100
               : 76.92;
+          const base30MarkerPct =
+            isVolActive && effectiveCap > 0
+              ? (liquidation.topeMaximoHoras30Anual / effectiveCap) * 100
+              : null;
           const unloggedMonthsCount = Math.max(0, 12 - liquidation.mesesConTurnosCount);
+
+          const selectedBlockValue = (() => {
+            if (!isVolActive) return '0';
+            const match = volBlockOptions.find((opt) => Math.abs(opt - activeVolHours) < 0.01);
+            return String(match ?? activeVolHours);
+          })();
 
           return (
             <div
@@ -707,7 +781,7 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                   : 'bg-slate-50/90 border-slate-200 text-slate-800'
               }`}
             >
-              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2 mb-2.5">
+              <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-2.5 mb-2.5">
                 <div className="flex items-center gap-2 flex-wrap">
                   {isExceeded || isPaceRisk || isNear ? (
                     <AlertTriangle
@@ -719,18 +793,32 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                     <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
                   )}
                   <span className="font-bold text-slate-900">
-                    Control Tope Anual +30% ({formatHoras(liquidation.topeMaximoHoras30Anual)}) y Horas Voluntarias 15% ({formatHoras(liquidation.horasVoluntarias15Anual)})
+                    {liquidation.esJornadaCompleta
+                      ? `Control Tope Anual Jornada Completa (+80,00 h máx. · ${formatHoras(effectiveCap)})`
+                      : `Control Tope Anual +30% (${formatHoras(liquidation.topeMaximoHoras30Anual)})${
+                          isVolActive
+                            ? ` + ${formatHoras(activeVolHours)} voluntarias = ${formatHoras(effectiveCap)}`
+                            : ` · Voluntarias 15% (${formatHoras(liquidation.horasVoluntarias15Anual)})`
+                        }`}
                   </span>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] font-mono tabular-nums">
                   <span>
                     Realizado:{' '}
-                    <strong className="text-slate-950">
+                    <strong className="text-emerald-700">
                       {formatHoras(liquidation.sumaHorasRealizadas)}
                     </strong>{' '}
                     ({liquidation.porcentajeLlenadoTope30.toLocaleString('es-ES', { maximumFractionDigits: 1 })}%)
                   </span>
+                  {liquidation.horasPendientesMesesSinRegistro > 0.004 && (
+                    <span>
+                      + Teór. sin turnos:{' '}
+                      <strong className="text-violet-700">
+                        +{formatHoras(liquidation.horasPendientesMesesSinRegistro)}
+                      </strong>
+                    </span>
+                  )}
                   <span>
                     Estimado cierre:{' '}
                     <strong
@@ -744,7 +832,7 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                     >
                       {formatHoras(liquidation.horasEstimadasCierreAnual)}
                     </strong>{' '}
-                    / {formatHoras(liquidation.topeMaximoHoras30Anual)}
+                    / {formatHoras(effectiveCap)}
                   </span>
                   <span>
                     {liquidation.margenRestante30Horas >= 0 ? 'Margen disp.: ' : 'Exceso s/ tope: '}
@@ -763,40 +851,142 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                 </div>
               </div>
 
-              {/* Barra visual de llenado: sólido = realizadas, tramo claro = pendientes teóricas del año */}
-              <div className="relative w-full h-3 bg-slate-200/80 rounded-lg overflow-hidden">
+              {/* Control de consentimiento de Horas Voluntarias (solo tiempo parcial) o nota de límite 80h (100%) */}
+              {liquidation.esJornadaCompleta ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5 px-3 py-1.5 rounded-lg bg-white/85 border border-slate-200/90 text-[11px] text-slate-700">
+                  <span>
+                    <strong className="text-slate-900">Jornada completa (100%):</strong> rige el límite legal máximo de{' '}
+                    <strong className="font-mono text-slate-950">+80,00 h</strong> extraordinarias al año (no aplican complementarias +30% ni voluntarias +15%).
+                  </span>
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center justify-between gap-2.5 mb-2.5 px-3 py-2 rounded-lg bg-white/85 border border-slate-200/90">
+                  <div className="flex items-center gap-2 text-[11px] text-slate-700">
+                    {isVolActive ? (
+                      <Unlock className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                    ) : (
+                      <Lock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    )}
+                    <span>
+                      <strong className="text-slate-900">Horas voluntarias 15% (con consentimiento):</strong>{' '}
+                      {isVolActive
+                        ? `Consentidas ${formatHoras(activeVolHours)} de ${formatHoras(liquidation.horasVoluntarias15Anual)} máx.`
+                        : `Desactivadas (hasta ${formatHoras(liquidation.horasVoluntarias15Anual)} disponibles en bloques de 8 h)`}
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleVoluntaryConsentChange(
+                          !isVolActive,
+                          !isVolActive ? liquidation.horasVoluntarias15Anual : 0
+                        )
+                      }
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                        isVolActive
+                          ? 'bg-indigo-600 text-white border-indigo-700 hover:bg-indigo-700'
+                          : 'bg-slate-100 text-slate-800 border-slate-300 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-900'
+                      }`}
+                      title={
+                        isVolActive
+                          ? 'Pulsa para revocar el consentimiento de horas voluntarias'
+                          : 'Activar horas voluntarias del 15% con consentimiento del empleado'
+                      }
+                    >
+                      {isVolActive ? (
+                        <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                      ) : (
+                        <Unlock className="w-3.5 h-3.5 shrink-0" />
+                      )}
+                      <span>
+                        {isVolActive
+                          ? `Voluntarias activas (${formatHoras(activeVolHours)})`
+                          : 'Activar Voluntarias 15%'}
+                      </span>
+                    </button>
+
+                    <select
+                      aria-label="Bloques de 8 horas de horas voluntarias"
+                      value={selectedBlockValue}
+                      onChange={(e) => {
+                        const val = Number(e.target.value);
+                        handleVoluntaryConsentChange(val > 0, val);
+                      }}
+                      className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-white border border-slate-300 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono tabular-nums cursor-pointer"
+                    >
+                      <option value="0">0 h — Sin consentimiento</option>
+                      {volBlockOptions.map((opt) => {
+                        const isExact8 = Math.abs(opt % 8) < 0.001;
+                        const blocks = Math.round(opt / 8);
+                        return (
+                          <option key={opt} value={String(opt)}>
+                            {isExact8
+                              ? `${opt} h (${blocks} ${blocks === 1 ? 'bloque' : 'bloques'} × 8h)`
+                              : `${formatHoras(opt)} (Tope 15%)`}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+                </div>
+              )}
+
+              {/* Barra visual de llenado: verde = realizadas, violeta = teóricas sumadas en meses sin turnos */}
+              <div
+                className={`relative w-full h-3 bg-slate-200/80 rounded-lg overflow-hidden ${
+                  isExceeded
+                    ? 'ring-2 ring-rose-500/80'
+                    : isPaceRisk || isNear
+                    ? 'ring-2 ring-amber-500/75'
+                    : ''
+                }`}
+              >
                 <div
-                  className={`absolute inset-y-0 left-0 transition-all duration-200 ${
-                    isExceeded
-                      ? 'bg-rose-300/80'
-                      : isPaceRisk || isNear
-                      ? 'bg-amber-300/80'
-                      : 'bg-sky-200'
-                  }`}
+                  className="absolute inset-y-0 left-0 bg-violet-500/85 transition-all duration-200"
                   style={{ width: `${projectedWidthPct}%` }}
-                  title={`Estimación cierre anual (realizadas + teóricas pendientes): ${formatHoras(liquidation.horasEstimadasCierreAnual)}`}
+                  title={`Previsión cierre anual (realizadas + teóricas sin turnos): ${formatHoras(liquidation.horasEstimadasCierreAnual)}`}
                 />
                 <div
-                  className={`relative h-full transition-all duration-200 ${
-                    isExceeded
-                      ? 'bg-rose-600'
-                      : isPaceRisk || isNear
-                      ? 'bg-amber-500'
-                      : 'bg-blue-600'
-                  }`}
+                  className="relative h-full bg-emerald-600 transition-all duration-200"
                   style={{ width: `${realWidthPct}%` }}
                   title={`Horas realizadas acumuladas: ${formatHoras(liquidation.sumaHorasRealizadas)}`}
                 />
                 <div
-                  className="absolute inset-y-0 w-0.5 bg-slate-900/75"
+                  className="absolute inset-y-0 w-0.5 bg-slate-900/80"
                   style={{ left: `${baseMarkerPct}%` }}
                   title={`100% Jornada Anual Teórica: ${formatHoras(liquidation.jornadaAnualEfectiva)}`}
                 />
+                {base30MarkerPct !== null && (
+                  <div
+                    className="absolute inset-y-0 w-0.5 bg-indigo-800/85"
+                    style={{ left: `${base30MarkerPct}%` }}
+                    title={`Límite base +30% (sin voluntarias): ${formatHoras(liquidation.topeMaximoHoras30Anual)}`}
+                  />
+                )}
               </div>
 
               <div className="flex flex-wrap items-center justify-between gap-2 mt-1.5 text-[11px] text-slate-600">
                 <div className="flex flex-wrap items-center gap-3">
-                  <span>0 h</span>
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="inline-block w-2.5 h-2.5 rounded-xs bg-emerald-600" aria-hidden="true" />
+                    <span>
+                      Realizadas:{' '}
+                      <strong className="font-mono tabular-nums text-emerald-800">
+                        {formatHoras(liquidation.sumaHorasRealizadas)}
+                      </strong>
+                    </span>
+                  </span>
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="inline-block w-2.5 h-2.5 rounded-xs bg-violet-500" aria-hidden="true" />
+                    <span>
+                      Teór. sin turnos:{' '}
+                      <strong className="font-mono tabular-nums text-violet-800">
+                        +{formatHoras(liquidation.horasPendientesMesesSinRegistro)}
+                      </strong>
+                    </span>
+                  </span>
                   <span aria-hidden="true">·</span>
                   <span>
                     Marca 100% Jornada:{' '}
@@ -804,20 +994,35 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                       {formatHoras(liquidation.jornadaAnualEfectiva)}
                     </strong>
                   </span>
+                  {isVolActive && (
+                    <>
+                      <span aria-hidden="true">·</span>
+                      <span>
+                        Marca +30% base:{' '}
+                        <strong className="font-mono tabular-nums text-indigo-800">
+                          {formatHoras(liquidation.topeMaximoHoras30Anual)}
+                        </strong>
+                      </span>
+                    </>
+                  )}
                   <span aria-hidden="true">·</span>
                   <span>
-                    Margen +30% usado/est.:{' '}
+                    Margen extra usado/est.:{' '}
                     <strong className="font-mono tabular-nums text-slate-800">
                       {liquidation.porcentajeMargen30Consumido.toLocaleString('es-ES', {
                         maximumFractionDigits: 1,
                       })}
                       %
                     </strong>{' '}
-                    (de +{formatHoras(liquidation.limiteComplementarias30Horas)})
+                    (de +{formatHoras(effectiveMarginCap)})
                   </span>
                 </div>
                 <span className="font-mono tabular-nums font-semibold text-slate-800">
-                  Tope máx. 130%: {formatHoras(liquidation.topeMaximoHoras30Anual)}
+                  {liquidation.esJornadaCompleta
+                    ? `Tope máx. (+80 h): ${formatHoras(effectiveCap)}`
+                    : isVolActive
+                      ? `Tope efectivo (+30% y vol.): ${formatHoras(effectiveCap)}`
+                      : `Tope máx. 130%: ${formatHoras(effectiveCap)}`}
                 </span>
               </div>
 
@@ -831,24 +1036,37 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                 >
                   {isExceeded ? (
                     <span>
-                      <strong>Alerta — Límite del +30% superado:</strong> sumando lo ya realizado (
+                      <strong>
+                        Alerta — Límite{' '}
+                        {liquidation.esJornadaCompleta
+                          ? 'de +80 h anuales'
+                          : isVolActive
+                            ? 'efectivo (+30% + voluntarias)'
+                            : 'del +30%'}{' '}
+                        superado:
+                      </strong>{' '}
+                      sumando lo ya realizado (
                       {formatHoras(liquidation.sumaHorasRealizadas)}) y las teóricas pendientes (
                       {formatHoras(liquidation.horasPendientesMesesSinRegistro)}), la estimación anual (
                       {formatHoras(liquidation.horasEstimadasCierreAnual)}) supera el tope máximo de{' '}
-                      {formatHoras(liquidation.topeMaximoHoras30Anual)} en{' '}
+                      {formatHoras(effectiveCap)} en{' '}
                       <strong>{formatHoras(Math.abs(liquidation.margenRestante30Horas))}</strong>.
                       {unloggedMonthsCount > 0
                         ? ` Regulariza reduciendo al menos ${formatHoras(Math.abs(liquidation.margenRestante30Horas))} entre los ${unloggedMonthsCount} meses pendientes.`
                         : ' Revisa el cuadrante anual para regularizar el exceso.'}
+                      {!liquidation.esJornadaCompleta &&
+                        !isVolActive &&
+                        liquidation.horasVoluntarias15Anual > 0 &&
+                        ` También puedes activar horas voluntarias (+15%, hasta ${formatHoras(liquidation.horasVoluntarias15Anual)}) en bloques de 8 h con consentimiento del empleado.`}
                     </span>
                   ) : isPaceRisk ? (
                     <span>
                       <strong>Alerta de estimación mensual:</strong> al ritmo actual en los meses registrados respecto a las horas teóricas del mes, se estima alcanzar{' '}
-                      <strong>{formatHoras(liquidation.horasEstimadasAlRitmoActual)}</strong> al final del año, superando el límite del +30% (
-                      {formatHoras(liquidation.topeMaximoHoras30Anual)}) en{' '}
+                      <strong>{formatHoras(liquidation.horasEstimadasAlRitmoActual)}</strong> al final del año, superando el tope de{' '}
+                      {formatHoras(effectiveCap)} en{' '}
                       <strong>
                         {formatHoras(
-                          Math.max(0, liquidation.horasEstimadasAlRitmoActual - liquidation.topeMaximoHoras30Anual)
+                          Math.max(0, liquidation.horasEstimadasAlRitmoActual - effectiveCap)
                         )}
                       </strong>
                       . Regulariza los próximos meses (margen restante actual: {formatHoras(liquidation.margenRestante30Horas)}).
@@ -859,9 +1077,9 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                       {liquidation.porcentajeMargen30Consumido.toLocaleString('es-ES', {
                         maximumFractionDigits: 1,
                       })}
-                      % del margen anual del +30%. Quedan{' '}
+                      % del margen anual disponible. Quedan{' '}
                       <strong>{formatHoras(liquidation.margenRestante30Horas)}</strong> de margen antes de alcanzar{' '}
-                      {formatHoras(liquidation.topeMaximoHoras30Anual)}.
+                      {formatHoras(effectiveCap)}.
                     </span>
                   )}
                 </div>
@@ -997,8 +1215,8 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                 </th>
                 <th className="px-3 py-3 text-right whitespace-nowrap">Saldo Teór.</th>
                 <th className="px-3 py-3 text-right whitespace-nowrap">Bolsa Teór.</th>
-                <th className="px-3 py-3 text-right whitespace-nowrap bg-emerald-50 text-emerald-950" title="Suma automática de horas del mes natural en Turnos Día">
-                  Horas Real. (Diario)
+                <th className="px-3 py-3 text-right whitespace-nowrap bg-emerald-50 text-emerald-950" title="Horas reales de Turnos Día; en meses sin turnos muestra en violeta las horas teóricas previstas para el cierre anual">
+                  Horas Real. / Prev.
                 </th>
                 <th
                   className="px-3 py-3 text-right whitespace-nowrap bg-emerald-50 text-emerald-950"
@@ -1270,12 +1488,12 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                               Math.max(0, parseFloat(e.target.value) || 0)
                             )
                           }
-                          className={`w-20 text-right rounded border px-1.5 py-1 text-xs font-bold focus:outline-none ${
+                          className={`w-20 text-right rounded border px-1.5 py-1 text-xs font-bold font-mono tabular-nums focus:outline-none ${
                             m.isHorasManual
                               ? 'border-indigo-300 bg-indigo-50/70 text-indigo-900 focus:border-indigo-600'
-                              : m.turnosDiarioCount > 0
+                              : m.tieneRegistroReal
                               ? 'border-emerald-300 bg-white text-emerald-950 focus:border-emerald-600'
-                              : 'border-slate-300 bg-white text-slate-600 focus:border-blue-600'
+                              : 'border-violet-200 bg-violet-50/40 text-slate-500 focus:border-violet-600'
                           }`}
                         />
                         {m.isHorasManual && (
@@ -1289,13 +1507,20 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                           </button>
                         )}
                       </div>
-                      <div className="text-[10px] text-slate-500 font-semibold mt-0.5">
-                        {m.isHorasManual
-                          ? 'Manual'
-                          : m.turnosDiarioCount > 0
-                          ? `${m.turnosDiarioCount} turnos · Mes nat.`
-                          : 'Sin turnos'}
-                      </div>
+                      {m.tieneRegistroReal ? (
+                        <div className="text-[10px] text-emerald-700 font-semibold mt-0.5">
+                          {m.isHorasManual
+                            ? 'Manual'
+                            : `${m.turnosDiarioCount} turnos · Mes nat.`}
+                        </div>
+                      ) : (
+                        <div
+                          className="mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-violet-100 text-violet-800 border border-violet-200 text-[10px] font-bold font-mono tabular-nums"
+                          title="Sin turnos registrados: se suman estas horas teóricas del mes para calcular la previsión anual"
+                        >
+                          <span>+{formatHoras(m.horasTeoricasActivas)} prev. teór.</span>
+                        </div>
+                      )}
                     </td>
                     <td className="px-3 py-2.5 text-right bg-emerald-50/35 whitespace-nowrap">
                       <div className={difClass}>
@@ -1369,8 +1594,24 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                 <td className="px-3 py-3 text-right text-cyan-300 whitespace-nowrap">
                   {formatHoras(liquidation.bolsaAcumuladaFinal, true)}
                 </td>
-                <td className="px-3 py-3 text-right text-emerald-300 whitespace-nowrap">
-                  {formatHoras(liquidation.sumaHorasRealizadas)}
+                <td className="px-3 py-2.5 text-right whitespace-nowrap font-mono tabular-nums">
+                  <div className="text-emerald-300" title="Total horas reales registradas">
+                    {formatHoras(liquidation.sumaHorasRealizadas)}
+                  </div>
+                  {liquidation.horasPendientesMesesSinRegistro > 0.004 && (
+                    <div
+                      className="text-[11px] font-bold text-violet-300"
+                      title="Horas teóricas de meses sin turnos sumadas a la previsión anual"
+                    >
+                      +{formatHoras(liquidation.horasPendientesMesesSinRegistro)} teór.
+                    </div>
+                  )}
+                  <div
+                    className="text-[11px] font-black text-white border-t border-white/20 mt-0.5 pt-0.5"
+                    title="Estimación total con la que acabará el año"
+                  >
+                    Prev. {formatHoras(liquidation.horasEstimadasCierreAnual)}
+                  </div>
                 </td>
                 <td className="px-3 py-3 text-right text-emerald-300 whitespace-nowrap">
                   {liquidation.mesesConTurnosCount > 0

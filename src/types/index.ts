@@ -140,6 +140,8 @@ export interface WorkerProfile {
   advancePayment: number; // anticipos
   fechaAlta?: string; // "YYYY-MM-DD" opcional (en la ficha personal del empleado)
   fechaBaja?: string; // "YYYY-MM-DD" opcional (en la ficha personal del empleado)
+  voluntaryHours15Enabled?: boolean; // Consentimiento del empleado para activar horas voluntarias (15%)
+  voluntaryHours15Hours?: number; // Horas voluntarias activadas en bloques de 8 h (hasta el 15% anual)
 }
 
 export interface PayrollLineItem {
@@ -358,6 +360,8 @@ export interface AnnualEditableParams {
   modoExtras: AnnualExtrasPayMode;
   plusVacDia100: number;
   repartoBolsa: BolsaRepartoMode;
+  voluntarias15Activas?: boolean;
+  voluntarias15Horas?: number;
 }
 
 export interface AnnualMonthEditableFields {

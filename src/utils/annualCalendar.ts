@@ -121,10 +121,17 @@ export interface AnnualLiquidationResult {
   diasComputoRestantes: number;
   mediaDiariaAjustadaResto: number;
   cuotaMensualAjustadaResto: number;
-  // Límites legales sobre jornada anual (30% tope total + 15% voluntarias) y barra/alerta de estimación
+  // Límites legales sobre jornada anual:
+  // - 100% jornada: tope legal máximo de 80 h extras anuales (art. 35.2 ET)
+  // - <100% jornada: 30% base complementarias + 15% voluntarias en bloques de 8h con consentimiento
+  esJornadaCompleta: boolean;
   limiteComplementarias30Horas: number;
   topeMaximoHoras30Anual: number;
   horasVoluntarias15Anual: number;
+  voluntarias15Activas: boolean;
+  horasVoluntarias15Activadas: number;
+  topeMaximoConVoluntariasAnual: number;
+  superaTopeBase30SinVoluntarias: boolean;
   horasPendientesMesesSinRegistro: number;
   horasEstimadasCierreAnual: number;
   horasEstimadasAlRitmoActual: number;
@@ -139,6 +146,19 @@ export interface AnnualLiquidationResult {
   sumaPlusVac: number;
   sumaTotalBruto: number;
   filas: AnnualMonthComputedRow[];
+}
+
+export function getVoluntary8hBlockOptions(max15Hours: number): number[] {
+  const maxRounded = Math.round(Math.max(0, max15Hours) * 100) / 100;
+  const options: number[] = [];
+  const fullBlocksMax = Math.floor(maxRounded / 8) * 8;
+  for (let h = 8; h <= fullBlocksMax; h += 8) {
+    options.push(h);
+  }
+  if (maxRounded > fullBlocksMax + 0.01) {
+    options.push(maxRounded);
+  }
+  return options;
 }
 
 export function mapProfileExtrasModeToAnnual(profile: WorkerProfile): AnnualExtrasPayMode {
@@ -192,6 +212,8 @@ export function deriveDefaultAnnualParams(
     modoExtras: mapProfileExtrasModeToAnnual(profile),
     plusVacDia100,
     repartoBolsa: 'lineal',
+    voluntarias15Activas: Boolean(profile.voluntaryHours15Enabled),
+    voluntarias15Horas: profile.voluntaryHours15Hours ?? 0,
   };
 }
 
@@ -862,15 +884,40 @@ export function calculateAnnualLiquidation(
     unvalidatedMonthsCount > 0 ? horasPendientesAjustadasResto / unvalidatedMonthsCount : 0;
 
   // Límites legales calculados en base a la jornada anual efectiva:
-  // - Límite máximo total (+30% sobre teóricas anuales): tope que no pueden superar las horas realizadas totales
-  // - Horas voluntarias (15% de la jornada anual efectiva)
+  // - Jornada completa (100%): límite máximo legal de 80 horas extraordinarias anuales (no aplican complementarias +30% ni +15%)
+  // - Jornada parcial (<100%): +30% tope base y hasta +15% voluntarias con consentimiento en bloques de 8h
   const round2 = (n: number) => {
     const r = Math.round(n * 100) / 100;
     return Object.is(r, -0) ? 0 : r;
   };
-  const limiteComplementarias30Horas = round2(jornadaAnualEfectiva * 0.3);
-  const topeMaximoHoras30Anual = round2(jornadaAnualEfectiva * 1.3);
-  const horasVoluntarias15Anual = round2(jornadaAnualEfectiva * 0.15);
+  const esJornadaCompleta = jornadaPct >= 100 - 0.01;
+  const limiteComplementarias30Horas = esJornadaCompleta
+    ? 80
+    : round2(jornadaAnualEfectiva * 0.3);
+  const topeMaximoHoras30Anual = esJornadaCompleta
+    ? round2(jornadaAnualEfectiva + 80)
+    : round2(jornadaAnualEfectiva * 1.3);
+  const horasVoluntarias15Anual = esJornadaCompleta
+    ? 0
+    : round2(jornadaAnualEfectiva * 0.15);
+
+  const rawVolActive = !esJornadaCompleta && Boolean(params.voluntarias15Activas);
+  const rawVolHours =
+    params.voluntarias15Horas !== undefined && Number.isFinite(params.voluntarias15Horas)
+      ? Math.max(0, Number(params.voluntarias15Horas))
+      : rawVolActive
+        ? horasVoluntarias15Anual
+        : 0;
+  const horasVoluntarias15Activadas = rawVolActive
+    ? round2(Math.min(horasVoluntarias15Anual, rawVolHours))
+    : 0;
+  const voluntarias15Activas = rawVolActive && horasVoluntarias15Activadas > 0;
+  const topeMaximoConVoluntariasAnual = round2(
+    topeMaximoHoras30Anual + horasVoluntarias15Activadas
+  );
+  const limiteExtraEfectivoAnual = round2(
+    limiteComplementarias30Horas + horasVoluntarias15Activadas
+  );
 
   let horasRealizadasMasITRegistradas = 0;
   let horasTeoricasComputoRegistradas = 0;
@@ -897,31 +944,34 @@ export function calculateAnnualLiquidation(
       ? round2((horasRealizadasMasITRegistradas / horasTeoricasComputoRegistradas) * jornadaAnualEfectiva)
       : horasEstimadasCierreAnual;
 
-  const superaLimite30ConPendientes = horasEstimadasCierreAnual > topeMaximoHoras30Anual + 0.004;
+  const superaTopeBase30SinVoluntarias =
+    horasEstimadasCierreAnual > topeMaximoHoras30Anual + 0.004;
+  const superaLimite30ConPendientes =
+    horasEstimadasCierreAnual > topeMaximoConVoluntariasAnual + 0.004;
   const riesgoSuperarLimite30PorRitmo =
     !superaLimite30ConPendientes &&
     mesesConTurnosCount > 0 &&
     mesesConTurnosCount < 12 &&
-    horasEstimadasAlRitmoActual > topeMaximoHoras30Anual + 0.004;
+    horasEstimadasAlRitmoActual > topeMaximoConVoluntariasAnual + 0.004;
 
   const porcentajeLlenadoTope30 =
-    topeMaximoHoras30Anual > 0
-      ? round2((sumaHorasRealizadas / topeMaximoHoras30Anual) * 100)
+    topeMaximoConVoluntariasAnual > 0
+      ? round2((sumaHorasRealizadas / topeMaximoConVoluntariasAnual) * 100)
       : 0;
   const porcentajeEstimadoTope30 =
-    topeMaximoHoras30Anual > 0
-      ? round2((horasEstimadasCierreAnual / topeMaximoHoras30Anual) * 100)
+    topeMaximoConVoluntariasAnual > 0
+      ? round2((horasEstimadasCierreAnual / topeMaximoConVoluntariasAnual) * 100)
       : 0;
   const porcentajeMargen30Consumido =
-    limiteComplementarias30Horas > 0
+    limiteExtraEfectivoAnual > 0
       ? round2(
           Math.max(
             0,
-            ((horasEstimadasCierreAnual - jornadaAnualEfectiva) / limiteComplementarias30Horas) * 100
+            ((horasEstimadasCierreAnual - jornadaAnualEfectiva) / limiteExtraEfectivoAnual) * 100
           )
         )
       : 0;
-  const margenRestante30Horas = round2(topeMaximoHoras30Anual - horasEstimadasCierreAnual);
+  const margenRestante30Horas = round2(topeMaximoConVoluntariasAnual - horasEstimadasCierreAnual);
 
   return {
     anio,
@@ -960,9 +1010,14 @@ export function calculateAnnualLiquidation(
     diasComputoRestantes,
     mediaDiariaAjustadaResto,
     cuotaMensualAjustadaResto,
+    esJornadaCompleta,
     limiteComplementarias30Horas,
     topeMaximoHoras30Anual,
     horasVoluntarias15Anual,
+    voluntarias15Activas,
+    horasVoluntarias15Activadas,
+    topeMaximoConVoluntariasAnual,
+    superaTopeBase30SinVoluntarias,
     horasPendientesMesesSinRegistro,
     horasEstimadasCierreAnual,
     horasEstimadasAlRitmoActual,
@@ -1226,24 +1281,32 @@ export function exportAnnualCalendarToExcel(
     'La bolsa inicia en enero a 0,00 h (ni a favor ni en contra)',
   ]);
   wsData.push([
-    'Tope Máx. Anual +30% (h)',
-    'TOPE_30',
-    { t: 'n', v: res.topeMaximoHoras30Anual, f: 'C31*1.3' },
-    `Jornada anual (${res.jornadaAnualEfectiva.toFixed(2)} h) + 30% máximo (${res.limiteComplementarias30Horas.toFixed(2)} h)`,
+    res.esJornadaCompleta ? 'Tope Máx. Anual (+80 h extras) (h)' : 'Tope Máx. Anual +30% (h)',
+    res.esJornadaCompleta ? 'TOPE_80H' : 'TOPE_30',
+    { t: 'n', v: res.topeMaximoConVoluntariasAnual },
+    res.esJornadaCompleta
+      ? `Jornada completa (100%): Jornada anual (${res.jornadaAnualEfectiva.toFixed(2)} h) + 80,00 h extraordinarias máx. anuales`
+      : res.voluntarias15Activas
+        ? `Tope base +30% (${res.topeMaximoHoras30Anual.toFixed(2)} h) + Voluntarias activadas (${res.horasVoluntarias15Activadas.toFixed(2)} h)`
+        : `Jornada anual (${res.jornadaAnualEfectiva.toFixed(2)} h) + 30% máximo (${res.limiteComplementarias30Horas.toFixed(2)} h)`,
   ]);
   wsData.push([
     'Horas Voluntarias 15% (h)',
     'VOL_15',
-    { t: 'n', v: res.horasVoluntarias15Anual, f: 'C31*0.15' },
-    '15% calculado sobre la jornada anual efectiva del contrato',
+    { t: 'n', v: res.horasVoluntarias15Activadas },
+    res.esJornadaCompleta
+      ? 'No aplica en jornada completa (100%); rige el límite anual de 80,00 h extraordinarias'
+      : res.voluntarias15Activas
+        ? `Activadas con consentimiento (${res.horasVoluntarias15Activadas.toFixed(2)} h de ${res.horasVoluntarias15Anual.toFixed(2)} h máx.)`
+        : `Sin consentimiento del empleado (0,00 h activadas de ${res.horasVoluntarias15Anual.toFixed(2)} h posibles al 15%)`,
   ]);
   wsData.push([
     'Estimación Cierre Anual (h)',
     'EST_30',
     { t: 'n', v: res.horasEstimadasCierreAnual },
     res.superaLimite30ConPendientes
-      ? `ALERTA: Supera tope +30% en ${Math.abs(res.margenRestante30Horas).toFixed(2)} h`
-      : `Margen disponible dentro del +30%: ${res.margenRestante30Horas.toFixed(2)} h`,
+      ? `ALERTA: Supera tope vigente en ${Math.abs(res.margenRestante30Horas).toFixed(2)} h`
+      : `Margen disponible dentro del tope vigente: ${res.margenRestante30Horas.toFixed(2)} h`,
   ]);
 
   const ws = XLSX.utils.aoa_to_sheet(wsData);

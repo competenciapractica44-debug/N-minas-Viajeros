@@ -28,7 +28,7 @@ import {
 import { getEffectiveYearRate } from '../data/convenioZaragoza';
 import { formatCurrency } from '../utils/exporter';
 import { ANNUAL_VACATION_DAYS_CONVENIO, getDaysInYear, roundCurrency } from '../utils/calculator';
-import { AnnualLiquidationResult } from '../utils/annualCalendar';
+import { AnnualLiquidationResult, getVoluntary8hBlockOptions } from '../utils/annualCalendar';
 import { YearlySalaryChart } from './YearlySalaryChart';
 import { ConfirmModal } from './ConfirmModal';
 
@@ -616,69 +616,214 @@ export const NominaView: React.FC<NominaViewProps> = ({
           </div>
 
           <div>
-            <div className="flex items-center justify-between text-[10px] uppercase tracking-wider font-semibold text-slate-400 mb-1">
-              <span>Acumulado Anual {selectedYear} (Tope +30%)</span>
-              <span className="font-mono tabular-nums text-sky-300">
-                {annualSummary
-                  ? `${annualSummary.porcentajeLlenadoTope30.toLocaleString('es-ES', { maximumFractionDigits: 1 })}%`
-                  : `${annualHoursProgressPct}%`}
-              </span>
-            </div>
             {(() => {
               const baseAnual = annualSummary?.jornadaAnualEfectiva ?? payroll.convenioAnnualHoursTarget;
-              const tope30 = annualSummary?.topeMaximoHoras30Anual ?? parseFloat((baseAnual * 1.3).toFixed(2));
-              const limite30 = annualSummary?.limiteComplementarias30Horas ?? parseFloat((baseAnual * 0.3).toFixed(2));
-              const voluntarias15 = annualSummary?.horasVoluntarias15Anual ?? parseFloat((baseAnual * 0.15).toFixed(2));
+              const esCompleta =
+                annualSummary?.esJornadaCompleta ??
+                (profile.contractType !== 'tiempo_parcial' || (Number(profile.partTimePercentage) || 100) >= 100);
+              const tope30 =
+                annualSummary?.topeMaximoHoras30Anual ??
+                parseFloat((esCompleta ? baseAnual + 80 : baseAnual * 1.3).toFixed(2));
+              const limite30 =
+                annualSummary?.limiteComplementarias30Horas ??
+                (esCompleta ? 80 : parseFloat((baseAnual * 0.3).toFixed(2)));
+              const voluntarias15 =
+                annualSummary?.horasVoluntarias15Anual ??
+                (esCompleta ? 0 : parseFloat((baseAnual * 0.15).toFixed(2)));
+              const volActive =
+                !esCompleta &&
+                (annualSummary?.voluntarias15Activas ??
+                  Boolean(profile.voluntaryHours15Enabled && (profile.voluntaryHours15Hours ?? voluntarias15) > 0));
+              const volActiveHours =
+                !esCompleta
+                  ? annualSummary?.horasVoluntarias15Activadas ??
+                    (volActive ? Math.min(voluntarias15, profile.voluntaryHours15Hours ?? voluntarias15) : 0)
+                  : 0;
+              const topeEfectivo =
+                annualSummary?.topeMaximoConVoluntariasAnual ?? parseFloat((tope30 + volActiveHours).toFixed(2));
+              const volBlockOptions = esCompleta ? [] : getVoluntary8hBlockOptions(voluntarias15);
+
               const realizadoAnual = annualSummary?.sumaHorasRealizadas ?? annualLoggedHours;
               const estimadoCierre = annualSummary?.horasEstimadasCierreAnual ?? realizadoAnual;
               const estimadoRitmo = annualSummary?.horasEstimadasAlRitmoActual ?? estimadoCierre;
-              const superaTope = annualSummary?.superaLimite30ConPendientes ?? estimadoCierre > tope30 + 0.004;
+              const superaTope = annualSummary?.superaLimite30ConPendientes ?? estimadoCierre > topeEfectivo + 0.004;
               const riesgoRitmo = annualSummary?.riesgoSuperarLimite30PorRitmo ?? false;
-              const margenRestante = annualSummary?.margenRestante30Horas ?? parseFloat((tope30 - estimadoCierre).toFixed(2));
-              const realBarPct = tope30 > 0 ? Math.min(100, (realizadoAnual / tope30) * 100) : 0;
-              const estBarPct = tope30 > 0 ? Math.min(100, Math.max(realBarPct, (estimadoCierre / tope30) * 100)) : realBarPct;
-              const baseTickPct = tope30 > 0 ? (baseAnual / tope30) * 100 : 76.92;
+              const margenRestante = annualSummary?.margenRestante30Horas ?? parseFloat((topeEfectivo - estimadoCierre).toFixed(2));
+              const realBarPct = topeEfectivo > 0 ? Math.min(100, (realizadoAnual / topeEfectivo) * 100) : 0;
+              const estBarPct = topeEfectivo > 0 ? Math.min(100, Math.max(realBarPct, (estimadoCierre / topeEfectivo) * 100)) : realBarPct;
+              const baseTickPct = topeEfectivo > 0 ? (baseAnual / topeEfectivo) * 100 : 76.92;
+              const base30TickPct = !esCompleta && volActive && topeEfectivo > 0 ? (tope30 / topeEfectivo) * 100 : null;
+
+              const selectedBlockValue = (() => {
+                if (!volActive) return '0';
+                const match = volBlockOptions.find((opt) => Math.abs(opt - volActiveHours) < 0.01);
+                return String(match ?? volActiveHours);
+              })();
+
+              const handleVoluntaryToggle = (enabled: boolean, hours: number) => {
+                const cleanHours = enabled ? Math.round(Math.max(0, hours) * 100) / 100 : 0;
+                const active = enabled && cleanHours > 0;
+                onUpdateProfile({
+                  voluntaryHours15Enabled: active,
+                  voluntaryHours15Hours: cleanHours,
+                });
+              };
 
               return (
                 <>
-                  <div className="relative w-full h-2 bg-white/10 rounded-full overflow-hidden mb-1.5">
-                    <div
-                      className={`absolute inset-y-0 left-0 rounded-full transition-all ${
-                        superaTope ? 'bg-rose-400/50' : riesgoRitmo ? 'bg-amber-400/50' : 'bg-sky-300/35'
-                      }`}
-                      style={{ width: `${estBarPct}%` }}
-                      title={`Estimado con pendientes del año: ${formatHoursES(estimadoCierre)} h`}
-                    />
-                    <div
-                      className={`relative h-full rounded-full transition-all ${
-                        superaTope
-                          ? 'bg-rose-500'
-                          : riesgoRitmo
-                            ? 'bg-amber-400'
-                            : 'bg-gradient-to-r from-sky-400 to-emerald-400'
-                      }`}
-                      style={{ width: `${realBarPct}%` }}
-                      title={`Realizado acumulado: ${formatHoursES(realizadoAnual)} h`}
-                    />
-                    <div
-                      className="absolute inset-y-0 w-0.5 bg-white/80"
-                      style={{ left: `${baseTickPct}%` }}
-                      title={`100% Jornada Anual: ${formatHoursES(baseAnual)} h`}
-                    />
+                  <div className="flex items-center justify-between text-[10px] uppercase tracking-wider font-semibold text-slate-400 mb-1">
+                    <span>
+                      Acumulado Anual {selectedYear} (
+                      {esCompleta
+                        ? 'Máx. +80h'
+                        : volActive
+                          ? 'Tope +30% + Vol.'
+                          : 'Tope +30%'}
+                      )
+                    </span>
+                    <span className="font-mono tabular-nums text-sky-300">
+                      {annualSummary
+                        ? `${annualSummary.porcentajeLlenadoTope30.toLocaleString('es-ES', { maximumFractionDigits: 1 })}%`
+                        : `${realBarPct.toFixed(1)}%`}
+                    </span>
                   </div>
-                  <span className="text-[11px] text-slate-200 font-mono tabular-nums block">
-                    <strong>{formatHoursES(realizadoAnual)} h</strong> / {formatHoursES(tope30)} h{' '}
-                    <span className="text-slate-400">(est. {formatHoursES(estimadoCierre)} h)</span>
-                  </span>
+                  {(() => {
+                    const teoPendiente =
+                      annualSummary?.horasPendientesMesesSinRegistro ??
+                      Math.max(0, parseFloat((estimadoCierre - realizadoAnual).toFixed(2)));
+
+                    return (
+                      <>
+                        <div
+                          className={`relative w-full h-2 bg-white/10 rounded-full overflow-hidden mb-1.5 ${
+                            superaTope
+                              ? 'ring-1 ring-rose-400/90'
+                              : riesgoRitmo
+                                ? 'ring-1 ring-amber-400/90'
+                                : ''
+                          }`}
+                        >
+                          <div
+                            className="absolute inset-y-0 left-0 bg-violet-400/85 transition-all"
+                            style={{ width: `${estBarPct}%` }}
+                            title={`Previsión cierre anual (+${formatHoursES(teoPendiente)} h teóricas sin turnos): ${formatHoursES(estimadoCierre)} h`}
+                          />
+                          <div
+                            className="relative h-full bg-emerald-400 transition-all"
+                            style={{ width: `${realBarPct}%` }}
+                            title={`Horas realizadas acumuladas: ${formatHoursES(realizadoAnual)} h`}
+                          />
+                          <div
+                            className="absolute inset-y-0 w-0.5 bg-white/85"
+                            style={{ left: `${baseTickPct}%` }}
+                            title={`100% Jornada Anual: ${formatHoursES(baseAnual)} h`}
+                          />
+                          {base30TickPct !== null && (
+                            <div
+                              className="absolute inset-y-0 w-0.5 bg-indigo-300/95"
+                              style={{ left: `${base30TickPct}%` }}
+                              title={`Límite base +30% (sin voluntarias): ${formatHoursES(tope30)} h`}
+                            />
+                          )}
+                        </div>
+                        <span className="text-[11px] text-slate-200 font-mono tabular-nums block">
+                          <strong className="text-emerald-300">{formatHoursES(realizadoAnual)} h</strong>
+                          {teoPendiente > 0.004 && (
+                            <>
+                              {' + '}
+                              <strong
+                                className="text-violet-300"
+                                title="Horas teóricas de meses sin turnos sumadas para la previsión"
+                              >
+                                {formatHoursES(teoPendiente)} h
+                              </strong>
+                            </>
+                          )}
+                          {' = '}
+                          <strong className="text-white">{formatHoursES(estimadoCierre)} h</strong>
+                          <span className="text-slate-400"> / {formatHoursES(topeEfectivo)} h</span>
+                        </span>
+                        <div className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[9.5px] text-slate-300">
+                          <span className="inline-flex items-center gap-1">
+                            <span className="inline-block w-2 h-2 rounded-xs bg-emerald-400" aria-hidden="true" />
+                            <span>Realizadas</span>
+                          </span>
+                          <span className="inline-flex items-center gap-1">
+                            <span className="inline-block w-2 h-2 rounded-xs bg-violet-400" aria-hidden="true" />
+                            <span>Teór. sin turnos (prev.)</span>
+                          </span>
+                        </div>
+                      </>
+                    );
+                  })()}
                   <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[10px] text-slate-300 font-mono tabular-nums">
-                    <span>
-                      Máx. +30%: <strong className="text-white">+{formatHoursES(limite30)} h</strong>
-                    </span>
-                    <span aria-hidden="true">·</span>
-                    <span>
-                      Voluntarias 15%: <strong className="text-indigo-200">{formatHoursES(voluntarias15)} h</strong>
-                    </span>
+                    {esCompleta ? (
+                      <span>
+                        Jornada 100% · Máx. legal: <strong className="text-white">+80,00 h extras/año</strong>
+                      </span>
+                    ) : (
+                      <>
+                        <span>
+                          Máx. +30%: <strong className="text-white">+{formatHoursES(limite30)} h</strong>
+                        </span>
+                        <span aria-hidden="true">·</span>
+                        <span>
+                          Vol. 15%:{' '}
+                          <strong className={volActive ? 'text-indigo-200' : 'text-slate-400'}>
+                            {volActive ? `${formatHoursES(volActiveHours)} / ${formatHoursES(voluntarias15)} h` : `0 / ${formatHoursES(voluntarias15)} h`}
+                          </strong>
+                        </span>
+                      </>
+                    )}
                   </div>
+
+                  {/* Botón activar consentimiento + desplegable bloques de 8h (solo tiempo parcial) */}
+                  {!esCompleta && (
+                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => handleVoluntaryToggle(!volActive, !volActive ? voluntarias15 : 0)}
+                        className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold border transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                          volActive
+                            ? 'bg-indigo-500/30 border-indigo-400/60 text-indigo-100 hover:bg-indigo-500/45'
+                            : 'bg-white/10 border-white/20 text-slate-200 hover:bg-white/20'
+                        }`}
+                        title={
+                          volActive
+                            ? 'Consentimiento activo: pulsa para desactivar horas voluntarias 15%'
+                            : 'Activar horas voluntarias 15% con consentimiento del empleado'
+                        }
+                      >
+                        {volActive ? (
+                          <Unlock className="w-3 h-3 shrink-0" />
+                        ) : (
+                          <Lock className="w-3 h-3 shrink-0" />
+                        )}
+                        <span>{volActive ? `Vol. activas (${formatHoursES(volActiveHours)}h)` : 'Activar Vol. 15%'}</span>
+                      </button>
+
+                      <select
+                        aria-label="Bloques de 8 horas de horas voluntarias"
+                        value={selectedBlockValue}
+                        onChange={(e) => {
+                          const val = Number(e.target.value);
+                          handleVoluntaryToggle(val > 0, val);
+                        }}
+                        className="px-1.5 py-1 rounded-md text-[10px] font-semibold bg-slate-800 border border-white/20 text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-400 font-mono tabular-nums cursor-pointer"
+                      >
+                        <option value="0">0h (Sin consent.)</option>
+                        {volBlockOptions.map((opt) => {
+                          const isExact8 = Math.abs(opt % 8) < 0.001;
+                          return (
+                            <option key={opt} value={String(opt)}>
+                              {isExact8 ? `+${opt}h (${Math.round(opt / 8)}×8h)` : `+${formatHoursES(opt)}h (15%)`}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </div>
+                  )}
+
                   {(superaTope || riesgoRitmo) && (
                     <div
                       className={`mt-1.5 px-2 py-1 rounded-lg border text-[10px] leading-snug font-medium flex items-start gap-1.5 ${
@@ -690,8 +835,8 @@ export const NominaView: React.FC<NominaViewProps> = ({
                       <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
                       <span>
                         {superaTope
-                          ? `Supera tope +30% (${formatHoursES(tope30)} h) en ${formatHoursES(Math.abs(margenRestante))} h. Regulariza los próximos meses.`
-                          : `Ritmo actual proyecta ${formatHoursES(estimadoRitmo)} h (superaría tope +30% de ${formatHoursES(tope30)} h). Margen actual: ${formatHoursES(margenRestante)} h.`}
+                          ? `Supera tope ${esCompleta ? '+80h ' : ''}(${formatHoursES(topeEfectivo)} h) en ${formatHoursES(Math.abs(margenRestante))} h.${!esCompleta && !volActive ? ' Puedes activar Vol. 15% en bloques de 8h o regularizar próximos meses.' : ' Regulariza los próximos meses.'}`
+                          : `Ritmo actual proyecta ${formatHoursES(estimadoRitmo)} h (superaría tope de ${formatHoursES(topeEfectivo)} h). Margen actual: ${formatHoursES(margenRestante)} h.`}
                       </span>
                     </div>
                   )}
