@@ -121,6 +121,19 @@ export interface AnnualLiquidationResult {
   diasComputoRestantes: number;
   mediaDiariaAjustadaResto: number;
   cuotaMensualAjustadaResto: number;
+  // Límites legales sobre jornada anual (30% tope total + 15% voluntarias) y barra/alerta de estimación
+  limiteComplementarias30Horas: number;
+  topeMaximoHoras30Anual: number;
+  horasVoluntarias15Anual: number;
+  horasPendientesMesesSinRegistro: number;
+  horasEstimadasCierreAnual: number;
+  horasEstimadasAlRitmoActual: number;
+  superaLimite30ConPendientes: boolean;
+  riesgoSuperarLimite30PorRitmo: boolean;
+  porcentajeLlenadoTope30: number;
+  porcentajeEstimadoTope30: number;
+  porcentajeMargen30Consumido: number;
+  margenRestante30Horas: number;
   // Totales económicos
   sumaFijo: number;
   sumaPlusVac: number;
@@ -848,6 +861,68 @@ export function calculateAnnualLiquidation(
   const cuotaMensualAjustadaResto =
     unvalidatedMonthsCount > 0 ? horasPendientesAjustadasResto / unvalidatedMonthsCount : 0;
 
+  // Límites legales calculados en base a la jornada anual efectiva:
+  // - Límite máximo total (+30% sobre teóricas anuales): tope que no pueden superar las horas realizadas totales
+  // - Horas voluntarias (15% de la jornada anual efectiva)
+  const round2 = (n: number) => {
+    const r = Math.round(n * 100) / 100;
+    return Object.is(r, -0) ? 0 : r;
+  };
+  const limiteComplementarias30Horas = round2(jornadaAnualEfectiva * 0.3);
+  const topeMaximoHoras30Anual = round2(jornadaAnualEfectiva * 1.3);
+  const horasVoluntarias15Anual = round2(jornadaAnualEfectiva * 0.15);
+
+  let horasRealizadasMasITRegistradas = 0;
+  let horasTeoricasComputoRegistradas = 0;
+  let horasPendientesMesesSinRegistro = 0;
+  let horasITMesesSinRegistro = 0;
+
+  for (const f of filas) {
+    if (f.tieneRegistroReal) {
+      horasRealizadasMasITRegistradas += f.horasRealizadas + f.horasJustificadasIT;
+      horasTeoricasComputoRegistradas += f.horasComputoTeorico;
+    } else {
+      horasPendientesMesesSinRegistro += f.horasTeoricasActivas;
+      horasITMesesSinRegistro += f.horasJustificadasIT;
+    }
+  }
+
+  horasPendientesMesesSinRegistro = round2(horasPendientesMesesSinRegistro);
+  const horasEstimadasCierreAnual = round2(
+    horasRealizadasMasITRegistradas + horasPendientesMesesSinRegistro + horasITMesesSinRegistro
+  );
+
+  const horasEstimadasAlRitmoActual =
+    mesesConTurnosCount > 0 && horasTeoricasComputoRegistradas > 0
+      ? round2((horasRealizadasMasITRegistradas / horasTeoricasComputoRegistradas) * jornadaAnualEfectiva)
+      : horasEstimadasCierreAnual;
+
+  const superaLimite30ConPendientes = horasEstimadasCierreAnual > topeMaximoHoras30Anual + 0.004;
+  const riesgoSuperarLimite30PorRitmo =
+    !superaLimite30ConPendientes &&
+    mesesConTurnosCount > 0 &&
+    mesesConTurnosCount < 12 &&
+    horasEstimadasAlRitmoActual > topeMaximoHoras30Anual + 0.004;
+
+  const porcentajeLlenadoTope30 =
+    topeMaximoHoras30Anual > 0
+      ? round2((sumaHorasRealizadas / topeMaximoHoras30Anual) * 100)
+      : 0;
+  const porcentajeEstimadoTope30 =
+    topeMaximoHoras30Anual > 0
+      ? round2((horasEstimadasCierreAnual / topeMaximoHoras30Anual) * 100)
+      : 0;
+  const porcentajeMargen30Consumido =
+    limiteComplementarias30Horas > 0
+      ? round2(
+          Math.max(
+            0,
+            ((horasEstimadasCierreAnual - jornadaAnualEfectiva) / limiteComplementarias30Horas) * 100
+          )
+        )
+      : 0;
+  const margenRestante30Horas = round2(topeMaximoHoras30Anual - horasEstimadasCierreAnual);
+
   return {
     anio,
     p,
@@ -885,6 +960,18 @@ export function calculateAnnualLiquidation(
     diasComputoRestantes,
     mediaDiariaAjustadaResto,
     cuotaMensualAjustadaResto,
+    limiteComplementarias30Horas,
+    topeMaximoHoras30Anual,
+    horasVoluntarias15Anual,
+    horasPendientesMesesSinRegistro,
+    horasEstimadasCierreAnual,
+    horasEstimadasAlRitmoActual,
+    superaLimite30ConPendientes,
+    riesgoSuperarLimite30PorRitmo,
+    porcentajeLlenadoTope30,
+    porcentajeEstimadoTope30,
+    porcentajeMargen30Consumido,
+    margenRestante30Horas,
     sumaFijo,
     sumaPlusVac,
     sumaTotalBruto,
@@ -1138,6 +1225,26 @@ export function exportAnnualCalendarToExcel(
     { t: 'n', v: res.bolsaInicialAnio },
     'La bolsa inicia en enero a 0,00 h (ni a favor ni en contra)',
   ]);
+  wsData.push([
+    'Tope Máx. Anual +30% (h)',
+    'TOPE_30',
+    { t: 'n', v: res.topeMaximoHoras30Anual, f: 'C31*1.3' },
+    `Jornada anual (${res.jornadaAnualEfectiva.toFixed(2)} h) + 30% máximo (${res.limiteComplementarias30Horas.toFixed(2)} h)`,
+  ]);
+  wsData.push([
+    'Horas Voluntarias 15% (h)',
+    'VOL_15',
+    { t: 'n', v: res.horasVoluntarias15Anual, f: 'C31*0.15' },
+    '15% calculado sobre la jornada anual efectiva del contrato',
+  ]);
+  wsData.push([
+    'Estimación Cierre Anual (h)',
+    'EST_30',
+    { t: 'n', v: res.horasEstimadasCierreAnual },
+    res.superaLimite30ConPendientes
+      ? `ALERTA: Supera tope +30% en ${Math.abs(res.margenRestante30Horas).toFixed(2)} h`
+      : `Margen disponible dentro del +30%: ${res.margenRestante30Horas.toFixed(2)} h`,
+  ]);
 
   const ws = XLSX.utils.aoa_to_sheet(wsData);
 
@@ -1295,7 +1402,7 @@ export function exportAnnualCalendarToExcel(
     const cell = ws[XLSX.utils.encode_cell({ r: 29, c })];
     if (cell) cell.s = estiloCabeceraSeccion;
   }
-  for (let r = 30; r <= 35; r++) {
+  for (let r = 30; r <= 38; r++) {
     for (let c = 0; c <= 3; c++) {
       const cell = ws[XLSX.utils.encode_cell({ r, c })];
       if (!cell) continue;
@@ -1339,6 +1446,9 @@ export function exportAnnualCalendarToExcel(
   if (ws['C34']) ws['C34'].z = '0" días"';
   if (ws['C35']) ws['C35'].z = '+#,##0.00" h";-#,##0.00" h";0.00" h"';
   if (ws['C36']) ws['C36'].z = '#,##0.00" h"';
+  if (ws['C37']) ws['C37'].z = '#,##0.00" h"';
+  if (ws['C38']) ws['C38'].z = '#,##0.00" h"';
+  if (ws['C39']) ws['C39'].z = '#,##0.00" h"';
 
   ws['!cols'] = [
     { wch: 30 },
@@ -1361,7 +1471,7 @@ export function exportAnnualCalendarToExcel(
     { wch: 14 },
   ];
 
-  ws['!rows'] = Array.from({ length: 36 }, (_, idx) => {
+  ws['!rows'] = Array.from({ length: 39 }, (_, idx) => {
     if (idx === 0) return { hpt: 28 };
     if (idx === 1) return { hpt: 20 };
     if (idx === 14) return { hpt: 30 };

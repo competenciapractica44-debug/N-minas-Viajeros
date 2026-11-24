@@ -617,18 +617,87 @@ export const NominaView: React.FC<NominaViewProps> = ({
 
           <div>
             <div className="flex items-center justify-between text-[10px] uppercase tracking-wider font-semibold text-slate-400 mb-1">
-              <span>Acumulado Anual {selectedYear}</span>
-              <span className="font-mono text-sky-300">{annualHoursProgressPct}%</span>
+              <span>Acumulado Anual {selectedYear} (Tope +30%)</span>
+              <span className="font-mono tabular-nums text-sky-300">
+                {annualSummary
+                  ? `${annualSummary.porcentajeLlenadoTope30.toLocaleString('es-ES', { maximumFractionDigits: 1 })}%`
+                  : `${annualHoursProgressPct}%`}
+              </span>
             </div>
-            <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden mb-1">
-              <div
-                className="h-full bg-gradient-to-r from-sky-400 to-emerald-400 rounded-full transition-all"
-                style={{ width: `${annualHoursProgressPct}%` }}
-              />
-            </div>
-            <span className="text-[11px] text-slate-200 font-mono block">
-              <strong>{formatHoursES(annualLoggedHours)} h</strong> / {formatHoursES(payroll.convenioAnnualHoursTarget)} h
-            </span>
+            {(() => {
+              const baseAnual = annualSummary?.jornadaAnualEfectiva ?? payroll.convenioAnnualHoursTarget;
+              const tope30 = annualSummary?.topeMaximoHoras30Anual ?? parseFloat((baseAnual * 1.3).toFixed(2));
+              const limite30 = annualSummary?.limiteComplementarias30Horas ?? parseFloat((baseAnual * 0.3).toFixed(2));
+              const voluntarias15 = annualSummary?.horasVoluntarias15Anual ?? parseFloat((baseAnual * 0.15).toFixed(2));
+              const realizadoAnual = annualSummary?.sumaHorasRealizadas ?? annualLoggedHours;
+              const estimadoCierre = annualSummary?.horasEstimadasCierreAnual ?? realizadoAnual;
+              const estimadoRitmo = annualSummary?.horasEstimadasAlRitmoActual ?? estimadoCierre;
+              const superaTope = annualSummary?.superaLimite30ConPendientes ?? estimadoCierre > tope30 + 0.004;
+              const riesgoRitmo = annualSummary?.riesgoSuperarLimite30PorRitmo ?? false;
+              const margenRestante = annualSummary?.margenRestante30Horas ?? parseFloat((tope30 - estimadoCierre).toFixed(2));
+              const realBarPct = tope30 > 0 ? Math.min(100, (realizadoAnual / tope30) * 100) : 0;
+              const estBarPct = tope30 > 0 ? Math.min(100, Math.max(realBarPct, (estimadoCierre / tope30) * 100)) : realBarPct;
+              const baseTickPct = tope30 > 0 ? (baseAnual / tope30) * 100 : 76.92;
+
+              return (
+                <>
+                  <div className="relative w-full h-2 bg-white/10 rounded-full overflow-hidden mb-1.5">
+                    <div
+                      className={`absolute inset-y-0 left-0 rounded-full transition-all ${
+                        superaTope ? 'bg-rose-400/50' : riesgoRitmo ? 'bg-amber-400/50' : 'bg-sky-300/35'
+                      }`}
+                      style={{ width: `${estBarPct}%` }}
+                      title={`Estimado con pendientes del año: ${formatHoursES(estimadoCierre)} h`}
+                    />
+                    <div
+                      className={`relative h-full rounded-full transition-all ${
+                        superaTope
+                          ? 'bg-rose-500'
+                          : riesgoRitmo
+                            ? 'bg-amber-400'
+                            : 'bg-gradient-to-r from-sky-400 to-emerald-400'
+                      }`}
+                      style={{ width: `${realBarPct}%` }}
+                      title={`Realizado acumulado: ${formatHoursES(realizadoAnual)} h`}
+                    />
+                    <div
+                      className="absolute inset-y-0 w-0.5 bg-white/80"
+                      style={{ left: `${baseTickPct}%` }}
+                      title={`100% Jornada Anual: ${formatHoursES(baseAnual)} h`}
+                    />
+                  </div>
+                  <span className="text-[11px] text-slate-200 font-mono tabular-nums block">
+                    <strong>{formatHoursES(realizadoAnual)} h</strong> / {formatHoursES(tope30)} h{' '}
+                    <span className="text-slate-400">(est. {formatHoursES(estimadoCierre)} h)</span>
+                  </span>
+                  <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[10px] text-slate-300 font-mono tabular-nums">
+                    <span>
+                      Máx. +30%: <strong className="text-white">+{formatHoursES(limite30)} h</strong>
+                    </span>
+                    <span aria-hidden="true">·</span>
+                    <span>
+                      Voluntarias 15%: <strong className="text-indigo-200">{formatHoursES(voluntarias15)} h</strong>
+                    </span>
+                  </div>
+                  {(superaTope || riesgoRitmo) && (
+                    <div
+                      className={`mt-1.5 px-2 py-1 rounded-lg border text-[10px] leading-snug font-medium flex items-start gap-1.5 ${
+                        superaTope
+                          ? 'bg-rose-500/20 border-rose-400/40 text-rose-100'
+                          : 'bg-amber-500/20 border-amber-400/40 text-amber-100'
+                      }`}
+                    >
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                      <span>
+                        {superaTope
+                          ? `Supera tope +30% (${formatHoursES(tope30)} h) en ${formatHoursES(Math.abs(margenRestante))} h. Regulariza los próximos meses.`
+                          : `Ritmo actual proyecta ${formatHoursES(estimadoRitmo)} h (superaría tope +30% de ${formatHoursES(tope30)} h). Margen actual: ${formatHoursES(margenRestante)} h.`}
+                      </span>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
         </div>
 

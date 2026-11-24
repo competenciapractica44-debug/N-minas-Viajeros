@@ -611,19 +611,34 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
           <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs sm:text-sm text-slate-700">
             <span>
               Jornada:{' '}
-              <strong className="text-slate-950">
+              <strong className="text-slate-950 font-mono tabular-nums">
                 {formatHoras(liquidation.jornadaAnualEfectiva)}
+              </strong>
+            </span>
+            <span title="Tope máximo de horas realizadas totales al año (Jornada anual teórica + 30%)">
+              Límite +30%:{' '}
+              <strong className="text-slate-950 font-mono tabular-nums">
+                {formatHoras(liquidation.topeMaximoHoras30Anual)}
+              </strong>{' '}
+              <span className="text-xs text-slate-500 font-mono tabular-nums">
+                (+{formatHoras(liquidation.limiteComplementarias30Horas)})
+              </span>
+            </span>
+            <span title="Horas complementarias voluntarias (15% sobre la jornada anual efectiva)">
+              Voluntarias 15%:{' '}
+              <strong className="text-indigo-800 font-mono tabular-nums">
+                {formatHoras(liquidation.horasVoluntarias15Anual)}
               </strong>
             </span>
             <span title="Cuota fija mensual redondeada al entero superior (se regulariza en los últimos meses tras disfrutar los 31 días de vacaciones)">
               Cuota base:{' '}
-              <strong className="text-slate-950">
+              <strong className="text-slate-950 font-mono tabular-nums">
                 {formatHoras(liquidation.cuotaFijaMes)}/mes
               </strong>
             </span>
             <span>
               Media diaria:{' '}
-              <strong className="text-slate-950">
+              <strong className="text-slate-950 font-mono tabular-nums">
                 {liquidation.horasPorDiaActivo.toLocaleString('es-ES', {
                   minimumFractionDigits: 4,
                   maximumFractionDigits: 4,
@@ -633,26 +648,26 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
             </span>
             <span title="La bolsa de horas inicia el 1 de enero a 0,00 h (ni a favor ni en contra del año anterior)">
               Inicio 1 Ene:{' '}
-              <strong className="text-slate-950">
+              <strong className="text-slate-950 font-mono tabular-nums">
                 {formatHoras(liquidation.bolsaInicialAnio)}
               </strong>
             </span>
             <span>
               Real Diario:{' '}
-              <strong className="text-emerald-800">
+              <strong className="text-emerald-800 font-mono tabular-nums">
                 {formatHoras(liquidation.sumaHorasRealizadas)}
               </strong>
             </span>
             <span>
               Compensar (R−T):{' '}
               <strong
-                className={
+                className={`font-mono tabular-nums ${
                   liquidation.bolsaCompensacionFinal > 0.004
                     ? 'text-emerald-700'
                     : liquidation.bolsaCompensacionFinal < -0.004
                     ? 'text-rose-700'
                     : 'text-slate-950'
-                }
+                }`}
               >
                 {liquidation.mesesConTurnosCount > 0
                   ? formatHoras(liquidation.bolsaCompensacionFinal, true)
@@ -661,12 +676,199 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
             </span>
             <span>
               Bruto fijo anual:{' '}
-              <strong className="text-blue-900">
+              <strong className="text-blue-900 font-mono tabular-nums">
                 {formatEuro(liquidation.brutoFijoAnual)}
               </strong>
             </span>
           </div>
         </div>
+
+        {/* Barra de Llenado y Alerta de Límite Máximo Anual (+30%) y Voluntarias (15%) */}
+        {(() => {
+          const isExceeded = liquidation.superaLimite30ConPendientes;
+          const isPaceRisk = liquidation.riesgoSuperarLimite30PorRitmo;
+          const isNear =
+            !isExceeded && !isPaceRisk && liquidation.porcentajeMargen30Consumido >= 80;
+          const realWidthPct = Math.min(100, Math.max(0, liquidation.porcentajeLlenadoTope30));
+          const projectedWidthPct = Math.min(100, Math.max(realWidthPct, liquidation.porcentajeEstimadoTope30));
+          const baseMarkerPct =
+            liquidation.topeMaximoHoras30Anual > 0
+              ? (liquidation.jornadaAnualEfectiva / liquidation.topeMaximoHoras30Anual) * 100
+              : 76.92;
+          const unloggedMonthsCount = Math.max(0, 12 - liquidation.mesesConTurnosCount);
+
+          return (
+            <div
+              className={`mt-4 rounded-xl border p-3.5 text-xs ${
+                isExceeded
+                  ? 'bg-rose-50/90 border-rose-300 text-rose-950'
+                  : isPaceRisk || isNear
+                  ? 'bg-amber-50/90 border-amber-300 text-amber-950'
+                  : 'bg-slate-50/90 border-slate-200 text-slate-800'
+              }`}
+            >
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2 mb-2.5">
+                <div className="flex items-center gap-2 flex-wrap">
+                  {isExceeded || isPaceRisk || isNear ? (
+                    <AlertTriangle
+                      className={`w-4 h-4 shrink-0 ${
+                        isExceeded ? 'text-rose-600' : 'text-amber-600'
+                      }`}
+                    />
+                  ) : (
+                    <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+                  )}
+                  <span className="font-bold text-slate-900">
+                    Control Tope Anual +30% ({formatHoras(liquidation.topeMaximoHoras30Anual)}) y Horas Voluntarias 15% ({formatHoras(liquidation.horasVoluntarias15Anual)})
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] font-mono tabular-nums">
+                  <span>
+                    Realizado:{' '}
+                    <strong className="text-slate-950">
+                      {formatHoras(liquidation.sumaHorasRealizadas)}
+                    </strong>{' '}
+                    ({liquidation.porcentajeLlenadoTope30.toLocaleString('es-ES', { maximumFractionDigits: 1 })}%)
+                  </span>
+                  <span>
+                    Estimado cierre:{' '}
+                    <strong
+                      className={
+                        isExceeded
+                          ? 'text-rose-700'
+                          : isPaceRisk
+                          ? 'text-amber-800'
+                          : 'text-slate-950'
+                      }
+                    >
+                      {formatHoras(liquidation.horasEstimadasCierreAnual)}
+                    </strong>{' '}
+                    / {formatHoras(liquidation.topeMaximoHoras30Anual)}
+                  </span>
+                  <span>
+                    {liquidation.margenRestante30Horas >= 0 ? 'Margen disp.: ' : 'Exceso s/ tope: '}
+                    <strong
+                      className={
+                        liquidation.margenRestante30Horas < 0
+                          ? 'text-rose-700'
+                          : 'text-emerald-700'
+                      }
+                    >
+                      {liquidation.margenRestante30Horas >= 0
+                        ? formatHoras(liquidation.margenRestante30Horas)
+                        : `+${formatHoras(Math.abs(liquidation.margenRestante30Horas))}`}
+                    </strong>
+                  </span>
+                </div>
+              </div>
+
+              {/* Barra visual de llenado: sólido = realizadas, tramo claro = pendientes teóricas del año */}
+              <div className="relative w-full h-3 bg-slate-200/80 rounded-lg overflow-hidden">
+                <div
+                  className={`absolute inset-y-0 left-0 transition-all duration-200 ${
+                    isExceeded
+                      ? 'bg-rose-300/80'
+                      : isPaceRisk || isNear
+                      ? 'bg-amber-300/80'
+                      : 'bg-sky-200'
+                  }`}
+                  style={{ width: `${projectedWidthPct}%` }}
+                  title={`Estimación cierre anual (realizadas + teóricas pendientes): ${formatHoras(liquidation.horasEstimadasCierreAnual)}`}
+                />
+                <div
+                  className={`relative h-full transition-all duration-200 ${
+                    isExceeded
+                      ? 'bg-rose-600'
+                      : isPaceRisk || isNear
+                      ? 'bg-amber-500'
+                      : 'bg-blue-600'
+                  }`}
+                  style={{ width: `${realWidthPct}%` }}
+                  title={`Horas realizadas acumuladas: ${formatHoras(liquidation.sumaHorasRealizadas)}`}
+                />
+                <div
+                  className="absolute inset-y-0 w-0.5 bg-slate-900/75"
+                  style={{ left: `${baseMarkerPct}%` }}
+                  title={`100% Jornada Anual Teórica: ${formatHoras(liquidation.jornadaAnualEfectiva)}`}
+                />
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 mt-1.5 text-[11px] text-slate-600">
+                <div className="flex flex-wrap items-center gap-3">
+                  <span>0 h</span>
+                  <span aria-hidden="true">·</span>
+                  <span>
+                    Marca 100% Jornada:{' '}
+                    <strong className="font-mono tabular-nums text-slate-800">
+                      {formatHoras(liquidation.jornadaAnualEfectiva)}
+                    </strong>
+                  </span>
+                  <span aria-hidden="true">·</span>
+                  <span>
+                    Margen +30% usado/est.:{' '}
+                    <strong className="font-mono tabular-nums text-slate-800">
+                      {liquidation.porcentajeMargen30Consumido.toLocaleString('es-ES', {
+                        maximumFractionDigits: 1,
+                      })}
+                      %
+                    </strong>{' '}
+                    (de +{formatHoras(liquidation.limiteComplementarias30Horas)})
+                  </span>
+                </div>
+                <span className="font-mono tabular-nums font-semibold text-slate-800">
+                  Tope máx. 130%: {formatHoras(liquidation.topeMaximoHoras30Anual)}
+                </span>
+              </div>
+
+              {(isExceeded || isPaceRisk || isNear) && (
+                <div
+                  className={`mt-2 pt-2 border-t text-[11px] leading-snug font-medium ${
+                    isExceeded
+                      ? 'border-rose-200 text-rose-900'
+                      : 'border-amber-200 text-amber-900'
+                  }`}
+                >
+                  {isExceeded ? (
+                    <span>
+                      <strong>Alerta — Límite del +30% superado:</strong> sumando lo ya realizado (
+                      {formatHoras(liquidation.sumaHorasRealizadas)}) y las teóricas pendientes (
+                      {formatHoras(liquidation.horasPendientesMesesSinRegistro)}), la estimación anual (
+                      {formatHoras(liquidation.horasEstimadasCierreAnual)}) supera el tope máximo de{' '}
+                      {formatHoras(liquidation.topeMaximoHoras30Anual)} en{' '}
+                      <strong>{formatHoras(Math.abs(liquidation.margenRestante30Horas))}</strong>.
+                      {unloggedMonthsCount > 0
+                        ? ` Regulariza reduciendo al menos ${formatHoras(Math.abs(liquidation.margenRestante30Horas))} entre los ${unloggedMonthsCount} meses pendientes.`
+                        : ' Revisa el cuadrante anual para regularizar el exceso.'}
+                    </span>
+                  ) : isPaceRisk ? (
+                    <span>
+                      <strong>Alerta de estimación mensual:</strong> al ritmo actual en los meses registrados respecto a las horas teóricas del mes, se estima alcanzar{' '}
+                      <strong>{formatHoras(liquidation.horasEstimadasAlRitmoActual)}</strong> al final del año, superando el límite del +30% (
+                      {formatHoras(liquidation.topeMaximoHoras30Anual)}) en{' '}
+                      <strong>
+                        {formatHoras(
+                          Math.max(0, liquidation.horasEstimadasAlRitmoActual - liquidation.topeMaximoHoras30Anual)
+                        )}
+                      </strong>
+                      . Regulariza los próximos meses (margen restante actual: {formatHoras(liquidation.margenRestante30Horas)}).
+                    </span>
+                  ) : (
+                    <span>
+                      <strong>Aviso de proximidad al límite:</strong> la estimación actual consume el{' '}
+                      {liquidation.porcentajeMargen30Consumido.toLocaleString('es-ES', {
+                        maximumFractionDigits: 1,
+                      })}
+                      % del margen anual del +30%. Quedan{' '}
+                      <strong>{formatHoras(liquidation.margenRestante30Horas)}</strong> de margen antes de alcanzar{' '}
+                      {formatHoras(liquidation.topeMaximoHoras30Anual)}.
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Recálculo dinámico del resto del año tras meses validados / cambios de jornada */}
         {liquidation.validatedMonthsCount > 0 && (
