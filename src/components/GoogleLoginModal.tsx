@@ -10,6 +10,7 @@ interface GoogleLoginModalProps {
   onLoginSuccess: (user: User, token: string) => void;
   onNavigateLegal?: (page: PublicLegalPage) => void;
   allowDismiss?: boolean;
+  initialError?: string | null;
 }
 
 export const GoogleLoginModal: React.FC<GoogleLoginModalProps> = ({
@@ -18,12 +19,19 @@ export const GoogleLoginModal: React.FC<GoogleLoginModalProps> = ({
   onLoginSuccess,
   onNavigateLegal,
   allowDismiss = true,
+  initialError = null,
 }) => {
   const [isLoading, setIsLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(initialError);
   const [isUnauthorizedDomain, setIsUnauthorizedDomain] = useState(false);
   const [showTestingHelp, setShowTestingHelp] = useState(false);
   const [copiedDomain, setCopiedDomain] = useState(false);
+
+  React.useEffect(() => {
+    if (initialError) {
+      setErrorMessage(initialError);
+    }
+  }, [initialError]);
 
   if (!isOpen) return null;
 
@@ -47,6 +55,9 @@ export const GoogleLoginModal: React.FC<GoogleLoginModalProps> = ({
       if (result) {
         onLoginSuccess(result.user, result.accessToken);
         onClose();
+      } else {
+        // Redirect initiated on mobile; keep spinner active until navigation completes
+        return;
       }
     } catch (err: any) {
       console.error('Error durante el inicio de sesión:', err);
@@ -69,9 +80,10 @@ export const GoogleLoginModal: React.FC<GoogleLoginModalProps> = ({
           errMsg || 'No se pudo completar el inicio de sesión. Comprueba tu conexión a internet.'
         );
       }
-    } finally {
       setIsLoading(false);
+      return;
     }
+    setIsLoading(false);
   };
 
   return (

@@ -516,6 +516,7 @@ export default function App() {
   const [isValidatingMonth, setIsValidatingMonth] = useState(false);
   const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
   const [driveSyncError, setDriveSyncError] = useState<string | null>(null);
+  const [authRedirectError, setAuthRedirectError] = useState<string | null>(null);
   const hasInitialDriveSyncDoneRef = React.useRef(false);
   const syncPromiseRef = React.useRef<Promise<void> | null>(null);
   const hasPendingLocalSyncRef = React.useRef(readAssignmentsDirtyFlag());
@@ -548,12 +549,21 @@ export default function App() {
     }
   };
 
-  // Inicializar estado de autenticación al arrancar la app
+  // Inicializar estado de autenticación al arrancar la app (incluyendo retorno por redirección en móvil)
   useEffect(() => {
-    const unsubscribe = initAuth((user, token) => {
+    const unsubscribe = initAuth((user, token, authErr) => {
       setCurrentUser(user);
+      if (authErr) {
+        const msg =
+          authErr instanceof Error
+            ? authErr.message
+            : 'No se pudo completar el inicio de sesión con Google.';
+        setAuthRedirectError(msg);
+      }
       if (token) {
+        setAuthRedirectError(null);
         setAccessToken(token);
+        setIsLoginModalOpen(false);
         syncWithDrive(token);
       } else {
         // Al entrar en la página principal (salvo páginas legales públicas), pedir identificarse con Google Drive
@@ -1951,14 +1961,19 @@ export default function App() {
       {/* Modal de Inicio de Sesión con Cuenta de Gmail / Google Drive */}
       <GoogleLoginModal
         isOpen={isLoginModalOpen}
-        onClose={() => setIsLoginModalOpen(false)}
+        onClose={() => {
+          setAuthRedirectError(null);
+          setIsLoginModalOpen(false);
+        }}
         onLoginSuccess={(user, token) => {
+          setAuthRedirectError(null);
           setCurrentUser(user);
           setAccessToken(token);
           syncWithDrive(token);
         }}
         onNavigateLegal={navigateToPublicPage}
         allowDismiss={true}
+        initialError={authRedirectError}
       />
 
       {/* Modal de Nóminas Guardadas en Drive */}
