@@ -373,6 +373,7 @@ export interface AnnualMonthEditableFields {
   tipoBaja: SickLeaveContingencyType;
   bajaEsContinuacion?: boolean;
   horasReales?: number;
+  cuotaFijaManual?: number;
 }
 
 export interface AnnualYearOverrideData {

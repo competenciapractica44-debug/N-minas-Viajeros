@@ -113,8 +113,14 @@ export function buildPDFDoc(
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(30, 58, 138);
   doc.setFontSize(8);
+  const cycleWorkedDaysPdf =
+    (payroll.prevMonthCutoffWorkedDays || 0) + (payroll.currentMonthCutoffWorkedDays || 0);
+  const workedStripLabel =
+    payroll.extrasCutoffMode !== 'mes_natural'
+      ? `TURNOS CICLO: ${cycleWorkedDaysPdf}t (${payroll.workedDays}d mes)`
+      : `TRABAJADOS: ${payroll.workedDays}d`;
   doc.text(
-    `TRABAJADOS: ${payroll.workedDays}d  |  VAC. (ART. 9): ${payroll.vacationPlusDays}d  |  CONV.: ${formatHoursLabel(payroll.ordinaryConvenioHours)}h${payroll.horasFestivas > 0 ? ` + ${formatHoursLabel(payroll.horasFestivas)}h FEST.` : ''}${payroll.horasFT > 0 ? ` + ${formatHoursLabel(payroll.horasFT)}h F/T` : ''}  |  NOCT: ${payroll.nightHours}h`,
+    `${workedStripLabel}  |  VAC. (ART. 9): ${payroll.vacationPlusDays}d  |  CONV.: ${formatHoursLabel(payroll.ordinaryConvenioHours)}h${payroll.horasFestivas > 0 ? ` + ${formatHoursLabel(payroll.horasFestivas)}h FEST.` : ''}${payroll.horasFT > 0 ? ` + ${formatHoursLabel(payroll.horasFT)}h F/T` : ''}  |  NOCT: ${payroll.nightHours}h`,
     18,
     startY + 7.5
   );
@@ -582,6 +588,7 @@ export function exportToExcel(
   const jornadaRows: Array<[string, number, string, string, string]> = [
     ['Días Naturales / Pagados Salario Base', payroll.salarioBaseDays, 'días naturales', `De ${payroll.totalDays} días en ${monthName}${partialPeriodNote}`, DAYS_FMT],
     ['Días Trabajados en Mes Natural', payroll.workedDays, 'días', 'Turnos asignados en calendario del mes', DAYS_FMT],
+    ['Turnos Trabajados en Ciclo Activo', (payroll.prevMonthCutoffWorkedDays || 0) + (payroll.currentMonthCutoffWorkedDays || 0), 'turnos', `Dentro del corte ${payroll.extrasCutoffPeriod} (${payroll.prevMonthCutoffWorkedDays || 0} mes ant. + ${payroll.currentMonthCutoffWorkedDays || 0} mes act.)`, DAYS_FMT],
     ['Días de Descanso', payroll.restDays, 'días', 'Libranzas y descansos semanales (D)', DAYS_FMT],
     ['Días de Vacaciones en Mes Natural', payroll.vacationDays, 'días', 'Incluidos en Salario Base mensual', DAYS_FMT],
     ['Días de Vacaciones (Plus Art. 9 en período)', payroll.vacationPlusDays, 'días', `Dentro del corte ${payroll.extrasCutoffPeriod}`, DAYS_FMT],

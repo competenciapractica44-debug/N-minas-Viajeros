@@ -153,7 +153,7 @@ function normalizeAssignmentsList(rawList: DayAssignment[], availableShifts?: Sh
     const dateKey = normalizeDateKey(a.date);
     if (!dateKey) continue;
     const yr = parseInt(dateKey.split('-')[0], 10);
-    if (isNaN(yr) || yr < 2026) continue;
+    if (isNaN(yr) || dateKey < '2025-12-01') continue;
 
     let resolvedCode = mapLegacyShiftCode(a.shiftCode);
     if (!resolvedCode && a.shiftId) {
@@ -478,7 +478,13 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed && typeof parsed === 'object') {
-          return reconcileValidatedMonthsMap(parsed as ValidatedMonthsMap);
+          return reconcileValidatedMonthsMap(parsed as ValidatedMonthsMap, {
+            assignments,
+            shifts,
+            convenio,
+            profile,
+            annualCalendarData,
+          });
         }
       }
     } catch (e) {
@@ -486,6 +492,20 @@ export default function App() {
     }
     return {};
   });
+
+  useEffect(() => {
+    if (Object.keys(validatedMonths).length === 0) return;
+    const reconciled = reconcileValidatedMonthsMap(validatedMonths, {
+      assignments,
+      shifts,
+      convenio,
+      profile,
+      annualCalendarData,
+    });
+    if (JSON.stringify(reconciled) !== JSON.stringify(validatedMonths)) {
+      setValidatedMonths(reconciled);
+    }
+  }, [validatedMonths, assignments, shifts, convenio, profile, annualCalendarData]);
 
   useEffect(() => {
     try {
@@ -592,6 +612,11 @@ export default function App() {
         const folders = await ensureDirexisHierarchy(token);
         setDriveFolders(folders);
         const currentSnapshot = latestStateRef.current;
+        let effectiveShifts = currentSnapshot.shifts;
+        let effectiveProfile = currentSnapshot.profile;
+        let effectiveConvenio = currentSnapshot.convenio;
+        let effectiveAssignments = currentSnapshot.assignments;
+        let effectiveAnnualData = currentSnapshot.annualCalendarData;
 
         // 1. Turnos base
         // Regla: "si ya hay turnos guardados, se trabajara sobre los guardados en drive"
@@ -611,7 +636,8 @@ export default function App() {
               }
               return s;
             });
-            setShifts(ensureBuiltInSpecialShifts(cleaned));
+            effectiveShifts = ensureBuiltInSpecialShifts(cleaned);
+            setShifts(effectiveShifts);
           }
         } else {
           // Si no existen todavía, guardar los turnos actuales como base inicial dentro de Direxis / Nóminas
@@ -624,15 +650,16 @@ export default function App() {
         if (choferFile) {
           const driveProfile = await readDriveJsonFile<WorkerProfile>(token, choferFile.id);
           if (driveProfile && driveProfile.name?.trim()) {
-            isApplyingRemoteSyncRef.current = true;
-            setProfile({
+            effectiveProfile = {
               ...EMPTY_WORKER_PROFILE,
               ...driveProfile,
               hasVacationPlus: driveProfile.hasVacationPlus !== undefined ? driveProfile.hasVacationPlus : true,
               hasPunctualityEarlyStartPlus: driveProfile.hasPunctualityEarlyStartPlus === true,
               fechaAlta: typeof driveProfile.fechaAlta === 'string' && driveProfile.fechaAlta.trim() ? driveProfile.fechaAlta.trim() : undefined,
               fechaBaja: typeof driveProfile.fechaBaja === 'string' && driveProfile.fechaBaja.trim() ? driveProfile.fechaBaja.trim() : undefined,
-            });
+            };
+            isApplyingRemoteSyncRef.current = true;
+            setProfile(effectiveProfile);
           } else if (currentSnapshot.profile.name.trim()) {
             await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'chofer_config.json', currentSnapshot.profile);
           } else {
@@ -663,8 +690,9 @@ export default function App() {
                 };
               }
             }
+            effectiveConvenio = { ...driveConvenio, ratesByYear: migratedRates };
             isApplyingRemoteSyncRef.current = true;
-            setConvenio({ ...driveConvenio, ratesByYear: migratedRates });
+            setConvenio(effectiveConvenio);
           }
         } else {
           await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'convenio_2026.json', currentSnapshot.convenio);
@@ -676,9 +704,10 @@ export default function App() {
         if (asignacionesFile) {
           const driveAsignaciones = await readDriveJsonFile<DayAssignment[]>(token, asignacionesFile.id);
           if (driveAsignaciones && Array.isArray(driveAsignaciones)) {
-            const normalizedDrive = normalizeAssignmentsList(driveAsignaciones, currentSnapshot.shifts);
-            const normalizedLocal = normalizeAssignmentsList(latestStateRef.current.assignments, currentSnapshot.shifts);
+            const normalizedDrive = normalizeAssignmentsList(driveAsignaciones, effectiveShifts);
+            const normalizedLocal = normalizeAssignmentsList(latestStateRef.current.assignments, effectiveShifts);
             const mergedAssignments = mergeAssignmentsByDate(normalizedLocal, normalizedDrive, isLocalDirty);
+            effectiveAssignments = mergedAssignments;
             const mergedJson = JSON.stringify(mergedAssignments);
             const driveJson = JSON.stringify(normalizedDrive);
 
@@ -697,7 +726,8 @@ export default function App() {
             writeAssignmentsDirtyFlag(false);
           }
         } else {
-          const normalizedLocal = normalizeAssignmentsList(latestStateRef.current.assignments, currentSnapshot.shifts);
+          const normalizedLocal = normalizeAssignmentsList(latestStateRef.current.assignments, effectiveShifts);
+          effectiveAssignments = normalizedLocal;
           await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'cuadrante_asignaciones.json', normalizedLocal);
           lastSyncedAssignmentsJsonRef.current = JSON.stringify(normalizedLocal);
           writeAssignmentsDirtyFlag(false);
@@ -724,6 +754,7 @@ export default function App() {
               ...driveAnnual,
               ...currentSnapshot.annualCalendarData,
             };
+            effectiveAnnualData = mergedAnnual;
             isApplyingRemoteSyncRef.current = true;
             setAnnualCalendarData(mergedAnnual);
           }
@@ -741,13 +772,21 @@ export default function App() {
         if (validatedFile) {
           const driveValidated = await readDriveJsonFile<ValidatedMonthsMap>(token, validatedFile.id);
           if (driveValidated && typeof driveValidated === 'object') {
-            const reconciledDrive = reconcileValidatedMonthsMap(driveValidated);
+            const reconcileCtx = {
+              assignments: effectiveAssignments,
+              shifts: effectiveShifts,
+              convenio: effectiveConvenio,
+              profile: effectiveProfile,
+              annualCalendarData: effectiveAnnualData,
+            };
+            const reconciledDrive = reconcileValidatedMonthsMap(driveValidated, reconcileCtx);
             const mergedValidated = reconcileValidatedMonthsMap(
               mergeValidatedMonths(
                 latestStateRef.current.validatedMonths,
                 reconciledDrive,
                 isLocalDirty
-              )
+              ),
+              reconcileCtx
             );
             isApplyingRemoteSyncRef.current = true;
             setValidatedMonths(mergedValidated);
@@ -1081,12 +1120,17 @@ export default function App() {
     const mEnd = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(daysInM).padStart(2, '0')}`;
     const winStart = cutoffRange.startDateStr < mStart ? cutoffRange.startDateStr : mStart;
     const winEnd = cutoffRange.endDateStr > mEnd ? cutoffRange.endDateStr : mEnd;
-    const snapDates = new Set(snapList.map((sa) => normalizeDateKey(sa.date)));
+    const validSnapList = snapList.filter((sa) => {
+      const d = normalizeDateKey(sa.date);
+      return d >= mStart || hasMeaningfulAssignmentContent(sa);
+    });
+    const snapDates = new Set(validSnapList.map((sa) => normalizeDateKey(sa.date)));
     const otherAssignments = assignments.filter((a) => {
       const d = normalizeDateKey(a.date);
-      return !snapDates.has(d) && !(d >= winStart && d <= winEnd);
+      if (snapDates.has(d)) return false;
+      return !(d >= mStart && d <= winEnd);
     });
-    return [...otherAssignments, ...snapList].sort((a, b) =>
+    return [...otherAssignments, ...validSnapList].sort((a, b) =>
       normalizeDateKey(a.date).localeCompare(normalizeDateKey(b.date))
     );
   }, [assignments, currentValidatedRecord, selectedYear, selectedMonth]);
@@ -1441,8 +1485,10 @@ export default function App() {
       frozenShiftsSnapshot.forEach((s) => frozenShiftsMap.set(s.code, s));
 
       const yOverride = annualCalendarData[yearToValidate];
+      const baseValidatedWithoutTarget: ValidatedMonthsMap = { ...validatedMonths };
+      delete baseValidatedWithoutTarget[mKey];
 
-      // Recalcular nómina exacta del mes con el perfil, turnos y asignaciones congelados
+      // Recalcular nómina exacta del mes con el perfil, turnos y asignaciones vigentes/congelados
       const payrollSnapshot = calculateMonthlyPayroll(
         assignments,
         frozenShiftsMap,
@@ -1450,7 +1496,7 @@ export default function App() {
         frozenProfile,
         yearToValidate,
         monthToValidate,
-        validatedMonths,
+        baseValidatedWithoutTarget,
         yOverride
       );
 
@@ -1462,13 +1508,13 @@ export default function App() {
         assignments,
         frozenShiftsSnapshot,
         convenio,
-        validatedMonths
+        baseValidatedWithoutTarget
       );
       const effParams = resolveAnnualParams(defParams, yOverride);
       const effMonths = resolveAnnualMonths(defMonths, yOverride);
 
       const tempMap: ValidatedMonthsMap = {
-        ...validatedMonths,
+        ...baseValidatedWithoutTarget,
         [mKey]: {
           monthKey: mKey,
           year: yearToValidate,
@@ -1517,14 +1563,17 @@ export default function App() {
         profileSnapshot: frozenProfile,
         horasRealizadasMesNatural:
           monthRow?.horasRealizadas ?? payrollSnapshot.ordinaryConvenioHours,
-        horasTeoricasMes:
-          monthRow?.cuotaMes ?? payrollSnapshot.convenioMonthlyHoursTarget,
-        saldoMesHoras: Math.round(
-          ((monthRow?.diferenciaRealMes ??
-            (payrollSnapshot.ordinaryConvenioHours - payrollSnapshot.convenioMonthlyHoursTarget))) *
-            100
-        ) / 100,
-        bolsaAcumuladaAlCierre: Math.round((monthRow?.bolsaCompensacionAcumulada ?? 0) * 100) / 100,
+        horasTeoricasMes: payrollSnapshot.convenioMonthlyHoursTarget,
+        saldoMesHoras:
+          payrollSnapshot.bolsaHorasMes ??
+          Math.round(
+            (monthRow?.diferenciaRealMes ??
+              (payrollSnapshot.ordinaryConvenioHours - payrollSnapshot.convenioMonthlyHoursTarget)) *
+              100
+          ) / 100,
+        bolsaAcumuladaAlCierre:
+          payrollSnapshot.bolsaHorasAcumulada ??
+          Math.round((monthRow?.bolsaCompensacionAcumulada ?? 0) * 100) / 100,
         filledDaysCount,
         daysInMonth,
         payrollSnapshot,
@@ -1535,11 +1584,27 @@ export default function App() {
         driveJsonFileName: jsonFileName,
       };
 
-      const updatedValidatedMap: ValidatedMonthsMap = {
-        ...validatedMonths,
-        [mKey]: record,
-      };
+      const updatedValidatedMap: ValidatedMonthsMap = reconcileValidatedMonthsMap(
+        {
+          ...validatedMonths,
+          [mKey]: record,
+        },
+        {
+          assignments,
+          shifts,
+          convenio,
+          profile,
+          annualCalendarData,
+        }
+      );
       setValidatedMonths(updatedValidatedMap);
+
+      const finalRecord = updatedValidatedMap[mKey] || record;
+      const finalPayrollSnapshot = finalRecord.payrollSnapshot;
+      const finalAssignmentsSnapshot =
+        finalRecord.assignmentsSnapshot && finalRecord.assignmentsSnapshot.length > 0
+          ? finalRecord.assignmentsSnapshot
+          : frozenAssignmentsSnapshot;
 
       const frozenConvenioForPdf: ConvenioInfo = {
         ...convenio,
@@ -1557,9 +1622,9 @@ export default function App() {
           if (!driveFolders) setDriveFolders(folders);
 
           const pdfBlob = exportToPDFBlob(
-            payrollSnapshot,
+            finalPayrollSnapshot,
             frozenProfile,
-            frozenAssignmentsSnapshot,
+            finalAssignmentsSnapshot,
             frozenShiftsMap,
             frozenConvenioForPdf,
             monthName
@@ -1577,24 +1642,24 @@ export default function App() {
               mes: monthName,
               ano: yearToValidate,
               validado: true,
-              fechaValidacion: record.validatedAt,
+              fechaValidacion: finalRecord.validatedAt,
               jornadaPct: frozenJornadaPct,
               irpfPercentage: frozenProfile.irpfPercentage,
-              horasRealizadasMesNatural: record.horasRealizadasMesNatural,
-              horasTeoricasMes: record.horasTeoricasMes,
-              saldoMesHoras: record.saldoMesHoras,
-              bolsaAcumuladaAlCierre: record.bolsaAcumuladaAlCierre,
+              horasRealizadasMesNatural: finalRecord.horasRealizadasMesNatural,
+              horasTeoricasMes: finalRecord.horasTeoricasMes,
+              saldoMesHoras: finalRecord.saldoMesHoras,
+              bolsaAcumuladaAlCierre: finalRecord.bolsaAcumuladaAlCierre,
               perfil: frozenProfile,
               resumen: {
-                liquidoPercibir: payrollSnapshot.liquidoPercibir,
-                totalDevengado: payrollSnapshot.totalDevengado,
-                totalDeducido: payrollSnapshot.totalDeducido,
-                baseCotizacionSS: payrollSnapshot.baseCotizacionSS,
-                retencionIrpf: payrollSnapshot.retencionIrpf,
-                retencionIrpfImporte: payrollSnapshot.retencionIrpfImporte,
-                lineas: payrollSnapshot.lines,
+                liquidoPercibir: finalPayrollSnapshot.liquidoPercibir,
+                totalDevengado: finalPayrollSnapshot.totalDevengado,
+                totalDeducido: finalPayrollSnapshot.totalDeducido,
+                baseCotizacionSS: finalPayrollSnapshot.baseCotizacionSS,
+                retencionIrpf: finalPayrollSnapshot.retencionIrpf,
+                retencionIrpfImporte: finalPayrollSnapshot.retencionIrpfImporte,
+                lineas: finalPayrollSnapshot.lines,
               },
-              nominaCompleta: payrollSnapshot,
+              nominaCompleta: finalPayrollSnapshot,
             }),
           ]);
 
@@ -1865,6 +1930,12 @@ export default function App() {
             validatedMonths={validatedMonths}
             annualSummary={annualSummary}
             isValidatingMonth={isValidatingMonth}
+            isRecalculating={isRefreshingForNomina || isValidatingMonth}
+            onRecalculate={() =>
+              currentValidatedRecord
+                ? void handleValidateMonth(selectedYear, selectedMonth)
+                : void recalculatePayrollFromCalendar(true)
+            }
             onValidateMonth={() => handleValidateMonth(selectedYear, selectedMonth)}
             onUnvalidateMonth={() => handleUnvalidateMonth(selectedYear, selectedMonth)}
             onGoToNomina={() => handleSelectTab('nomina')}
@@ -1892,8 +1963,12 @@ export default function App() {
             isDriveConnected={!!currentUser}
             onOpenDriveNominasModal={() => setIsDriveNominasModalOpen(true)}
             lastCalculatedAt={lastPayrollCalculatedAt}
-            isRecalculating={isRefreshingForNomina}
-            onRecalculate={() => void recalculatePayrollFromCalendar(true)}
+            isRecalculating={isRefreshingForNomina || isValidatingMonth}
+            onRecalculate={() =>
+              currentValidatedRecord
+                ? void handleValidateMonth(selectedYear, selectedMonth)
+                : void recalculatePayrollFromCalendar(true)
+            }
             validatedMonth={currentValidatedRecord}
             validatedMonths={validatedMonths}
             annualSummary={annualSummary}

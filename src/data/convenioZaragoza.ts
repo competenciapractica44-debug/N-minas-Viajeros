@@ -65,6 +65,32 @@ export function isFTExtraName(name?: string): boolean {
   );
 }
 
+export function isFestivaHoursExtraName(name?: string): boolean {
+  const lower = (name || '').toLowerCase().trim();
+  if (!lower) return false;
+  return !lower.includes('plus festivo') && lower.includes('festiva');
+}
+
+export function getExplicitFestivasHoursFromExtras(
+  extras: Array<{ name?: string; quantity?: number; amount?: number }> | undefined,
+  horaOrdinaria = 13.62
+): number {
+  if (!extras || extras.length === 0) return 0;
+  let total = 0;
+  for (const extra of extras) {
+    if (isFestivaHoursExtraName(extra.name)) {
+      const h =
+        extra.quantity !== undefined && extra.quantity > 0
+          ? extra.quantity
+          : extra.amount && extra.amount > 0
+            ? parseFloat((extra.amount / (horaOrdinaria || 13.62)).toFixed(2))
+            : 1;
+      total += h;
+    }
+  }
+  return total;
+}
+
 /**
  * Returns the live gross Convenio amount for official Convenio-linked extras so UI
  * and payroll calculation always obey the uploaded Convenio table.

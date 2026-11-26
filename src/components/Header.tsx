@@ -115,6 +115,7 @@ export const Header: React.FC<HeaderProps> = ({
               }}
               className="appearance-none bg-slate-100 hover:bg-slate-200/80 text-slate-800 text-xs sm:text-sm font-semibold pl-3 pr-8 py-1.5 rounded-lg border border-slate-200/80 cursor-pointer transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/30"
             >
+              <option value="2025-12">Diciembre 2025</option>
               {availableYears.map((y) =>
                 MONTH_NAMES.map((name, idx) => (
                   <option key={`${y}-${idx + 1}`} value={`${y}-${idx + 1}`}>

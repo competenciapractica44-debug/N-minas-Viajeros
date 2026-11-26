@@ -435,6 +435,10 @@ export const NominaView: React.FC<NominaViewProps> = ({
     currentMonthRecordDays
   );
 
+  const cycleWorkedDays =
+    (payroll.prevMonthCutoffWorkedDays || 0) + (payroll.currentMonthCutoffWorkedDays || 0);
+  const hasSplitCycle = payroll.extrasCutoffMode !== 'mes_natural';
+
   return (
     <div className="max-w-4xl mx-auto px-4 py-4 pb-28 space-y-4">
       {/* Hero Card: Líquido Total a Percibir (Net Pay) */}
@@ -450,7 +454,11 @@ export const NominaView: React.FC<NominaViewProps> = ({
             </div>
             <div className="flex flex-wrap items-center gap-2 pt-0.5">
               <p className="text-xs text-slate-300">
-                Período: <strong>{monthName} {payroll.year}</strong> · {payroll.workedDays} jornadas · {payroll.totalDays} días naturales
+                Período: <strong>{monthName} {payroll.year}</strong> ·{' '}
+                {hasSplitCycle
+                  ? `${cycleWorkedDays} turnos ciclo (${payroll.extrasCutoffPeriod})`
+                  : `${payroll.workedDays} jornadas`}{' '}
+                · {payroll.totalDays} días naturales
               </p>
               <span
                 className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
@@ -579,7 +587,7 @@ export const NominaView: React.FC<NominaViewProps> = ({
 
           <div>
             <span className="text-slate-400 text-[10px] uppercase tracking-wider font-semibold block">
-              Horas Reales (hasta 9h/día) vs Teóricas
+              Horas Reales ({hasSplitCycle ? `${payroll.extrasCutoffPeriod} · ${cycleWorkedDays}t` : 'hasta 9h/día'}) vs Teóricas
             </span>
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="font-bold text-white font-mono text-sm">
@@ -867,16 +875,20 @@ export const NominaView: React.FC<NominaViewProps> = ({
               </span>
             )}
           </div>
-          {!validatedMonth && onRecalculate && (
+          {onRecalculate && (
             <button
               type="button"
               onClick={onRecalculate}
               disabled={isRecalculating}
               className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white font-semibold border border-white/15 transition-colors self-start sm:self-auto shrink-0 disabled:opacity-60 cursor-pointer"
-              title="Volver a calcular ahora con los últimos datos del calendario"
+              title={
+                validatedMonth
+                  ? 'Recalcular suma de horas y actualizar el mes validado'
+                  : 'Volver a calcular ahora con los últimos datos del calendario'
+              }
             >
               <RefreshCw className={`w-3 h-3 ${isRecalculating ? 'animate-spin' : ''}`} />
-              <span>Recalcular</span>
+              <span>{validatedMonth ? 'Recalcular mes' : 'Recalcular'}</span>
             </button>
           )}
         </div>
@@ -1151,7 +1163,9 @@ export const NominaView: React.FC<NominaViewProps> = ({
                 </p>
                 <div className="space-y-1.5 text-[11px]">
                   <div className="flex items-center justify-between">
-                    <span className="text-slate-600">Horas reales ordinarias (sin fest./F.T):</span>
+                    <span className="text-slate-600">
+                      Horas reales ord. ({hasSplitCycle ? `${cycleWorkedDays}t · ${payroll.extrasCutoffPeriod}` : 'sin fest./F.T'}):
+                    </span>
                     <span className="font-mono font-bold text-slate-900">{formatHoursES(payroll.ordinaryConvenioHours)} h</span>
                   </div>
                   <div className="flex items-center justify-between">

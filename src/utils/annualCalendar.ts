@@ -11,7 +11,11 @@ import {
   ValidatedMonthsMap,
   WorkerProfile,
 } from '../types';
-import { getEffectiveYearRate, isFTExtraName } from '../data/convenioZaragoza';
+import {
+  getEffectiveYearRate,
+  isFTExtraName,
+  getExplicitFestivasHoursFromExtras,
+} from '../data/convenioZaragoza';
 import { ALL_INITIAL_SHIFTS } from '../data/defaultTurnos';
 import { getOfficialHolidaysForYear } from '../data/spanishHolidays';
 import {
@@ -20,6 +24,8 @@ import {
   calculateTotalHours,
   computeAnnualHoursSchedule,
   computeShiftRateFromConvenio,
+  getDateRangeStrings,
+  getExtrasDateRange,
 } from './calculator';
 
 export const ANNUAL_MONTH_NAMES = [
@@ -44,6 +50,7 @@ export interface AnnualMonthBaseRow extends AnnualMonthEditableFields {
   extraJulDic: boolean;
   horasDiarioMes: number;
   turnosDiarioCount: number;
+  diarioRecordCount?: number;
   bajaDiasPreviosAnioAnterior?: number;
   bajaContiguaAuto?: boolean;
 }
@@ -55,6 +62,7 @@ export interface AnnualMonthComputedRow extends AnnualMonthBaseRow {
   horasJustificadasIT: number;
   horasComputoTeorico: number;
   cuotaMes: number;
+  isCuotaManual: boolean;
   saldoMes: number;
   bolsaAcumulada: number;
   // Bloque real (suma mes natural desde Turnos Día o edición manual) y compensación
@@ -104,6 +112,12 @@ export interface AnnualLiquidationResult {
   sumaCuotaFija: number;
   sumaSaldoMes: number;
   bolsaAcumuladaFinal: number;
+  hasAllStatutoryVacations: boolean;
+  hasCuotaManualOverride: boolean;
+  diffCuotaVsTeoricas: number;
+  cuotaCuadraConTeoricas: boolean;
+  superaLimiteBaseCuota: boolean;
+  superaLimiteAnualCuota: boolean;
   // Totales reales desde Turnos Día y compensación
   bolsaInicialAnio: number;
   sumaHorasRealizadas: number;
@@ -284,9 +298,25 @@ function isAssignmentSickLeave(asg?: DayAssignment): boolean {
   return Boolean(asg.isSickLeave || upperCode === 'B' || upperId === 'B');
 }
 
+function hasAnnualAssignmentContent(a?: DayAssignment): boolean {
+  if (!a) return false;
+  return Boolean(
+    (a.shiftCode && a.shiftCode.trim() !== '') ||
+      (a.shiftId && a.shiftId.trim() !== '') ||
+      a.isRest ||
+      a.isVacation ||
+      a.isSickLeave ||
+      a.isHoliday ||
+      (a.extras && a.extras.length > 0) ||
+      (a.lateFinishMinutes && a.lateFinishMinutes > 0) ||
+      (a.notes && a.notes.trim() !== '') ||
+      (a.customLine && a.customLine.trim() !== '')
+  );
+}
+
 /**
  * Computes default 12-month rows from calendar working days (Mon–Fri minus official holidays)
- * plus Vacation ('V'), Sick Leave ('B'), and exact natural-month worked hours from Turnos Día.
+ * plus Vacation ('V'), Sick Leave ('B'), and active-cycle worked hours from Turnos Día.
  */
 export function deriveDefaultAnnualMonths(
   year: number,
@@ -316,7 +346,10 @@ export function deriveDefaultAnnualMonths(
   for (const a of assignments) {
     const key = normalizeDateKeyForAnnual(a.date);
     if (key && (key.startsWith(yearPrefix) || key.startsWith(prevYearPrefix))) {
-      assignmentByDate.set(key, { ...a, date: key });
+      const existing = assignmentByDate.get(key);
+      if (!existing || hasAnnualAssignmentContent(a) || !hasAnnualAssignmentContent(existing)) {
+        assignmentByDate.set(key, { ...a, date: key });
+      }
     }
   }
 
@@ -347,21 +380,47 @@ export function deriveDefaultAnnualMonths(
     const monthShiftsByCode = new Map(shiftsByCode);
     const monthShiftsById = new Map(shiftsById);
     if (vRec?.shiftsSnapshot && vRec.shiftsSnapshot.length > 0) {
-      monthShiftsByCode.clear();
-      monthShiftsById.clear();
       vRec.shiftsSnapshot.forEach((s) => {
         if (s.code) monthShiftsByCode.set(s.code.trim().toUpperCase(), s);
         if (s.id) monthShiftsById.set(s.id, s);
       });
     }
 
+    const cutoffMode =
+      vRec?.extrasCutoffMode ||
+      vRec?.profileSnapshot?.extrasCutoffMode ||
+      profile.extrasCutoffMode ||
+      'direxis_25_24';
+    const customStartDay =
+      vRec?.profileSnapshot?.customCutoffStartDay ||
+      profile.customCutoffStartDay ||
+      25;
+    const cutoffRange = getExtrasDateRange(year, monthNum, cutoffMode, customStartDay);
+
     const monthAssignmentByDate = new Map(assignmentByDate);
     if (vRec?.assignmentsSnapshot && vRec.assignmentsSnapshot.length > 0) {
       const mPrefix = `${monthKey}-`;
       vRec.assignmentsSnapshot.forEach((sa) => {
         const key = normalizeDateKeyForAnnual(sa.date);
-        if (key && key.startsWith(mPrefix)) {
-          monthAssignmentByDate.set(key, { ...sa, date: key });
+        if (
+          key &&
+          (key.startsWith(mPrefix) ||
+            (key >= cutoffRange.startDateStr && key <= cutoffRange.endDateStr))
+        ) {
+          const liveExisting = monthAssignmentByDate.get(key);
+          const isCarryoverDate = key < `${monthKey}-01`;
+          const isCarryoverMonthValidated = Boolean(validatedMonths?.[key.slice(0, 7)]);
+          if (
+            isCarryoverDate &&
+            liveExisting &&
+            hasAnnualAssignmentContent(liveExisting) &&
+            (!hasAnnualAssignmentContent(sa) || !isCarryoverMonthValidated)
+          ) {
+            return;
+          }
+          if (!liveExisting || hasAnnualAssignmentContent(sa) || !hasAnnualAssignmentContent(liveExisting)) {
+            monthAssignmentByDate.set(key, { ...sa, date: key });
+          }
         }
       });
     }
@@ -374,6 +433,7 @@ export function deriveDefaultAnnualMonths(
     let bajaLab = 0;
     let horasDiarioMes = 0;
     let turnosDiarioCount = 0;
+    let diarioRecordCount = 0;
 
     for (let day = 1; day <= daysInMonth; day++) {
       const dateStr = `${year}-${String(monthNum).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
@@ -395,6 +455,10 @@ export function deriveDefaultAnnualMonths(
       const isVac = Boolean(asg.isVacation || upperCode === 'V' || upperId === 'V');
       const isSick = isAssignmentSickLeave(asg);
 
+      if (isRest || isVac || isSick || asg.shiftCode || asg.shiftId || (asg.lateFinishMinutes && asg.lateFinishMinutes > 0)) {
+        diarioRecordCount += 1;
+      }
+
       if (isVac) {
         vacNat += 1;
         if (isWeekday && !isHoliday) vacLab += 1;
@@ -403,12 +467,30 @@ export function deriveDefaultAnnualMonths(
         bajaNat += 1;
         if (isWeekday && !isHoliday) bajaLab += 1;
       }
+    }
 
-      // Sumar horas ordinarias realizadas dentro del mes natural (excluyendo festivos / F/T y hasta 9h por turno)
+    // Sumar horas ordinarias realizadas dentro del período de corte activo (ej. Direxis 25 anterior al 24 actual),
+    // excluyendo festivos, "Festivas (horas)", F/T y hasta 9h por turno (idéntico a cálculo de nómina).
+    const cutoffDates = getDateRangeStrings(cutoffRange.startDateStr, cutoffRange.endDateStr);
+    for (const dateStr of cutoffDates) {
+      const asg = monthAssignmentByDate.get(dateStr);
+      if (!asg) continue;
+
+      const upperCode = (asg.shiftCode || '').trim().toUpperCase();
+      const upperId = (asg.shiftId || '').trim().toUpperCase();
+
+      const isRest = Boolean(asg.isRest || upperCode === 'D' || upperId === 'D');
+      const isVac = Boolean(asg.isVacation || upperCode === 'V' || upperId === 'V');
+      const isSick = isAssignmentSickLeave(asg);
+
       const isMarkedHoliday = Boolean(
         asg.isHoliday || asg.extras?.some((e) => e.name.toLowerCase().includes('plus festivo'))
       );
       const isMarkedFT = Boolean(asg.extras?.some((e) => isFTExtraName(e.name)));
+      const dayExplicitFestivaHours = getExplicitFestivasHoursFromExtras(
+        asg.extras,
+        effectiveYearRateForMonth.horaOrdinaria ?? 13.62
+      );
 
       if (!isRest && !isVac && !isSick) {
         let dayHours = 0;
@@ -420,13 +502,16 @@ export function deriveDefaultAnnualMonths(
           if (shiftDef && shiftDef.code !== 'D' && shiftDef.code !== 'V' && shiftDef.code !== 'B') {
             turnosDiarioCount += 1;
             dayHours = computeShiftRateFromConvenio(shiftDef, effectiveYearRateForMonth).totalHours;
+          } else if (!shiftDef && upperCode !== 'D' && upperCode !== 'V' && upperCode !== 'B') {
+            turnosDiarioCount += 1;
           }
         }
         if (asg.lateFinishMinutes && asg.lateFinishMinutes > 0) {
           dayHours += asg.lateFinishMinutes / 60;
         }
         if (!isMarkedHoliday && !isMarkedFT && dayHours > 0) {
-          horasDiarioMes += Math.min(9, dayHours);
+          const nonFestivaDayHours = Math.max(0, dayHours - dayExplicitFestivaHours);
+          horasDiarioMes += Math.min(9, nonFestivaDayHours);
         }
       }
     }
@@ -465,6 +550,7 @@ export function deriveDefaultAnnualMonths(
       extraJulDic: idx === 6 || idx === 11, // Julio y Diciembre
       horasDiarioMes: Math.round(horasDiarioMes * 100) / 100,
       turnosDiarioCount,
+      diarioRecordCount,
       ...(idx === 0 && prevYearTrailingSickDays > 0
         ? { bajaDiasPreviosAnioAnterior: prevYearTrailingSickDays }
         : {}),
@@ -597,6 +683,7 @@ export function calculateAnnualLiquidation(
     vacDays: m.vacNat,
     sickDays: m.bajaNat,
     partTimeFactor: m.effectiveJornadaPct / 100,
+    cuotaManual: m.cuotaFijaManual,
   }));
   const annualSchedule = computeAnnualHoursSchedule(
     anio,
@@ -657,34 +744,51 @@ export function calculateAnnualLiquidation(
     const horasJustificadasIT = schedM.sickCredit;
     const horasComputoTeorico = horasTeoricasActivas + horasJustificadasIT;
 
-    const cuotaMes =
-      repartoBolsa === 'equilibrado'
-        ? horasComputoTeorico
-        : schedM.cuotaForBolsa;
+    const isCuotaManual =
+      typeof m.cuotaFijaManual === 'number' && Number.isFinite(m.cuotaFijaManual);
+    const useCuotaFijaBolsa = repartoBolsa !== 'equilibrado' || isCuotaManual;
+    const cuotaMes = !useCuotaFijaBolsa
+      ? horasComputoTeorico
+      : schedM.cuotaForBolsa;
 
     const saldoMes = horasComputoTeorico - cuotaMes;
     bolsaAcumulada += saldoMes;
     if (Math.abs(bolsaAcumulada) < 1e-9) bolsaAcumulada = 0;
 
-    // 2. Horas realmente realizadas (mes natural desde Turnos Día, validación congelada o edición manual) y compensación
+    // 2. Horas realmente realizadas (ciclo activo desde Turnos Día, validación congelada o edición manual) y compensación
     const isHorasManual =
       typeof m.horasReales === 'number' && Number.isFinite(m.horasReales);
     const horasRealizadas = isHorasManual
       ? Math.max(0, m.horasReales as number)
-      : m.vRec
-        ? Math.max(0, m.vRec.horasRealizadasMesNatural)
-        : m.horasDiarioMes;
+      : m.turnosDiarioCount > 0 || m.horasDiarioMes > 0 || !m.vRec
+        ? Math.max(0, m.horasDiarioMes)
+        : Math.max(0, m.vRec.horasRealizadasMesNatural);
 
     const tieneRegistroReal =
-      isHorasManual || m.isValidated || m.turnosDiarioCount > 0 || horasRealizadas > 0;
+      isHorasManual ||
+      m.isValidated ||
+      m.turnosDiarioCount > 0 ||
+      (m.diarioRecordCount || 0) > 0 ||
+      horasRealizadas > 0;
 
     // Las horas complementarias cobradas en nómina NO deben ir a la bolsa de horas
     let horasComplementariasMes = 0;
     if (tieneRegistroReal) {
       const horasConIT = horasRealizadas + horasJustificadasIT;
       const diffVsTeorico = horasConIT - horasComputoTeorico;
+      const snapTargetMatches = Boolean(
+        m.vRec?.payrollSnapshot &&
+          Math.abs((m.vRec.payrollSnapshot.convenioMonthlyHoursTarget || 0) - horasTeoricasActivas) <= 0.05 &&
+          Math.abs((m.vRec.payrollSnapshot.ordinaryConvenioHours || 0) - horasRealizadas) <= 0.05 &&
+          Math.abs((m.vRec.payrollSnapshot.cuotaFijaMensualContrato ?? -1) - cuotaMes) <= 0.05
+      );
 
-      if (m.vRec?.payrollSnapshot && !isHorasManual) {
+      if (
+        m.vRec?.payrollSnapshot &&
+        !isHorasManual &&
+        useCuotaFijaBolsa &&
+        snapTargetMatches
+      ) {
         horasComplementariasMes = Math.max(0, m.vRec.payrollSnapshot.horasExcesoMensual || 0);
         if (diffVsTeorico < 0) {
           runningDeficitAnual += diffVsTeorico;
@@ -699,7 +803,7 @@ export function calculateAnnualLiquidation(
           const deficitOwed = Math.max(0, -runningDeficitAnual);
           const appliedDeficit = Math.min(diffVsTeorico, deficitOwed);
           const surplusAfterDeficit = Math.max(0, diffVsTeorico - appliedDeficit);
-          if (m.vacNat > 0) {
+          if (m.vacNat > 0 && useCuotaFijaBolsa) {
             const umbralCompl = Math.max(horasComputoTeorico, cuotaMes);
             const excessOverQuota = Math.max(0, horasConIT - umbralCompl);
             horasComplementariasMes = Math.min(surplusAfterDeficit, excessOverQuota);
@@ -848,6 +952,7 @@ export function calculateAnnualLiquidation(
       horasJustificadasIT,
       horasComputoTeorico,
       cuotaMes,
+      isCuotaManual,
       saldoMes,
       bolsaAcumulada,
       horasRealizadas,
@@ -973,6 +1078,13 @@ export function calculateAnnualLiquidation(
       : 0;
   const margenRestante30Horas = round2(topeMaximoConVoluntariasAnual - horasEstimadasCierreAnual);
 
+  const hasAllStatutoryVacations = annualSchedule.hasAllStatutoryVacations;
+  const hasCuotaManualOverride = filas.some((f) => f.isCuotaManual);
+  const diffCuotaVsTeoricas = round2(sumaCuotaFija - sumaHorasComputoTeorico);
+  const cuotaCuadraConTeoricas = Math.abs(diffCuotaVsTeoricas) <= 0.02;
+  const superaLimiteBaseCuota = sumaCuotaFija > topeMaximoHoras30Anual + 0.02;
+  const superaLimiteAnualCuota = sumaCuotaFija > topeMaximoConVoluntariasAnual + 0.02;
+
   return {
     anio,
     p,
@@ -995,6 +1107,12 @@ export function calculateAnnualLiquidation(
     sumaCuotaFija,
     sumaSaldoMes,
     bolsaAcumuladaFinal,
+    hasAllStatutoryVacations,
+    hasCuotaManualOverride,
+    diffCuotaVsTeoricas,
+    cuotaCuadraConTeoricas,
+    superaLimiteBaseCuota,
+    superaLimiteAnualCuota,
     bolsaInicialAnio,
     sumaHorasRealizadas,
     sumaComplementariasMes: Math.round(sumaComplementariasMes * 100) / 100 || 0,
@@ -1203,7 +1321,7 @@ export function exportAnnualCalendarToExcel(
       m.tipoBaja === 'accidente_100' ? 1 : m.tipoBaja === 'accidente_75' ? 2 : 0,
       { t: 'n', v: m.diasActivos, f: `MAX(0,B${r}-D${r}-F${r})` },
       Number(m.horasComputoTeorico.toFixed(4)),
-      p.repartoBolsa === 'equilibrado'
+      p.repartoBolsa === 'equilibrado' && !m.isCuotaManual
         ? { t: 'n', v: Number(m.cuotaMes.toFixed(4)), f: `I${r}` }
         : Number(m.cuotaMes.toFixed(4)),
       { t: 'n', v: Number(m.saldoMes.toFixed(4)), f: `I${r}-J${r}` },

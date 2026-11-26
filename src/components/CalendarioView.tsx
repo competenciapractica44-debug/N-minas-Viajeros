@@ -25,6 +25,7 @@ import {
   MapPin,
   Lock,
   Unlock,
+  RefreshCw,
 } from 'lucide-react';
 import {
   DayAssignment,
@@ -41,10 +42,18 @@ import {
   computeShiftRateFromConvenio,
   calculateTotalHours,
   calculateMonthlyConvenioHoursTarget,
+  getDateRangeStrings,
+  getExtrasDateRange,
   roundCurrency,
 } from '../utils/calculator';
 import { AnnualLiquidationResult, formatHoras } from '../utils/annualCalendar';
-import { getEffectiveYearRate, getOfficialConvenioExtraAmount, isFTExtraName } from '../data/convenioZaragoza';
+import {
+  getEffectiveYearRate,
+  getExplicitFestivasHoursFromExtras,
+  getOfficialConvenioExtraAmount,
+  isFTExtraName,
+} from '../data/convenioZaragoza';
+import { ALL_INITIAL_SHIFTS } from '../data/defaultTurnos';
 import { getOfficialHolidaysForYear, DetectedHolidayInfo } from '../data/spanishHolidays';
 import { ConfirmModal } from './ConfirmModal';
 
@@ -64,6 +73,8 @@ interface CalendarioViewProps {
   validatedMonths?: ValidatedMonthsMap;
   annualSummary?: AnnualLiquidationResult;
   isValidatingMonth?: boolean;
+  isRecalculating?: boolean;
+  onRecalculate?: () => void;
   onValidateMonth?: () => Promise<{ success: boolean; driveSaved: boolean; message: string }>;
   onUnvalidateMonth?: () => Promise<void> | void;
   onGoToNomina?: () => void;
@@ -90,6 +101,8 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
   validatedMonths,
   annualSummary,
   isValidatingMonth,
+  isRecalculating,
+  onRecalculate,
   onValidateMonth,
   onUnvalidateMonth,
   onGoToNomina,
@@ -520,6 +533,57 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
 
   // Counters
   const counters = useMemo(() => {
+    const normDate = (raw?: string): string => {
+      if (!raw) return '';
+      const trimmed = String(raw).trim().split('T')[0];
+      const m = trimmed.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+      if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+      const dmy = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+      if (dmy) return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
+      return trimmed;
+    };
+
+    const asgByDate = new Map<string, DayAssignment>();
+    for (const a of assignments) {
+      const k = normDate(a.date);
+      if (!k) continue;
+      const existing = asgByDate.get(k);
+      const hasContent = Boolean(
+        (a.shiftCode && a.shiftCode.trim() !== '') ||
+          (a.shiftId && a.shiftId.trim() !== '') ||
+          a.isRest ||
+          a.isVacation ||
+          a.isSickLeave ||
+          a.isHoliday ||
+          (a.extras && a.extras.length > 0) ||
+          (a.lateFinishMinutes && a.lateFinishMinutes > 0)
+      );
+      if (!existing || hasContent) {
+        asgByDate.set(k, { ...a, date: k });
+      }
+    }
+
+    const resolveShiftCal = (asg: DayAssignment): ShiftDefinition | undefined => {
+      if (asg.shiftSnapshot) return asg.shiftSnapshot;
+      const cleanCode = asg.shiftCode ? String(asg.shiftCode).trim().replace(/\/L/gi, '') : '';
+      if (cleanCode) {
+        const direct = shiftsMap.get(cleanCode);
+        if (direct) return direct;
+        const upper = cleanCode.toUpperCase();
+        const byCode =
+          shifts.find((s) => s.code.trim().toUpperCase() === upper) ||
+          ALL_INITIAL_SHIFTS.find((s) => s.code.trim().toUpperCase() === upper);
+        if (byCode) return byCode;
+      }
+      if (asg.shiftId) {
+        const byId =
+          shifts.find((s) => s.id === asg.shiftId) ||
+          ALL_INITIAL_SHIFTS.find((s) => s.id === asg.shiftId);
+        if (byId) return byId;
+      }
+      return undefined;
+    };
+
     let turnosCount = 0;
     let descansosCount = 0;
     let vacacionesCount = 0;
@@ -530,31 +594,28 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
 
     for (let d = 1; d <= daysInMonth; d++) {
       const dStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-      const asg = assignments.find((a) => a.date === dStr);
+      const asg = asgByDate.get(dStr);
       if (asg) {
         const dayHasPlusFestivoExtra = Boolean(asg.extras?.some((e) => e.name.toLowerCase().includes('plus festivo')));
         if (asg.isHoliday || dayHasPlusFestivoExtra) {
           festivosCount++;
         }
         let dayShiftWorkedH = 0;
-        if (asg.shiftCode === 'D' || asg.isRest) {
+        const uc = asg.shiftCode?.trim().toUpperCase();
+        if (asg.isRest || uc === 'D' || asg.shiftId === 'D') {
           descansosCount++;
-        } else if (asg.shiftCode === 'V' || asg.isVacation) {
+        } else if (asg.isVacation || uc === 'V' || asg.shiftId === 'V') {
           vacacionesCount++;
-        } else if (asg.shiftCode === 'B' || asg.isSickLeave) {
+        } else if (asg.isSickLeave || uc === 'B' || asg.shiftId === 'B') {
           bajasCount++;
-        } else if (asg.shiftCode) {
+        } else if (asg.shiftCode || asg.shiftId || (asg.customStartTime && asg.customEndTime)) {
           turnosCount++;
-          const shiftDef =
-            asg.shiftSnapshot ||
-            shiftsMap.get(asg.shiftCode) ||
-            shifts.find((s) => s.code === asg.shiftCode);
-          if (shiftDef) {
-            if (asg.customStartTime && asg.customEndTime) {
-              dayShiftWorkedH = calculateTotalHours(asg.customStartTime, asg.customEndTime);
-            } else {
-              dayShiftWorkedH = computeShiftRateFromConvenio(shiftDef, activeYearRate).totalHours;
-            }
+          const shiftDef = resolveShiftCal(asg);
+          if (asg.customStartTime && asg.customEndTime) {
+            dayShiftWorkedH = calculateTotalHours(asg.customStartTime, asg.customEndTime);
+            monthWorkedHours += dayShiftWorkedH;
+          } else if (shiftDef) {
+            dayShiftWorkedH = computeShiftRateFromConvenio(shiftDef, activeYearRate).totalHours;
             monthWorkedHours += dayShiftWorkedH;
           }
         }
@@ -591,16 +652,89 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
         }
       }
     }
+    const cutoffModeCal = profile?.extrasCutoffMode || 'direxis_25_24';
+    const customStartDayCal = profile?.customCutoffStartDay || 25;
+    const cutoffRangeCal = getExtrasDateRange(
+      selectedYear,
+      selectedMonth,
+      cutoffModeCal,
+      customStartDayCal
+    );
+    const cutoffDatesCal = getDateRangeStrings(
+      cutoffRangeCal.startDateStr,
+      cutoffRangeCal.endDateStr
+    );
+    let cutoffTurnosCount = 0;
+    let cutoffWorkedHours = 0;
+    let cutoffOrdinaryHours = 0;
+    for (const cDateStr of cutoffDatesCal) {
+      const asg = asgByDate.get(cDateStr);
+      if (!asg) continue;
+      const uc = asg.shiftCode?.trim().toUpperCase();
+      if (
+        asg.isRest ||
+        uc === 'D' ||
+        asg.shiftId === 'D' ||
+        asg.isVacation ||
+        uc === 'V' ||
+        asg.shiftId === 'V' ||
+        asg.isSickLeave ||
+        uc === 'B' ||
+        asg.shiftId === 'B'
+      ) {
+        continue;
+      }
+      const isMarkedHoliday = Boolean(
+        asg.isHoliday || asg.extras?.some((e) => e.name.toLowerCase().includes('plus festivo'))
+      );
+      const isMarkedFT = Boolean(asg.extras?.some((e) => isFTExtraName(e.name)));
+      const dayExplicitFestivaHours = getExplicitFestivasHoursFromExtras(
+        asg.extras,
+        horaOrdinariaRate
+      );
+
+      let dayTotalHours = 0;
+      const hasCustomTimes = Boolean(asg.customStartTime && asg.customEndTime);
+      const shiftDef = resolveShiftCal(asg);
+      const hasWorkedShift = Boolean(
+        (shiftDef && shiftDef.code !== 'D' && shiftDef.code !== 'V' && shiftDef.code !== 'B') ||
+          (!shiftDef && (asg.shiftCode || asg.shiftId || hasCustomTimes))
+      );
+      if (hasWorkedShift) {
+        cutoffTurnosCount++;
+        if (hasCustomTimes && asg.customStartTime && asg.customEndTime) {
+          dayTotalHours = calculateTotalHours(asg.customStartTime, asg.customEndTime);
+        } else if (shiftDef) {
+          dayTotalHours = computeShiftRateFromConvenio(shiftDef, activeYearRate).totalHours;
+        }
+      }
+      if (asg.lateFinishMinutes && asg.lateFinishMinutes > 0) {
+        dayTotalHours += asg.lateFinishMinutes / 60;
+      }
+      if (dayTotalHours > 0) {
+        cutoffWorkedHours += dayTotalHours;
+        if (!isMarkedHoliday && !isMarkedFT) {
+          const nonFestivaH = Math.max(0, dayTotalHours - dayExplicitFestivaHours);
+          cutoffOrdinaryHours += Math.min(9, nonFestivaH);
+        }
+      }
+    }
+
     return {
       turnosCount,
+      cutoffTurnosCount,
       descansosCount,
       vacacionesCount,
       bajasCount,
       festivosCount,
       extrasTotal,
       monthWorkedHours: Math.round(monthWorkedHours * 100) / 100,
+      cutoffWorkedHours: Math.round(cutoffWorkedHours * 100) / 100,
+      cutoffOrdinaryHours: Math.round(cutoffOrdinaryHours * 100) / 100,
+      cutoffPeriodText: cutoffRangeCal.periodText,
+      isNaturalCutoff: cutoffModeCal === 'mes_natural',
     };
-  }, [assignments, daysInMonth, selectedYear, selectedMonth, horaOrdinariaRate, activeYearRate, shiftsMap, shifts, isPuntualidadEnabledInProfile]);
+  }, [assignments, daysInMonth, selectedYear, selectedMonth, horaOrdinariaRate, activeYearRate, shiftsMap, shifts, isPuntualidadEnabledInProfile, profile?.extrasCutoffMode, profile?.customCutoffStartDay]);
 
   const convenioAnnualTargetCal = parseFloat(
     (((activeYearRate.horasJornadaAnual && activeYearRate.horasJornadaAnual > 0 ? activeYearRate.horasJornadaAnual : 1776)) * partTimeFactorCal).toFixed(2)
@@ -992,7 +1126,16 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
       <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-4 text-xs font-semibold py-1">
         <span className="flex items-center gap-1.5 text-slate-700">
           <span className="w-2 h-2 rounded-full bg-blue-600"></span>
-          <strong>{counters.turnosCount}</strong> Turnos
+          {!counters.isNaturalCutoff ? (
+            <>
+              <strong>{counters.cutoffTurnosCount}</strong> Turnos ({counters.cutoffPeriodText}){' '}
+              <span className="text-[11px] text-slate-500 font-normal">({counters.turnosCount} mes)</span>
+            </>
+          ) : (
+            <>
+              <strong>{counters.turnosCount}</strong> Turnos
+            </>
+          )}
         </span>
         <span className="text-slate-300">·</span>
         <span className="flex items-center gap-1.5 text-slate-700">
@@ -1045,9 +1188,20 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
             </span>
           </span>
         </div>
-        <span className="font-mono font-bold text-blue-800">
-          Realizadas mes: {counters.monthWorkedHours.toLocaleString('es-ES')} h
-        </span>
+        <div className="flex flex-wrap items-center gap-2 font-mono font-bold text-blue-800">
+          {!counters.isNaturalCutoff && (
+            <span className="px-2 py-0.5 rounded-lg bg-blue-100 text-blue-900 border border-blue-200">
+              Ciclo {counters.cutoffPeriodText} ({counters.cutoffTurnosCount}t):{' '}
+              {counters.cutoffOrdinaryHours.toLocaleString('es-ES')} h ord.
+              {counters.cutoffWorkedHours > counters.cutoffOrdinaryHours + 0.004
+                ? ` (${counters.cutoffWorkedHours.toLocaleString('es-ES')} h tot.)`
+                : ''}
+            </span>
+          )}
+          <span className="text-blue-700">
+            Mes nat. ({counters.turnosCount}t): {counters.monthWorkedHours.toLocaleString('es-ES')} h
+          </span>
+        </div>
       </div>
 
       {/* Validación Mensual (congela % jornada, % IRPF, nómina y arrastra saldo de horas al resto del año) */}
@@ -1124,9 +1278,21 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                 )}
               </div>
 
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex items-center gap-2 shrink-0 flex-wrap">
                 {validatedMonth ? (
                   <>
+                    {onRecalculate && (
+                      <button
+                        type="button"
+                        onClick={onRecalculate}
+                        disabled={isRecalculating || isValidatingMonth}
+                        title="Recalcular suma de horas del ciclo y actualizar nómina validada"
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-white hover:bg-emerald-100 text-emerald-900 border border-emerald-300 font-bold text-[11px] transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${isRecalculating || isValidatingMonth ? 'animate-spin' : ''}`} />
+                        <span>Recalcular</span>
+                      </button>
+                    )}
                     {onGoToNomina && (
                       <button
                         type="button"
