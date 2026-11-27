@@ -1,5 +1,5 @@
 import React from 'react';
-import { FileText, Table, Calendar, ShieldAlert, User as UserIcon } from 'lucide-react';
+import { FileText, Table, Calendar, ShieldAlert, User as UserIcon, RefreshCw, Check } from 'lucide-react';
 import { ConvenioInfo, WorkerProfile, PayrollBreakdown } from '../types';
 import { User as FirebaseUser } from 'firebase/auth';
 import { DriveSyncBadge } from './DriveSyncBadge';
@@ -25,6 +25,9 @@ interface HeaderProps {
   onManualSync: () => void;
   onOpenLogin: () => void;
   onLogout: () => void;
+  hasUnsavedChanges?: boolean;
+  isUpdatingDrive?: boolean;
+  onActualizarDrive?: () => void;
 }
 
 const MONTH_NAMES = [
@@ -52,6 +55,9 @@ export const Header: React.FC<HeaderProps> = ({
   onManualSync,
   onOpenLogin,
   onLogout,
+  hasUnsavedChanges = false,
+  isUpdatingDrive = false,
+  onActualizarDrive,
 }) => {
   const isExpiringSoon = selectedYear >= 2026;
 
@@ -145,12 +151,45 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Action Controls & Profile */}
         <div className="flex items-center gap-2">
+          {onActualizarDrive && (
+            <button
+              type="button"
+              onClick={onActualizarDrive}
+              disabled={!hasUnsavedChanges || isUpdatingDrive}
+              title={
+                hasUnsavedChanges
+                  ? 'Guardar todos los cambios pendientes en Google Drive'
+                  : 'Todo actualizado en Google Drive'
+              }
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all border shrink-0 ${
+                isUpdatingDrive
+                  ? 'bg-amber-500 text-white border-amber-600 shadow-sm cursor-wait'
+                  : hasUnsavedChanges
+                  ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600 shadow-md ring-2 ring-amber-300/70 cursor-pointer'
+                  : 'bg-slate-100 text-slate-400 border-slate-200 cursor-default'
+              }`}
+            >
+              {isUpdatingDrive ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              ) : hasUnsavedChanges ? (
+                <RefreshCw className="w-3.5 h-3.5" />
+              ) : (
+                <Check className="w-3.5 h-3.5 text-emerald-500" />
+              )}
+              <span>{isUpdatingDrive ? 'Actualizando...' : 'Actualizar'}</span>
+              {hasUnsavedChanges && !isUpdatingDrive && (
+                <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+              )}
+            </button>
+          )}
+
           <PWAInstallButton />
 
           {/* Google Drive Status & User Badge */}
           <DriveSyncBadge
             user={user}
-            isSyncing={isSyncing}
+            isSyncing={isSyncing || isUpdatingDrive}
+            hasUnsavedChanges={hasUnsavedChanges}
             lastSyncTime={lastSyncTime}
             nominasFolderUrl={nominasFolderUrl}
             onManualSync={onManualSync}

@@ -58,6 +58,8 @@ import { DriveNominasModal } from './components/DriveNominasModal';
 import { PublicFooter, PublicLegalPage } from './components/PublicFooter';
 import { LegalPageView } from './components/LegalPageView';
 import { OfflineIndicator } from './components/OfflineIndicator';
+import { ConfirmModal } from './components/ConfirmModal';
+import { RefreshCw, AlertTriangle, CheckCircle2 } from 'lucide-react';
 
 function getPublicPageFromUrl(): PublicLegalPage | null {
   if (typeof window === 'undefined') return null;
@@ -254,6 +256,18 @@ function mergeValidatedMonths(
 }
 
 const ASSIGNMENTS_DIRTY_KEY = 'rutanomina_assignments_dirty_v1';
+const PENDING_SYNC_DIRTY_KEY = 'rutanomina_pending_sync_v1';
+
+type SyncDatasetKey =
+  | 'assignments'
+  | 'shifts'
+  | 'extras'
+  | 'convenio'
+  | 'profile'
+  | 'annualCalendarData'
+  | 'validatedMonths';
+
+type DirtyDatasetsMap = Partial<Record<SyncDatasetKey, boolean>>;
 
 function readAssignmentsDirtyFlag(): boolean {
   try {
@@ -269,6 +283,39 @@ function writeAssignmentsDirtyFlag(dirty: boolean): void {
       localStorage.setItem(ASSIGNMENTS_DIRTY_KEY, '1');
     } else {
       localStorage.removeItem(ASSIGNMENTS_DIRTY_KEY);
+    }
+  } catch {
+    // ignore storage quota/privacy mode errors
+  }
+}
+
+function readPendingSyncDirtyMap(): DirtyDatasetsMap {
+  const result: DirtyDatasetsMap = {};
+  try {
+    const raw = localStorage.getItem(PENDING_SYNC_DIRTY_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        Object.assign(result, parsed);
+      }
+    }
+  } catch {
+    // ignore
+  }
+  if (readAssignmentsDirtyFlag()) {
+    result.assignments = true;
+  }
+  return result;
+}
+
+function writePendingSyncDirtyMap(map: DirtyDatasetsMap): void {
+  const hasAny = Object.values(map).some(Boolean);
+  writeAssignmentsDirtyFlag(Boolean(map.assignments));
+  try {
+    if (hasAny) {
+      localStorage.setItem(PENDING_SYNC_DIRTY_KEY, JSON.stringify(map));
+    } else {
+      localStorage.removeItem(PENDING_SYNC_DIRTY_KEY);
     }
   } catch {
     // ignore storage quota/privacy mode errors
@@ -537,9 +584,13 @@ export default function App() {
   const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
   const [driveSyncError, setDriveSyncError] = useState<string | null>(null);
   const [authRedirectError, setAuthRedirectError] = useState<string | null>(null);
+  const [dirtyDatasets, setDirtyDatasets] = useState<DirtyDatasetsMap>(() => readPendingSyncDirtyMap());
+  const [isUpdatingDrive, setIsUpdatingDrive] = useState(false);
+  const [isLogoutConfirmOpen, setIsLogoutConfirmOpen] = useState(false);
   const hasInitialDriveSyncDoneRef = React.useRef(false);
   const syncPromiseRef = React.useRef<Promise<void> | null>(null);
-  const hasPendingLocalSyncRef = React.useRef(readAssignmentsDirtyFlag());
+  const hasPendingLocalSyncRef = React.useRef(Object.values(readPendingSyncDirtyMap()).some(Boolean));
+  const pendingActualizarAfterLoginRef = React.useRef(false);
   const isApplyingRemoteSyncRef = React.useRef(false);
   const lastSyncedAssignmentsJsonRef = React.useRef<string | null>(null);
   const [payrollCalcNonce, setPayrollCalcNonce] = useState(0);
@@ -547,6 +598,42 @@ export default function App() {
   const [isRefreshingForNomina, setIsRefreshingForNomina] = useState(false);
   const latestStateRef = React.useRef({ shifts, profile, convenio, assignments, extras, annualCalendarData, validatedMonths });
   latestStateRef.current = { shifts, profile, convenio, assignments, extras, annualCalendarData, validatedMonths };
+
+  const hasUnsavedChanges = useMemo(
+    () => Object.values(dirtyDatasets).some(Boolean),
+    [dirtyDatasets]
+  );
+
+  const markDatasetsDirty = (...keys: SyncDatasetKey[]) => {
+    setDirtyDatasets((prev) => {
+      const next: DirtyDatasetsMap = { ...prev };
+      let changed = false;
+      for (const k of keys) {
+        if (!next[k]) {
+          next[k] = true;
+          changed = true;
+        }
+      }
+      if (!changed) return prev;
+      writePendingSyncDirtyMap(next);
+      hasPendingLocalSyncRef.current = true;
+      return next;
+    });
+  };
+
+  const clearDirtyDatasets = (keys?: SyncDatasetKey[]) => {
+    setDirtyDatasets((prev) => {
+      const next: DirtyDatasetsMap = keys ? { ...prev } : {};
+      if (keys) {
+        keys.forEach((k) => {
+          delete next[k];
+        });
+      }
+      writePendingSyncDirtyMap(next);
+      hasPendingLocalSyncRef.current = Object.values(next).some(Boolean);
+      return next;
+    });
+  };
 
   // Sincronizar navegación URL (?page=privacidad / ?page=terminos)
   useEffect(() => {
@@ -612,19 +699,18 @@ export default function App() {
         const folders = await ensureDirexisHierarchy(token);
         setDriveFolders(folders);
         const currentSnapshot = latestStateRef.current;
+        const dirtySnapshot = readPendingSyncDirtyMap();
         let effectiveShifts = currentSnapshot.shifts;
         let effectiveProfile = currentSnapshot.profile;
         let effectiveConvenio = currentSnapshot.convenio;
         let effectiveAssignments = currentSnapshot.assignments;
         let effectiveAnnualData = currentSnapshot.annualCalendarData;
 
-        // 1. Turnos base
-        // Regla: "si ya hay turnos guardados, se trabajara sobre los guardados en drive"
+        // 1. Turnos base (respetar cambios locales pendientes si no se actualizaron en Drive)
         const turnosFile = await findFileInFolder(token, 'turnos_base.json', folders.nominasFolderId);
-        if (turnosFile) {
+        if (turnosFile && !dirtySnapshot.shifts) {
           const driveShifts = await readDriveJsonFile<ShiftDefinition[]>(token, turnosFile.id);
           if (driveShifts && Array.isArray(driveShifts) && driveShifts.length > 0) {
-            // Limpiar cualquier posible '/L' residual en turnos cargados
             const cleaned = driveShifts.map((s) => {
               if (s.code.includes('/L')) {
                 const cleanCode = s.code.replace(/\/L/g, '');
@@ -639,15 +725,14 @@ export default function App() {
             effectiveShifts = ensureBuiltInSpecialShifts(cleaned);
             setShifts(effectiveShifts);
           }
-        } else {
-          // Si no existen todavía, guardar los turnos actuales como base inicial dentro de Direxis / Nóminas
+        } else if (!turnosFile) {
           await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'turnos_base.json', currentSnapshot.shifts);
         }
 
-        // 2. Configuración de chófer (si falta o está vacía en Drive y no se ha rellenado aún, abrir ficha para que el usuario la introduzca y guarde en Drive)
+        // 2. Configuración de chófer
         let needsProfileOnboarding = false;
         const choferFile = await findFileInFolder(token, 'chofer_config.json', folders.nominasFolderId);
-        if (choferFile) {
+        if (choferFile && !dirtySnapshot.profile) {
           const driveProfile = await readDriveJsonFile<WorkerProfile>(token, choferFile.id);
           if (driveProfile && driveProfile.name?.trim()) {
             effectiveProfile = {
@@ -665,15 +750,15 @@ export default function App() {
           } else {
             needsProfileOnboarding = true;
           }
-        } else if (currentSnapshot.profile.name.trim()) {
+        } else if (!choferFile && currentSnapshot.profile.name.trim()) {
           await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'chofer_config.json', currentSnapshot.profile);
-        } else {
+        } else if (!choferFile && !currentSnapshot.profile.name.trim()) {
           needsProfileOnboarding = true;
         }
 
         // 3. Valores del Convenio de 2026
         const convenioFile = await findFileInFolder(token, 'convenio_2026.json', folders.nominasFolderId);
-        if (convenioFile) {
+        if (convenioFile && !dirtySnapshot.convenio) {
           const driveConvenio = await readDriveJsonFile<ConvenioInfo>(token, convenioFile.id);
           if (driveConvenio && driveConvenio.ratesByYear) {
             const migratedRates: Record<number, ConvenioYearRate> = {};
@@ -694,71 +779,60 @@ export default function App() {
             isApplyingRemoteSyncRef.current = true;
             setConvenio(effectiveConvenio);
           }
-        } else {
+        } else if (!convenioFile) {
           await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'convenio_2026.json', currentSnapshot.convenio);
         }
 
-        // 4. Asignaciones de Cuadrante (fusión por fecha: nunca pierde meses introducidos en local si faltan en Drive)
-        const isLocalDirty = hasPendingLocalSyncRef.current || readAssignmentsDirtyFlag();
+        // 4. Asignaciones de Cuadrante (preservar cambios locales pendientes sin sobrescribirlos)
+        const isAssignmentsDirty = Boolean(dirtySnapshot.assignments);
         const asignacionesFile = await findFileInFolder(token, 'cuadrante_asignaciones.json', folders.nominasFolderId);
         if (asignacionesFile) {
           const driveAsignaciones = await readDriveJsonFile<DayAssignment[]>(token, asignacionesFile.id);
           if (driveAsignaciones && Array.isArray(driveAsignaciones)) {
             const normalizedDrive = normalizeAssignmentsList(driveAsignaciones, effectiveShifts);
             const normalizedLocal = normalizeAssignmentsList(latestStateRef.current.assignments, effectiveShifts);
-            const mergedAssignments = mergeAssignmentsByDate(normalizedLocal, normalizedDrive, isLocalDirty);
+            const mergedAssignments = mergeAssignmentsByDate(normalizedLocal, normalizedDrive, isAssignmentsDirty);
             effectiveAssignments = mergedAssignments;
             const mergedJson = JSON.stringify(mergedAssignments);
-            const driveJson = JSON.stringify(normalizedDrive);
 
             if (mergedJson !== JSON.stringify(latestStateRef.current.assignments)) {
               setAssignments(mergedAssignments);
             }
-            if (mergedJson !== driveJson) {
-              await saveOrUpdateDriveJsonFile(
-                token,
-                folders.nominasFolderId,
-                'cuadrante_asignaciones.json',
-                mergedAssignments
-              );
+            if (!isAssignmentsDirty) {
+              lastSyncedAssignmentsJsonRef.current = mergedJson;
             }
-            lastSyncedAssignmentsJsonRef.current = mergedJson;
-            writeAssignmentsDirtyFlag(false);
           }
         } else {
           const normalizedLocal = normalizeAssignmentsList(latestStateRef.current.assignments, effectiveShifts);
           effectiveAssignments = normalizedLocal;
           await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'cuadrante_asignaciones.json', normalizedLocal);
-          lastSyncedAssignmentsJsonRef.current = JSON.stringify(normalizedLocal);
-          writeAssignmentsDirtyFlag(false);
+          if (!isAssignmentsDirty) {
+            lastSyncedAssignmentsJsonRef.current = JSON.stringify(normalizedLocal);
+          }
         }
 
         // 5. Catálogo de Extras
         const extrasFile = await findFileInFolder(token, 'catalogo_extras.json', folders.nominasFolderId);
-        if (extrasFile) {
+        if (extrasFile && !dirtySnapshot.extras) {
           const driveExtras = await readDriveJsonFile<ExtraConcept[]>(token, extrasFile.id);
           if (driveExtras && Array.isArray(driveExtras) && driveExtras.length > 0) {
             isApplyingRemoteSyncRef.current = true;
             setExtras(mergeWithDefaultBuiltInExtras(driveExtras));
           }
-        } else {
+        } else if (!extrasFile) {
           await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'catalogo_extras.json', currentSnapshot.extras);
         }
 
         // 6. Ajustes personalizados del Calendario Anual y Bolsa de Horas
         const annualFile = await findFileInFolder(token, 'calendario_anual_bolsa.json', folders.nominasFolderId);
-        if (annualFile) {
+        if (annualFile && !dirtySnapshot.annualCalendarData) {
           const driveAnnual = await readDriveJsonFile<AnnualCalendarState>(token, annualFile.id);
           if (driveAnnual && typeof driveAnnual === 'object') {
-            const mergedAnnual: AnnualCalendarState = {
-              ...driveAnnual,
-              ...currentSnapshot.annualCalendarData,
-            };
-            effectiveAnnualData = mergedAnnual;
+            effectiveAnnualData = driveAnnual;
             isApplyingRemoteSyncRef.current = true;
-            setAnnualCalendarData(mergedAnnual);
+            setAnnualCalendarData(driveAnnual);
           }
-        } else if (Object.keys(currentSnapshot.annualCalendarData).length > 0) {
+        } else if (!annualFile && Object.keys(currentSnapshot.annualCalendarData).length > 0) {
           await saveOrUpdateDriveJsonFile(
             token,
             folders.nominasFolderId,
@@ -769,7 +843,7 @@ export default function App() {
 
         // 7. Meses validados (con % jornada, % IRPF y snapshot de nóminas cerradas)
         const validatedFile = await findFileInFolder(token, 'meses_validados.json', folders.nominasFolderId);
-        if (validatedFile) {
+        if (validatedFile && !dirtySnapshot.validatedMonths) {
           const driveValidated = await readDriveJsonFile<ValidatedMonthsMap>(token, validatedFile.id);
           if (driveValidated && typeof driveValidated === 'object') {
             const reconcileCtx = {
@@ -784,7 +858,7 @@ export default function App() {
               mergeValidatedMonths(
                 latestStateRef.current.validatedMonths,
                 reconciledDrive,
-                isLocalDirty
+                false
               ),
               reconcileCtx
             );
@@ -799,7 +873,7 @@ export default function App() {
               );
             }
           }
-        } else if (Object.keys(latestStateRef.current.validatedMonths).length > 0) {
+        } else if (!validatedFile && Object.keys(latestStateRef.current.validatedMonths).length > 0) {
           await saveOrUpdateDriveJsonFile(
             token,
             folders.nominasFolderId,
@@ -814,7 +888,7 @@ export default function App() {
 
         setLastSyncTime(new Date());
         hasInitialDriveSyncDoneRef.current = true;
-        hasPendingLocalSyncRef.current = false;
+        hasPendingLocalSyncRef.current = Object.values(readPendingSyncDirtyMap()).some(Boolean);
 
         if (needsProfileOnboarding) {
           setIsOnboardingProfile(true);
@@ -836,73 +910,113 @@ export default function App() {
     return run;
   };
 
-  // Auto-guardado en Drive de la configuración y calendario (NUNCA guarda nóminas automáticamente)
-  useEffect(() => {
-    if (!currentUser || !accessToken || !driveFolders || !hasInitialDriveSyncDoneRef.current) {
-      return;
+  // Guardar explícitamente todos los cambios locales en Google Drive (Turnos, Turnos BD, Extras, Convenio, Perfil, Anual y Validados)
+  const handleActualizarTodo = async (options?: {
+    recalculateValidatedIfNeeded?: boolean;
+    overrideValidatedMonths?: ValidatedMonthsMap;
+  }): Promise<boolean> => {
+    setPayrollCalcNonce((n) => n + 1);
+    setLastPayrollCalculatedAt(new Date());
+
+    const token = accessToken || getCachedAccessToken();
+    if (!currentUser || !token) {
+      pendingActualizarAfterLoginRef.current = true;
+      setDriveSyncError('Conecta tu cuenta de Google Drive para subir y guardar tus cambios.');
+      setIsLoginModalOpen(true);
+      return false;
     }
 
-    const currentAssignmentsJson = JSON.stringify(assignments);
-    const assignmentsChangedLocally =
-      lastSyncedAssignmentsJsonRef.current !== null &&
-      currentAssignmentsJson !== lastSyncedAssignmentsJsonRef.current;
+    setIsUpdatingDrive(true);
+    setDriveSyncError(null);
+    try {
+      let currentSnapshot = latestStateRef.current;
 
-    if (isApplyingRemoteSyncRef.current && !assignmentsChangedLocally) {
-      isApplyingRemoteSyncRef.current = false;
-      return;
-    }
-    isApplyingRemoteSyncRef.current = false;
-
-    if (assignmentsChangedLocally) {
-      hasPendingLocalSyncRef.current = true;
-      writeAssignmentsDirtyFlag(true);
-    }
-
-    const timer = setTimeout(async () => {
-      try {
-        const uploads: Array<Promise<unknown>> = [
-          saveOrUpdateDriveJsonFile(accessToken, driveFolders.nominasFolderId, 'turnos_base.json', shifts),
-          saveOrUpdateDriveJsonFile(accessToken, driveFolders.nominasFolderId, 'convenio_2026.json', convenio),
-          saveOrUpdateDriveJsonFile(accessToken, driveFolders.nominasFolderId, 'cuadrante_asignaciones.json', assignments),
-          saveOrUpdateDriveJsonFile(accessToken, driveFolders.nominasFolderId, 'catalogo_extras.json', extras),
-          saveOrUpdateDriveJsonFile(accessToken, driveFolders.nominasFolderId, 'calendario_anual_bolsa.json', annualCalendarData),
-          saveOrUpdateDriveJsonFile(accessToken, driveFolders.nominasFolderId, 'meses_validados.json', validatedMonths),
-        ];
-        if (profile.name.trim().length > 0) {
-          uploads.push(
-            saveOrUpdateDriveJsonFile(accessToken, driveFolders.nominasFolderId, 'chofer_config.json', profile)
-          );
-        }
-        await Promise.all(uploads);
-        lastSyncedAssignmentsJsonRef.current = currentAssignmentsJson;
-        hasPendingLocalSyncRef.current = false;
-        writeAssignmentsDirtyFlag(false);
-        setDriveSyncError(null);
-        setLastSyncTime(new Date());
-      } catch (err: any) {
-        console.error('Error auto-guardando en Google Drive:', err);
-        const msg = String(err?.message || '');
-        if (msg.includes('401')) {
-          setDriveSyncError('Sesión de Drive caducada. Tus cambios siguen en este dispositivo; vuelve a conectar Drive para subirlos.');
-        }
+      // Si se solicita recalcular un mes ya validado (desde Nómina o Calendario), regenerar primero su snapshot actualizado
+      if (options?.recalculateValidatedIfNeeded && currentValidatedRecord) {
+        await handleValidateMonth(selectedYear, selectedMonth, { skipSpinner: false });
+        currentSnapshot = latestStateRef.current;
       }
-    }, 1500);
 
-    return () => clearTimeout(timer);
-  }, [currentUser, accessToken, driveFolders, shifts, profile, convenio, assignments, extras, annualCalendarData, validatedMonths]);
+      const folders = driveFolders || (await ensureDirexisHierarchy(token));
+      if (!driveFolders) setDriveFolders(folders);
 
-  // Cierre de sesión
-  const handleLogout = async () => {
+      const validatedToUpload = options?.overrideValidatedMonths || currentSnapshot.validatedMonths;
+      const uploads: Array<Promise<unknown>> = [
+        saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'turnos_base.json', currentSnapshot.shifts),
+        saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'convenio_2026.json', currentSnapshot.convenio),
+        saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'cuadrante_asignaciones.json', currentSnapshot.assignments),
+        saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'catalogo_extras.json', currentSnapshot.extras),
+        saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'calendario_anual_bolsa.json', currentSnapshot.annualCalendarData),
+        saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'meses_validados.json', validatedToUpload),
+      ];
+      if (currentSnapshot.profile.name.trim().length > 0) {
+        uploads.push(
+          saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'chofer_config.json', currentSnapshot.profile)
+        );
+      }
+
+      await Promise.all(uploads);
+
+      lastSyncedAssignmentsJsonRef.current = JSON.stringify(currentSnapshot.assignments);
+      clearDirtyDatasets();
+      setDriveSyncError(null);
+      setLastSyncTime(new Date());
+      setSaveSuccessMessage('¡Todo actualizado y guardado correctamente en Google Drive!');
+      window.setTimeout(() => setSaveSuccessMessage(null), 5000);
+      return true;
+    } catch (err: any) {
+      console.error('Error actualizando cambios en Google Drive:', err);
+      const msg = String(err?.message || '');
+      if (msg.includes('401')) {
+        pendingActualizarAfterLoginRef.current = true;
+        setDriveSyncError('Sesión de Drive caducada. Vuelve a conectar Google Drive y pulsa Actualizar para guardar tus cambios.');
+        setIsLoginModalOpen(true);
+      } else {
+        setDriveSyncError('No se pudo actualizar en Google Drive. Tus cambios siguen en este dispositivo.');
+      }
+      return false;
+    } finally {
+      setIsUpdatingDrive(false);
+    }
+  };
+
+  // Aviso al intentar cerrar, recargar o salir de la app si hay cambios pendientes sin guardar en Drive
+  useEffect(() => {
+    if (!hasUnsavedChanges && !isUpdatingDrive) return;
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = 'Tienes cambios sin actualizar en Google Drive. ¿Seguro que quieres salir?';
+      return e.returnValue;
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [hasUnsavedChanges, isUpdatingDrive]);
+
+  const executeLogout = async () => {
     await logout();
     setCurrentUser(null);
     setAccessToken(null);
     setDriveFolders(null);
     setArchivedNominas([]);
     hasInitialDriveSyncDoneRef.current = false;
+    setIsLogoutConfirmOpen(false);
+  };
+
+  // Cierre de sesión con alerta previa si hay cambios pendientes de actualizar en Drive
+  const handleLogout = async () => {
+    if (hasUnsavedChanges) {
+      setIsLogoutConfirmOpen(true);
+      return;
+    }
+    await executeLogout();
   };
 
   // Sincronización manual bajo demanda
   const handleManualSync = () => {
+    if (hasUnsavedChanges) {
+      void handleActualizarTodo();
+      return;
+    }
     const token = accessToken || getCachedAccessToken();
     if (token) {
       syncWithDrive(token, true);
@@ -1185,6 +1299,7 @@ export default function App() {
     year: number,
     nextOverride: AnnualYearOverrideData | null
   ) => {
+    markDatasetsDirty('annualCalendarData');
     setAnnualCalendarData((prev) => {
       const copy = { ...prev };
       if (!nextOverride || (!nextOverride.paramOverrides && !nextOverride.monthOverrides)) {
@@ -1234,6 +1349,7 @@ export default function App() {
         : [newOrUpdated, ...shifts];
 
     setShifts(nextShifts);
+    markDatasetsDirty('shifts');
 
     if (oldShift) {
       const frozenOldShift: ShiftDefinition = JSON.parse(JSON.stringify(oldShift));
@@ -1261,8 +1377,7 @@ export default function App() {
       });
 
       if (modifiedAnyAssignment) {
-        hasPendingLocalSyncRef.current = true;
-        writeAssignmentsDirtyFlag(true);
+        markDatasetsDirty('assignments');
         setAssignments(nextAssignments);
       }
     }
@@ -1274,6 +1389,7 @@ export default function App() {
   const handleDeleteTurno = (id: string) => {
     const shiftToDelete = shifts.find((s) => s.id === id);
     setShifts((prev) => prev.filter((s) => s.id !== id));
+    markDatasetsDirty('shifts');
     if (shiftToDelete) {
       const frozenDeleted: ShiftDefinition = JSON.parse(JSON.stringify(shiftToDelete));
       let modifiedAnyAssignment = false;
@@ -1299,22 +1415,21 @@ export default function App() {
         })
       );
       if (modifiedAnyAssignment) {
-        hasPendingLocalSyncRef.current = true;
-        writeAssignmentsDirtyFlag(true);
+        markDatasetsDirty('assignments');
       }
     }
   };
 
   const handleRestoreDefaultShifts = () => {
-    if (window.confirm(`¿Deseas restablecer los ${ALL_INITIAL_SHIFTS.length} turnos iniciales incluidos en la aplicación?`)) {
-      setShifts(ALL_INITIAL_SHIFTS);
-    }
+    markDatasetsDirty('shifts');
+    setShifts(ensureBuiltInSpecialShifts(ALL_INITIAL_SHIFTS));
   };
 
   const handleSaveProfile = async (newProf: WorkerProfile) => {
     setProfile(newProf);
     setIsOnboardingProfile(false);
     setIsProfileModalOpen(false);
+    markDatasetsDirty('profile');
 
     const token = accessToken || getCachedAccessToken();
     if (currentUser && token) {
@@ -1322,6 +1437,7 @@ export default function App() {
         const folders = driveFolders || (await ensureDirexisHierarchy(token));
         if (!driveFolders) setDriveFolders(folders);
         await saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'chofer_config.json', newProf);
+        clearDirtyDatasets(['profile']);
         setLastSyncTime(new Date());
       } catch (err) {
         console.error('Error guardando configuración de perfil en Google Drive:', err);
@@ -1336,8 +1452,7 @@ export default function App() {
     if (validatedMonths[ym]) {
       return;
     }
-    hasPendingLocalSyncRef.current = true;
-    writeAssignmentsDirtyFlag(true);
+    markDatasetsDirty('assignments');
     setAssignments((prev) => {
       const idx = prev.findIndex((a) => normalizeDateKey(a.date) === normalizedDate);
       if (idx >= 0) {
@@ -1351,12 +1466,14 @@ export default function App() {
 
   // Extras actions
   const handleToggleExtra = (id: string) => {
+    markDatasetsDirty('extras');
     setExtras((prev) =>
       prev.map((e) => (e.id === id ? { ...e, active: !e.active } : e))
     );
   };
 
   const handleSaveExtra = (extra: ExtraConcept) => {
+    markDatasetsDirty('extras');
     setExtras((prev) => {
       const idx = prev.findIndex((e) => e.id === extra.id);
       if (idx >= 0) {
@@ -1369,6 +1486,7 @@ export default function App() {
   };
 
   const handleDeleteExtra = (id: string) => {
+    markDatasetsDirty('extras');
     setExtras((prev) => prev.filter((e) => e.id !== id));
   };
 
@@ -1421,9 +1539,11 @@ export default function App() {
   // Validar mes completo: congela % Jornada, % IRPF, turnos vigentes, asignaciones, tarifa anual y nómina exacta del mes y lo guarda en local + Drive
   const handleValidateMonth = async (
     yearToValidate: number,
-    monthToValidate: number
+    monthToValidate: number,
+    _opts?: { skipSpinner?: boolean }
   ): Promise<{ success: boolean; driveSaved: boolean; message: string }> => {
     setIsValidatingMonth(true);
+    markDatasetsDirty('validatedMonths');
     try {
       const mKey = `${yearToValidate}-${String(monthToValidate).padStart(2, '0')}`;
       const monthName = MONTH_NAMES[monthToValidate - 1];
@@ -1598,6 +1718,10 @@ export default function App() {
         }
       );
       setValidatedMonths(updatedValidatedMap);
+      latestStateRef.current = {
+        ...latestStateRef.current,
+        validatedMonths: updatedValidatedMap,
+      };
 
       const finalRecord = updatedValidatedMap[mKey] || record;
       const finalPayrollSnapshot = finalRecord.payrollSnapshot;
@@ -1665,6 +1789,7 @@ export default function App() {
 
           const updatedFiles = await listArchivedFilesInNominas(token, folders.nominasFolderId);
           setArchivedNominas(updatedFiles);
+          clearDirtyDatasets(['validatedMonths']);
           setLastSyncTime(new Date());
           driveSaved = true;
         } catch (driveErr) {
@@ -1688,6 +1813,7 @@ export default function App() {
     const updatedMap: ValidatedMonthsMap = { ...validatedMonths };
     delete updatedMap[mKey];
     setValidatedMonths(updatedMap);
+    markDatasetsDirty('validatedMonths');
 
     const token = accessToken || getCachedAccessToken();
     if (currentUser && token && driveFolders) {
@@ -1698,6 +1824,7 @@ export default function App() {
           'meses_validados.json',
           updatedMap
         );
+        clearDirtyDatasets(['validatedMonths']);
         setLastSyncTime(new Date());
       } catch (err) {
         console.error('Error actualizando meses validados en Drive:', err);
@@ -1800,7 +1927,42 @@ export default function App() {
         onManualSync={handleManualSync}
         onOpenLogin={() => setIsLoginModalOpen(true)}
         onLogout={handleLogout}
+        hasUnsavedChanges={hasUnsavedChanges}
+        isUpdatingDrive={isUpdatingDrive}
+        onActualizarDrive={() => void handleActualizarTodo()}
       />
+
+      {/* Aviso global de cambios sin actualizar en Drive + confirmación de guardado */}
+      {hasUnsavedChanges && (
+        <div className="bg-amber-50 border-b border-amber-200 text-amber-950">
+          <div className="max-w-5xl mx-auto px-4 py-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+            <div className="flex items-center gap-2 font-semibold">
+              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>
+                Tienes cambios pendientes sin guardar en Google Drive. Pulsa <strong>Actualizar</strong> antes de salir para conservarlos.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => void handleActualizarTodo()}
+              disabled={isUpdatingDrive}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-xs transition-colors cursor-pointer disabled:opacity-60"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isUpdatingDrive ? 'animate-spin' : ''}`} />
+              <span>{isUpdatingDrive ? 'Actualizando...' : 'Actualizar ahora'}</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {saveSuccessMessage && (
+        <div className="bg-emerald-50 border-b border-emerald-200 text-emerald-900">
+          <div className="max-w-5xl mx-auto px-4 py-2 flex items-center gap-2 text-xs font-bold">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>{saveSuccessMessage}</span>
+          </div>
+        </div>
+      )}
 
       {/* Breve descripción pública de la aplicación visible en la pantalla principal */}
       <div className="bg-blue-50/70 border-b border-blue-100">
@@ -1907,6 +2069,9 @@ export default function App() {
             onRestoreDefaults={handleRestoreDefaultShifts}
             currentYear={selectedYear}
             convenio={convenio}
+            hasUnsavedChanges={hasUnsavedChanges}
+            isUpdatingDrive={isUpdatingDrive}
+            onActualizarDrive={() => void handleActualizarTodo()}
           />
         )}
 
@@ -1930,15 +2095,16 @@ export default function App() {
             validatedMonths={validatedMonths}
             annualSummary={annualSummary}
             isValidatingMonth={isValidatingMonth}
-            isRecalculating={isRefreshingForNomina || isValidatingMonth}
+            isRecalculating={isRefreshingForNomina || isValidatingMonth || isUpdatingDrive}
             onRecalculate={() =>
-              currentValidatedRecord
-                ? void handleValidateMonth(selectedYear, selectedMonth)
-                : void recalculatePayrollFromCalendar(true)
+              void handleActualizarTodo({ recalculateValidatedIfNeeded: true })
             }
             onValidateMonth={() => handleValidateMonth(selectedYear, selectedMonth)}
             onUnvalidateMonth={() => handleUnvalidateMonth(selectedYear, selectedMonth)}
             onGoToNomina={() => handleSelectTab('nomina')}
+            hasUnsavedChanges={hasUnsavedChanges}
+            isUpdatingDrive={isUpdatingDrive}
+            onActualizarDrive={() => void handleActualizarTodo({ recalculateValidatedIfNeeded: true })}
           />
         )}
 
@@ -1957,18 +2123,20 @@ export default function App() {
               setSelectedMonth(m);
             }}
             monthName={MONTH_NAMES[selectedMonth - 1]}
-            onUpdateProfile={(partial) => setProfile((prev) => ({ ...prev, ...partial }))}
+            onUpdateProfile={(partial) => {
+              markDatasetsDirty('profile');
+              setProfile((prev) => ({ ...prev, ...partial }));
+            }}
             onExportPDF={handleExportPDF}
             onExportExcel={handleExportExcel}
             isDriveConnected={!!currentUser}
             onOpenDriveNominasModal={() => setIsDriveNominasModalOpen(true)}
             lastCalculatedAt={lastPayrollCalculatedAt}
-            isRecalculating={isRefreshingForNomina || isValidatingMonth}
+            isRecalculating={isRefreshingForNomina || isValidatingMonth || isUpdatingDrive}
             onRecalculate={() =>
-              currentValidatedRecord
-                ? void handleValidateMonth(selectedYear, selectedMonth)
-                : void recalculatePayrollFromCalendar(true)
+              void handleActualizarTodo({ recalculateValidatedIfNeeded: true })
             }
+            hasUnsavedChanges={hasUnsavedChanges}
             validatedMonth={currentValidatedRecord}
             validatedMonths={validatedMonths}
             annualSummary={annualSummary}
@@ -1985,6 +2153,9 @@ export default function App() {
             onSaveExtra={handleSaveExtra}
             onDeleteExtra={handleDeleteExtra}
             yearRate={currentYearRate}
+            hasUnsavedChanges={hasUnsavedChanges}
+            isUpdatingDrive={isUpdatingDrive}
+            onActualizarDrive={() => void handleActualizarTodo()}
           />
         )}
       </main>
@@ -2016,7 +2187,10 @@ export default function App() {
         isOpen={isConvenioModalOpen}
         onClose={() => setIsConvenioModalOpen(false)}
         convenio={convenio}
-        onSaveConvenio={(newConv) => setConvenio(newConv)}
+        onSaveConvenio={(newConv) => {
+          markDatasetsDirty('convenio');
+          setConvenio(newConv);
+        }}
         currentYear={selectedYear}
       />
 
@@ -2038,17 +2212,35 @@ export default function App() {
         isOpen={isLoginModalOpen}
         onClose={() => {
           setAuthRedirectError(null);
+          pendingActualizarAfterLoginRef.current = false;
           setIsLoginModalOpen(false);
         }}
         onLoginSuccess={(user, token) => {
           setAuthRedirectError(null);
           setCurrentUser(user);
           setAccessToken(token);
-          syncWithDrive(token);
+          void syncWithDrive(token).then(() => {
+            if (pendingActualizarAfterLoginRef.current) {
+              pendingActualizarAfterLoginRef.current = false;
+              void handleActualizarTodo();
+            }
+          });
         }}
         onNavigateLegal={navigateToPublicPage}
         allowDismiss={true}
         initialError={authRedirectError}
+      />
+
+      {/* Confirmación de cierre de sesión si existen cambios sin subir a Drive */}
+      <ConfirmModal
+        isOpen={isLogoutConfirmOpen}
+        title="Cambios sin actualizar en Drive"
+        message="Tienes cambios realizados que todavía no se han actualizado en Google Drive. Si desconectas la cuenta ahora, esos cambios quedarán solo en este navegador y no estarán disponibles la próxima vez en Drive.\n\n¿Deseas desconectar sin actualizar?"
+        confirmText="Desconectar sin actualizar"
+        cancelText="Volver y actualizar"
+        isDestructive={true}
+        onConfirm={() => void executeLogout()}
+        onCancel={() => setIsLogoutConfirmOpen(false)}
       />
 
       {/* Modal de Nóminas Guardadas en Drive */}

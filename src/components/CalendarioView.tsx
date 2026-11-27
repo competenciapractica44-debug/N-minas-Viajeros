@@ -78,6 +78,9 @@ interface CalendarioViewProps {
   onValidateMonth?: () => Promise<{ success: boolean; driveSaved: boolean; message: string }>;
   onUnvalidateMonth?: () => Promise<void> | void;
   onGoToNomina?: () => void;
+  hasUnsavedChanges?: boolean;
+  isUpdatingDrive?: boolean;
+  onActualizarDrive?: () => void;
 }
 
 const MONTH_NAMES = [
@@ -106,6 +109,9 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
   onValidateMonth,
   onUnvalidateMonth,
   onGoToNomina,
+  hasUnsavedChanges = false,
+  isUpdatingDrive = false,
+  onActualizarDrive,
 }) => {
   const [selectedDayNumber, setSelectedDayNumber] = useState(1);
   const [isAddingExtraModal, setIsAddingExtraModal] = useState(false);
@@ -1201,6 +1207,29 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
           <span className="text-blue-700">
             Mes nat. ({counters.turnosCount}t): {counters.monthWorkedHours.toLocaleString('es-ES')} h
           </span>
+          {onActualizarDrive && (
+            <button
+              type="button"
+              onClick={onActualizarDrive}
+              disabled={!hasUnsavedChanges || isUpdatingDrive}
+              className={`font-sans inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-bold transition-all border ${
+                isUpdatingDrive
+                  ? 'bg-amber-500 text-white border-amber-600 cursor-wait'
+                  : hasUnsavedChanges
+                  ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600 shadow-sm ring-2 ring-amber-300/70 cursor-pointer'
+                  : 'bg-white/80 text-slate-400 border-slate-200 cursor-default'
+              }`}
+            >
+              {isUpdatingDrive ? (
+                <RefreshCw className="w-3 h-3 animate-spin" />
+              ) : hasUnsavedChanges ? (
+                <RefreshCw className="w-3 h-3" />
+              ) : (
+                <Check className="w-3 h-3 text-emerald-500" />
+              )}
+              <span>{isUpdatingDrive ? 'Actualizando...' : hasUnsavedChanges ? 'Actualizar Drive' : 'Actualizado'}</span>
+            </button>
+          )}
         </div>
       </div>
 

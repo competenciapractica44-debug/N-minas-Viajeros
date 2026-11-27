@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Search, Plus, Edit2, Clock, CheckCircle2, Award, ShieldCheck, RefreshCw, Trash2, Calendar, Moon } from 'lucide-react';
+import { Search, Plus, Edit2, Clock, CheckCircle2, Award, ShieldCheck, RefreshCw, Trash2, Calendar, Moon, Check } from 'lucide-react';
 import { ShiftDefinition, ConvenioInfo } from '../types';
 import { formatCurrency } from '../utils/exporter';
 import { computeShiftRateFromConvenio } from '../utils/calculator';
@@ -14,6 +14,9 @@ interface TurnosBDViewProps {
   onRestoreDefaults: () => void;
   currentYear: number;
   convenio?: ConvenioInfo;
+  hasUnsavedChanges?: boolean;
+  isUpdatingDrive?: boolean;
+  onActualizarDrive?: () => void;
 }
 
 type DayFilterType = 'todos' | 'laborable' | 'sabado' | 'festivo';
@@ -41,6 +44,9 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
   onRestoreDefaults,
   currentYear,
   convenio,
+  hasUnsavedChanges = false,
+  isUpdatingDrive = false,
+  onActualizarDrive,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedDayType, setSelectedDayType] = useState<DayFilterType>('todos');
@@ -182,12 +188,37 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
             <p className="text-xs text-slate-600 leading-relaxed">
               Tarifario de turnos precargado con los partes de trabajo iniciales, descanso y vacaciones según el Convenio Colectivo de Transporte de Zaragoza.
             </p>
-            <div className="flex flex-wrap items-center gap-3 pt-2 text-[11px] font-medium text-slate-500">
-              <span className="flex items-center gap-1 text-blue-700">
-                <Clock className="w-3.5 h-3.5" /> Convenio Transporte {currentYear}
-              </span>
-              <span>·</span>
-              <span>{shifts.length} turnos en base de datos</span>
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
+              <div className="flex flex-wrap items-center gap-3 text-[11px] font-medium text-slate-500">
+                <span className="flex items-center gap-1 text-blue-700">
+                  <Clock className="w-3.5 h-3.5" /> Convenio Transporte {currentYear}
+                </span>
+                <span>·</span>
+                <span>{shifts.length} turnos en base de datos</span>
+              </div>
+              {onActualizarDrive && (
+                <button
+                  type="button"
+                  onClick={onActualizarDrive}
+                  disabled={!hasUnsavedChanges || isUpdatingDrive}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border ${
+                    isUpdatingDrive
+                      ? 'bg-amber-500 text-white border-amber-600 cursor-wait'
+                      : hasUnsavedChanges
+                      ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600 shadow-md ring-2 ring-amber-300/70 cursor-pointer'
+                      : 'bg-white/80 text-slate-400 border-slate-200 cursor-default'
+                  }`}
+                >
+                  {isUpdatingDrive ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  ) : hasUnsavedChanges ? (
+                    <RefreshCw className="w-3.5 h-3.5" />
+                  ) : (
+                    <Check className="w-3.5 h-3.5 text-emerald-500" />
+                  )}
+                  <span>{isUpdatingDrive ? 'Actualizando...' : hasUnsavedChanges ? 'Actualizar cambios en Drive' : 'Actualizado'}</span>
+                </button>
+              )}
             </div>
           </div>
         </div>

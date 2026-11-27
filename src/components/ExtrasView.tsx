@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { SlidersHorizontal, Plus, CheckCircle2, Edit2, Trash2, X, Info } from 'lucide-react';
+import { SlidersHorizontal, Plus, CheckCircle2, Edit2, Trash2, X, Info, RefreshCw, Check } from 'lucide-react';
 import { ExtraConcept, ExtraUnit, ConvenioYearRate } from '../types';
 import { formatCurrency } from '../utils/exporter';
 import { DEFAULT_CONVENIO_ZARAGOZA, getOfficialConvenioExtraAmount } from '../data/convenioZaragoza';
@@ -11,6 +11,9 @@ interface ExtrasViewProps {
   onSaveExtra: (extra: ExtraConcept) => void;
   onDeleteExtra: (id: string) => void;
   yearRate?: ConvenioYearRate;
+  hasUnsavedChanges?: boolean;
+  isUpdatingDrive?: boolean;
+  onActualizarDrive?: () => void;
 }
 
 export const ExtrasView: React.FC<ExtrasViewProps> = ({
@@ -19,6 +22,9 @@ export const ExtrasView: React.FC<ExtrasViewProps> = ({
   onSaveExtra,
   onDeleteExtra,
   yearRate,
+  hasUnsavedChanges = false,
+  isUpdatingDrive = false,
+  onActualizarDrive,
 }) => {
   const effectiveYearRate = yearRate || DEFAULT_CONVENIO_ZARAGOZA.ratesByYear[2026];
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -119,13 +125,38 @@ export const ExtrasView: React.FC<ExtrasViewProps> = ({
           </div>
         </div>
 
-        <button
-          onClick={handleOpenNew}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors"
-        >
-          <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-          <span>Añadir</span>
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          {onActualizarDrive && (
+            <button
+              type="button"
+              onClick={onActualizarDrive}
+              disabled={!hasUnsavedChanges || isUpdatingDrive}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border ${
+                isUpdatingDrive
+                  ? 'bg-amber-500 text-white border-amber-600 cursor-wait'
+                  : hasUnsavedChanges
+                  ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600 shadow-md ring-2 ring-amber-300/70 cursor-pointer'
+                  : 'bg-slate-100 text-slate-400 border-slate-200 cursor-default'
+              }`}
+            >
+              {isUpdatingDrive ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              ) : hasUnsavedChanges ? (
+                <RefreshCw className="w-3.5 h-3.5" />
+              ) : (
+                <Check className="w-3.5 h-3.5 text-emerald-500" />
+              )}
+              <span>{isUpdatingDrive ? 'Actualizando...' : hasUnsavedChanges ? 'Actualizar' : 'Al día'}</span>
+            </button>
+          )}
+          <button
+            onClick={handleOpenNew}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors"
+          >
+            <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+            <span>Añadir</span>
+          </button>
+        </div>
       </div>
 
       {/* Concepts Header */}

@@ -51,6 +51,7 @@ interface NominaViewProps {
   lastCalculatedAt?: Date;
   isRecalculating?: boolean;
   onRecalculate?: () => void;
+  hasUnsavedChanges?: boolean;
   validatedMonth?: ValidatedMonthRecord;
   validatedMonths?: ValidatedMonthsMap;
   annualSummary?: AnnualLiquidationResult;
@@ -78,6 +79,7 @@ export const NominaView: React.FC<NominaViewProps> = ({
   lastCalculatedAt,
   isRecalculating,
   onRecalculate,
+  hasUnsavedChanges = false,
   validatedMonth,
   annualSummary,
   isValidatingMonth,
@@ -880,15 +882,29 @@ export const NominaView: React.FC<NominaViewProps> = ({
               type="button"
               onClick={onRecalculate}
               disabled={isRecalculating}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white font-semibold border border-white/15 transition-colors self-start sm:self-auto shrink-0 disabled:opacity-60 cursor-pointer"
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold border transition-all self-start sm:self-auto shrink-0 disabled:opacity-60 cursor-pointer ${
+                hasUnsavedChanges
+                  ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-400 shadow-md ring-2 ring-amber-300/60'
+                  : 'bg-white/10 hover:bg-white/20 text-white border-white/15'
+              }`}
               title={
-                validatedMonth
-                  ? 'Recalcular suma de horas y actualizar el mes validado'
-                  : 'Volver a calcular ahora con los últimos datos del calendario'
+                hasUnsavedChanges
+                  ? 'Guardar todos los cambios en Google Drive y recalcular nómina'
+                  : validatedMonth
+                  ? 'Recalcular suma de horas, actualizar el mes validado y guardar en Google Drive'
+                  : 'Recalcular nómina y guardar estado en Google Drive'
               }
             >
-              <RefreshCw className={`w-3 h-3 ${isRecalculating ? 'animate-spin' : ''}`} />
-              <span>{validatedMonth ? 'Recalcular mes' : 'Recalcular'}</span>
+              <RefreshCw className={`w-3.5 h-3.5 ${isRecalculating ? 'animate-spin' : ''}`} />
+              <span>
+                {isRecalculating
+                  ? 'Actualizando...'
+                  : hasUnsavedChanges
+                  ? 'Actualizar y guardar en Drive'
+                  : validatedMonth
+                  ? 'Actualizar mes'
+                  : 'Actualizar'}
+              </span>
             </button>
           )}
         </div>

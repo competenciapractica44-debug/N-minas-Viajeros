@@ -5,6 +5,7 @@ import { User } from 'firebase/auth';
 interface DriveSyncBadgeProps {
   user: User | null;
   isSyncing: boolean;
+  hasUnsavedChanges?: boolean;
   lastSyncTime: Date | null;
   nominasFolderUrl?: string;
   onManualSync: () => void;
@@ -15,6 +16,7 @@ interface DriveSyncBadgeProps {
 export const DriveSyncBadge: React.FC<DriveSyncBadgeProps> = ({
   user,
   isSyncing,
+  hasUnsavedChanges = false,
   lastSyncTime,
   nominasFolderUrl,
   onManualSync,
@@ -66,6 +68,8 @@ export const DriveSyncBadge: React.FC<DriveSyncBadgeProps> = ({
             <span className="truncate max-w-[90px]">{user.displayName || user.email?.split('@')[0]}</span>
             {isSyncing ? (
               <RefreshCw className="w-3 h-3 text-blue-600 animate-spin" />
+            ) : hasUnsavedChanges ? (
+              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" title="Cambios sin actualizar en Drive"></span>
             ) : (
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" title="Sincronizado"></span>
             )}
@@ -147,8 +151,14 @@ export const DriveSyncBadge: React.FC<DriveSyncBadgeProps> = ({
                 disabled={isSyncing}
                 className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-slate-700 hover:bg-slate-50 font-semibold transition-colors disabled:opacity-50"
               >
-                <RefreshCw className={`w-3.5 h-3.5 text-blue-600 ${isSyncing ? 'animate-spin' : ''}`} />
-                <span>{isSyncing ? 'Sincronizando ahora...' : 'Sincronizar con Drive ahora'}</span>
+                <RefreshCw className={`w-3.5 h-3.5 ${hasUnsavedChanges ? 'text-amber-600' : 'text-blue-600'} ${isSyncing ? 'animate-spin' : ''}`} />
+                <span>
+                  {isSyncing
+                    ? 'Sincronizando ahora...'
+                    : hasUnsavedChanges
+                    ? 'Actualizar y subir cambios a Drive'
+                    : 'Sincronizar con Drive ahora'}
+                </span>
               </button>
 
               <button
