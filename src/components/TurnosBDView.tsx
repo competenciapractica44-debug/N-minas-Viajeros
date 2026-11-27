@@ -200,13 +200,14 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
                 <button
                   type="button"
                   onClick={onActualizarDrive}
-                  disabled={!hasUnsavedChanges || isUpdatingDrive}
+                  disabled={isUpdatingDrive}
+                  title="Recalcular todos los meses con las tarifas actuales y guardar en Google Drive"
                   className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border ${
                     isUpdatingDrive
                       ? 'bg-amber-500 text-white border-amber-600 cursor-wait'
                       : hasUnsavedChanges
                       ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600 shadow-md ring-2 ring-amber-300/70 cursor-pointer'
-                      : 'bg-white/80 text-slate-400 border-slate-200 cursor-default'
+                      : 'bg-white hover:bg-emerald-50 text-emerald-800 border-emerald-200 cursor-pointer'
                   }`}
                 >
                   {isUpdatingDrive ? (
@@ -214,9 +215,9 @@ export const TurnosBDView: React.FC<TurnosBDViewProps> = ({
                   ) : hasUnsavedChanges ? (
                     <RefreshCw className="w-3.5 h-3.5" />
                   ) : (
-                    <Check className="w-3.5 h-3.5 text-emerald-500" />
+                    <Check className="w-3.5 h-3.5 text-emerald-600" />
                   )}
-                  <span>{isUpdatingDrive ? 'Actualizando...' : hasUnsavedChanges ? 'Actualizar cambios en Drive' : 'Actualizado'}</span>
+                  <span>{isUpdatingDrive ? 'Actualizando...' : hasUnsavedChanges ? 'Actualizar cambios en Drive' : 'Actualizar Drive'}</span>
                 </button>
               )}
             </div>

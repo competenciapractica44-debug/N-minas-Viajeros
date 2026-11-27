@@ -155,18 +155,18 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               type="button"
               onClick={onActualizarDrive}
-              disabled={!hasUnsavedChanges || isUpdatingDrive}
+              disabled={isUpdatingDrive}
               title={
                 hasUnsavedChanges
-                  ? 'Guardar todos los cambios pendientes en Google Drive'
-                  : 'Todo actualizado en Google Drive'
+                  ? 'Recalcular todos los meses y guardar cambios pendientes en Google Drive'
+                  : 'Recalcular todos los meses y actualizar en Google Drive'
               }
               className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all border shrink-0 ${
                 isUpdatingDrive
                   ? 'bg-amber-500 text-white border-amber-600 shadow-sm cursor-wait'
                   : hasUnsavedChanges
                   ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600 shadow-md ring-2 ring-amber-300/70 cursor-pointer'
-                  : 'bg-slate-100 text-slate-400 border-slate-200 cursor-default'
+                  : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200 cursor-pointer'
               }`}
             >
               {isUpdatingDrive ? (
@@ -174,7 +174,7 @@ export const Header: React.FC<HeaderProps> = ({
               ) : hasUnsavedChanges ? (
                 <RefreshCw className="w-3.5 h-3.5" />
               ) : (
-                <Check className="w-3.5 h-3.5 text-emerald-500" />
+                <Check className="w-3.5 h-3.5 text-emerald-600" />
               )}
               <span>{isUpdatingDrive ? 'Actualizando...' : 'Actualizar'}</span>
               {hasUnsavedChanges && !isUpdatingDrive && (

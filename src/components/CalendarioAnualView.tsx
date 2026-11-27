@@ -49,6 +49,9 @@ interface CalendarioAnualViewProps {
   onUpdateYearOverride: (year: number, nextOverride: AnnualYearOverrideData | null) => void;
   onSyncCommonToProfile: (partial: Partial<WorkerProfile>) => void;
   validatedMonths?: ValidatedMonthsMap;
+  hasUnsavedChanges?: boolean;
+  isUpdatingDrive?: boolean;
+  onActualizarDrive?: () => void;
   onSelectMonthForNomina?: (year: number, month: number) => void;
 }
 
@@ -63,6 +66,9 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
   onUpdateYearOverride,
   onSyncCommonToProfile,
   validatedMonths,
+  hasUnsavedChanges,
+  isUpdatingDrive,
+  onActualizarDrive,
   onSelectMonthForNomina,
 }) => {
   const [toastMsg, setToastMsg] = useState<string | null>(null);
@@ -370,6 +376,25 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
               <CalendarX2 className="w-3.5 h-3.5" />
               <span>Vacaciones a 0</span>
             </button>
+
+            {onActualizarDrive && (
+              <button
+                type="button"
+                onClick={onActualizarDrive}
+                disabled={isUpdatingDrive}
+                title="Recalcular todos los meses y guardar en Google Drive"
+                className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold border shadow-xs transition ${
+                  isUpdatingDrive
+                    ? 'bg-amber-500 text-white border-amber-600 cursor-wait'
+                    : hasUnsavedChanges
+                    ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600 ring-2 ring-amber-300/70 cursor-pointer'
+                    : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-300 cursor-pointer'
+                }`}
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isUpdatingDrive ? 'animate-spin' : ''}`} />
+                <span>{isUpdatingDrive ? 'Actualizando...' : hasUnsavedChanges ? 'Actualizar Drive' : 'Actualizar'}</span>
+              </button>
+            )}
 
             <button
               type="button"
@@ -1598,16 +1623,23 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                         )}
                       </div>
                       {m.tieneRegistroReal ? (
-                        <div className="text-[10px] text-emerald-700 font-semibold mt-0.5">
-                          {m.isHorasManual
-                            ? 'Manual'
-                            : `${m.turnosDiarioCount} turnos · ${
-                                profile.extrasCutoffMode === 'mes_natural'
-                                  ? 'Mes nat.'
-                                  : profile.extrasCutoffMode === 'personalizado'
-                                    ? `Ciclo d.${profile.customCutoffStartDay || 25}`
-                                    : 'Ciclo 25–24'
-                              }`}
+                        <div className="text-[10px] text-emerald-700 font-semibold mt-0.5 space-y-0.5">
+                          <div>
+                            {m.isHorasManual
+                              ? 'Manual'
+                              : `${m.turnosDiarioCount} turnos · ${
+                                  profile.extrasCutoffMode === 'mes_natural'
+                                    ? 'Mes nat.'
+                                    : profile.extrasCutoffMode === 'personalizado'
+                                      ? `Ciclo d.${profile.customCutoffStartDay || 25}`
+                                      : 'Ciclo 25–24'
+                                }`}
+                          </div>
+                          {!m.isHorasManual && m.horasTotalesTrabajadas > m.horasRealizadas + 0.004 && (
+                            <div className="text-[10px] font-bold text-slate-600 font-mono">
+                              Total trab.: {formatHoras(m.horasTotalesTrabajadas)}
+                            </div>
+                          )}
                         </div>
                       ) : (
                         <div

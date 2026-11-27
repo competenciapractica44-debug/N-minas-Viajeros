@@ -910,13 +910,39 @@ export default function App() {
     return run;
   };
 
-  // Guardar explícitamente todos los cambios locales en Google Drive (Turnos, Turnos BD, Extras, Convenio, Perfil, Anual y Validados)
+  // Guardar explícitamente todos los cambios locales en Google Drive (Turnos, Turnos BD, Extras, Convenio, Perfil, Anual y todos los meses validados)
   const handleActualizarTodo = async (options?: {
     recalculateValidatedIfNeeded?: boolean;
     overrideValidatedMonths?: ValidatedMonthsMap;
   }): Promise<boolean> => {
     setPayrollCalcNonce((n) => n + 1);
     setLastPayrollCalculatedAt(new Date());
+
+    const prevSnapshot = latestStateRef.current;
+    const baseValidated = options?.overrideValidatedMonths || prevSnapshot.validatedMonths;
+    const hasValidated = Object.keys(baseValidated).length > 0;
+    const refreshedValidated = options?.overrideValidatedMonths
+      ? options.overrideValidatedMonths
+      : hasValidated
+        ? reconcileValidatedMonthsMap(baseValidated, {
+            assignments: prevSnapshot.assignments,
+            shifts: prevSnapshot.shifts,
+            convenio: prevSnapshot.convenio,
+            profile: prevSnapshot.profile,
+            annualCalendarData: prevSnapshot.annualCalendarData,
+            refreshFromContext: true,
+          })
+        : baseValidated;
+
+    if (!options?.overrideValidatedMonths && hasValidated) {
+      if (JSON.stringify(refreshedValidated) !== JSON.stringify(prevSnapshot.validatedMonths)) {
+        setValidatedMonths(refreshedValidated);
+        latestStateRef.current = {
+          ...latestStateRef.current,
+          validatedMonths: refreshedValidated,
+        };
+      }
+    }
 
     const token = accessToken || getCachedAccessToken();
     if (!currentUser || !token) {
@@ -929,18 +955,12 @@ export default function App() {
     setIsUpdatingDrive(true);
     setDriveSyncError(null);
     try {
-      let currentSnapshot = latestStateRef.current;
-
-      // Si se solicita recalcular un mes ya validado (desde Nómina o Calendario), regenerar primero su snapshot actualizado
-      if (options?.recalculateValidatedIfNeeded && currentValidatedRecord) {
-        await handleValidateMonth(selectedYear, selectedMonth, { skipSpinner: false });
-        currentSnapshot = latestStateRef.current;
-      }
+      const currentSnapshot = latestStateRef.current;
+      const validatedToUpload = options?.overrideValidatedMonths || currentSnapshot.validatedMonths;
 
       const folders = driveFolders || (await ensureDirexisHierarchy(token));
       if (!driveFolders) setDriveFolders(folders);
 
-      const validatedToUpload = options?.overrideValidatedMonths || currentSnapshot.validatedMonths;
       const uploads: Array<Promise<unknown>> = [
         saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'turnos_base.json', currentSnapshot.shifts),
         saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, 'convenio_2026.json', currentSnapshot.convenio),
@@ -955,7 +975,81 @@ export default function App() {
         );
       }
 
+      // Regenerar PDF y JSON archivado de cualquier mes validado cuyo cálculo haya cambiado (o del mes activo si se solicita recalcular)
+      const changedValidatedEntries = Object.entries(validatedToUpload).filter(([mKey, rec]) => {
+        if (options?.recalculateValidatedIfNeeded && mKey === currentMonthKey) return true;
+        return JSON.stringify(rec) !== JSON.stringify(prevSnapshot.validatedMonths[mKey]);
+      });
+
+      for (const [, rec] of changedValidatedEntries) {
+        if (!rec?.payrollSnapshot) continue;
+        const mName = MONTH_NAMES[rec.month - 1] || `Mes_${rec.month}`;
+        const recProfile: WorkerProfile = rec.profileSnapshot || currentSnapshot.profile;
+        const recShiftsMap = new Map<string, ShiftDefinition>();
+        (rec.shiftsSnapshot && rec.shiftsSnapshot.length > 0
+          ? rec.shiftsSnapshot
+          : currentSnapshot.shifts
+        ).forEach((s) => recShiftsMap.set(s.code, s));
+        const recConvenio: ConvenioInfo = rec.yearRateSnapshot
+          ? {
+              ...currentSnapshot.convenio,
+              ratesByYear: {
+                ...currentSnapshot.convenio.ratesByYear,
+                [rec.year]: rec.yearRateSnapshot,
+              },
+            }
+          : currentSnapshot.convenio;
+        const recAssignments =
+          rec.assignmentsSnapshot && rec.assignmentsSnapshot.length > 0
+            ? rec.assignmentsSnapshot
+            : currentSnapshot.assignments;
+        const sanitizedProfileName = (recProfile.name || 'Conductor').replace(/[^a-zA-Z0-9]/g, '_');
+        const pdfFileName =
+          rec.drivePdfFileName || `Nomina_${mName}_${rec.year}_${sanitizedProfileName}.pdf`;
+        const jsonFileName =
+          rec.driveJsonFileName || `Nomina_${mName}_${rec.year}_${sanitizedProfileName}.json`;
+        const pdfBlob = exportToPDFBlob(
+          rec.payrollSnapshot,
+          recProfile,
+          recAssignments,
+          recShiftsMap,
+          recConvenio,
+          mName
+        );
+        uploads.push(
+          uploadPdfToDrive(token, folders.nominasFolderId, pdfFileName, pdfBlob),
+          saveOrUpdateDriveJsonFile(token, folders.nominasFolderId, jsonFileName, {
+            mes: mName,
+            ano: rec.year,
+            validado: true,
+            fechaValidacion: rec.validatedAt,
+            jornadaPct: rec.jornadaPct,
+            irpfPercentage: rec.irpfPercentage,
+            horasRealizadasMesNatural: rec.horasRealizadasMesNatural,
+            horasTeoricasMes: rec.horasTeoricasMes,
+            saldoMesHoras: rec.saldoMesHoras,
+            bolsaAcumuladaAlCierre: rec.bolsaAcumuladaAlCierre,
+            perfil: recProfile,
+            resumen: {
+              liquidoPercibir: rec.payrollSnapshot.liquidoPercibir,
+              totalDevengado: rec.payrollSnapshot.totalDevengado,
+              totalDeducido: rec.payrollSnapshot.totalDeducido,
+              baseCotizacionSS: rec.payrollSnapshot.baseCotizacionSS,
+              retencionIrpf: rec.payrollSnapshot.retencionIrpf,
+              retencionIrpfImporte: rec.payrollSnapshot.retencionIrpfImporte,
+              lineas: rec.payrollSnapshot.lines,
+            },
+            nominaCompleta: rec.payrollSnapshot,
+          })
+        );
+      }
+
       await Promise.all(uploads);
+
+      if (changedValidatedEntries.length > 0) {
+        const updatedFiles = await listArchivedFilesInNominas(token, folders.nominasFolderId);
+        setArchivedNominas(updatedFiles);
+      }
 
       lastSyncedAssignmentsJsonRef.current = JSON.stringify(currentSnapshot.assignments);
       clearDirtyDatasets();
@@ -1236,6 +1330,9 @@ export default function App() {
     const winEnd = cutoffRange.endDateStr > mEnd ? cutoffRange.endDateStr : mEnd;
     const validSnapList = snapList.filter((sa) => {
       const d = normalizeDateKey(sa.date);
+      const isCarryover = d < mStart;
+      const isCarryValidated = Boolean(validatedMonths[d.slice(0, 7)]);
+      if (isCarryover && !isCarryValidated) return false;
       return d >= mStart || hasMeaningfulAssignmentContent(sa);
     });
     const snapDates = new Set(validSnapList.map((sa) => normalizeDateKey(sa.date)));
@@ -1247,7 +1344,7 @@ export default function App() {
     return [...otherAssignments, ...validSnapList].sort((a, b) =>
       normalizeDateKey(a.date).localeCompare(normalizeDateKey(b.date))
     );
-  }, [assignments, currentValidatedRecord, selectedYear, selectedMonth]);
+  }, [assignments, currentValidatedRecord, validatedMonths, selectedYear, selectedMonth]);
 
   // Computed Monthly Payroll (en vivo para meses sin validar; usa snapshot congelado si el mes está validado)
   const liveMonthlyPayroll = useMemo(() => {
@@ -1929,7 +2026,7 @@ export default function App() {
         onLogout={handleLogout}
         hasUnsavedChanges={hasUnsavedChanges}
         isUpdatingDrive={isUpdatingDrive}
-        onActualizarDrive={() => void handleActualizarTodo()}
+        onActualizarDrive={() => void handleActualizarTodo({ recalculateValidatedIfNeeded: true })}
       />
 
       {/* Aviso global de cambios sin actualizar en Drive + confirmación de guardado */}
@@ -1944,7 +2041,7 @@ export default function App() {
             </div>
             <button
               type="button"
-              onClick={() => void handleActualizarTodo()}
+              onClick={() => void handleActualizarTodo({ recalculateValidatedIfNeeded: true })}
               disabled={isUpdatingDrive}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-xs transition-colors cursor-pointer disabled:opacity-60"
             >
@@ -2052,6 +2149,9 @@ export default function App() {
               void handleSaveProfile({ ...profile, ...partial })
             }
             validatedMonths={validatedMonths}
+            hasUnsavedChanges={hasUnsavedChanges}
+            isUpdatingDrive={isUpdatingDrive}
+            onActualizarDrive={() => void handleActualizarTodo({ recalculateValidatedIfNeeded: true })}
             onSelectMonthForNomina={(y, m) => {
               setSelectedYear(y);
               setSelectedMonth(m);
@@ -2071,7 +2171,7 @@ export default function App() {
             convenio={convenio}
             hasUnsavedChanges={hasUnsavedChanges}
             isUpdatingDrive={isUpdatingDrive}
-            onActualizarDrive={() => void handleActualizarTodo()}
+            onActualizarDrive={() => void handleActualizarTodo({ recalculateValidatedIfNeeded: true })}
           />
         )}
 
@@ -2155,7 +2255,7 @@ export default function App() {
             yearRate={currentYearRate}
             hasUnsavedChanges={hasUnsavedChanges}
             isUpdatingDrive={isUpdatingDrive}
-            onActualizarDrive={() => void handleActualizarTodo()}
+            onActualizarDrive={() => void handleActualizarTodo({ recalculateValidatedIfNeeded: true })}
           />
         )}
       </main>

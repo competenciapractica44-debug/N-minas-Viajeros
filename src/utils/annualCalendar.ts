@@ -13,18 +13,13 @@ import {
 } from '../types';
 import {
   getEffectiveYearRate,
-  isFTExtraName,
-  getExplicitFestivasHoursFromExtras,
 } from '../data/convenioZaragoza';
-import { ALL_INITIAL_SHIFTS } from '../data/defaultTurnos';
 import { getOfficialHolidaysForYear } from '../data/spanishHolidays';
 import {
   ANNUAL_VACATION_DAYS_CONVENIO,
   AnnualScheduleMonthInput,
-  calculateTotalHours,
   computeAnnualHoursSchedule,
-  computeShiftRateFromConvenio,
-  getDateRangeStrings,
+  computePeriodHoursBreakdownFromMap,
   getExtrasDateRange,
 } from './calculator';
 
@@ -49,6 +44,10 @@ export interface AnnualMonthBaseRow extends AnnualMonthEditableFields {
   extraMes: boolean;
   extraJulDic: boolean;
   horasDiarioMes: number;
+  horasTotalesDiarioMes?: number;
+  horasFestivasDiarioMes?: number;
+  horasFTDiarioMes?: number;
+  horasExceso9hDiarioMes?: number;
   turnosDiarioCount: number;
   diarioRecordCount?: number;
   bajaDiasPreviosAnioAnterior?: number;
@@ -65,8 +64,9 @@ export interface AnnualMonthComputedRow extends AnnualMonthBaseRow {
   isCuotaManual: boolean;
   saldoMes: number;
   bolsaAcumulada: number;
-  // Bloque real (suma mes natural desde Turnos Día o edición manual) y compensación
+  // Bloque real (suma ciclo activo desde Turnos Día o edición manual) y compensación
   horasRealizadas: number;
+  horasTotalesTrabajadas: number;
   horasComplementariasMes: number;
   isHorasManual: boolean;
   tieneRegistroReal: boolean;
@@ -245,35 +245,6 @@ function normalizeDateKeyForAnnual(dateStr?: string): string {
   return trimmed;
 }
 
-function resolveShiftForAnnual(
-  asg: DayAssignment,
-  shiftsByCode: Map<string, ShiftDefinition>,
-  shiftsById: Map<string, ShiftDefinition>
-): ShiftDefinition | undefined {
-  if (asg.shiftSnapshot) {
-    return asg.shiftSnapshot;
-  }
-  const rawCode = asg.shiftCode ? String(asg.shiftCode).trim().replace(/\/L/gi, '') : '';
-  if (rawCode) {
-    const found = shiftsByCode.get(rawCode.toUpperCase());
-    if (found) return found;
-  }
-  if (asg.shiftId) {
-    const foundById = shiftsById.get(String(asg.shiftId).trim());
-    if (foundById) return foundById;
-  }
-  if (rawCode) {
-    const upper = rawCode.toUpperCase();
-    const fallback = ALL_INITIAL_SHIFTS.find((s) => s.code.trim().toUpperCase() === upper);
-    if (fallback) return fallback;
-  }
-  if (asg.shiftId) {
-    const fallbackById = ALL_INITIAL_SHIFTS.find((s) => s.id === asg.shiftId);
-    if (fallbackById) return fallbackById;
-  }
-  return undefined;
-}
-
 /**
  * Estimates working days (Mon–Fri) corresponding to a block of natural days,
  * matching standard calendar weeks (5 working days per 7 natural days) and capped
@@ -334,10 +305,11 @@ export function deriveDefaultAnnualMonths(
   );
 
   const shiftsByCode = new Map<string, ShiftDefinition>();
-  const shiftsById = new Map<string, ShiftDefinition>();
   shifts.forEach((s) => {
-    if (s.code) shiftsByCode.set(s.code.trim().toUpperCase(), s);
-    if (s.id) shiftsById.set(s.id, s);
+    if (s.code) {
+      shiftsByCode.set(s.code, s);
+      shiftsByCode.set(s.code.trim().toUpperCase(), s);
+    }
   });
 
   const assignmentByDate = new Map<string, DayAssignment>();
@@ -368,7 +340,6 @@ export function deriveDefaultAnnualMonths(
     }
   }
 
-  let prevMonthHadSickInDiary = prevYearTrailingSickDays > 0;
   let prevMonthEndedWithSickInDiary = prevYearTrailingSickDays > 0;
 
   return ANNUAL_MONTH_NAMES.map((mes, idx) => {
@@ -378,11 +349,12 @@ export function deriveDefaultAnnualMonths(
     const effectiveYearRateForMonth = vRec?.yearRateSnapshot || yearRate;
 
     const monthShiftsByCode = new Map(shiftsByCode);
-    const monthShiftsById = new Map(shiftsById);
     if (vRec?.shiftsSnapshot && vRec.shiftsSnapshot.length > 0) {
       vRec.shiftsSnapshot.forEach((s) => {
-        if (s.code) monthShiftsByCode.set(s.code.trim().toUpperCase(), s);
-        if (s.id) monthShiftsById.set(s.id, s);
+        if (s.code) {
+          monthShiftsByCode.set(s.code, s);
+          monthShiftsByCode.set(s.code.trim().toUpperCase(), s);
+        }
       });
     }
 
@@ -410,6 +382,9 @@ export function deriveDefaultAnnualMonths(
           const liveExisting = monthAssignmentByDate.get(key);
           const isCarryoverDate = key < `${monthKey}-01`;
           const isCarryoverMonthValidated = Boolean(validatedMonths?.[key.slice(0, 7)]);
+          if (isCarryoverDate && !isCarryoverMonthValidated && liveExisting) {
+            return;
+          }
           if (
             isCarryoverDate &&
             liveExisting &&
@@ -431,8 +406,6 @@ export function deriveDefaultAnnualMonths(
     let vacLab = 0;
     let bajaNat = 0;
     let bajaLab = 0;
-    let horasDiarioMes = 0;
-    let turnosDiarioCount = 0;
     let diarioRecordCount = 0;
 
     for (let day = 1; day <= daysInMonth; day++) {
@@ -469,52 +442,15 @@ export function deriveDefaultAnnualMonths(
       }
     }
 
-    // Sumar horas ordinarias realizadas dentro del período de corte activo (ej. Direxis 25 anterior al 24 actual),
-    // excluyendo festivos, "Festivas (horas)", F/T y hasta 9h por turno (idéntico a cálculo de nómina).
-    const cutoffDates = getDateRangeStrings(cutoffRange.startDateStr, cutoffRange.endDateStr);
-    for (const dateStr of cutoffDates) {
-      const asg = monthAssignmentByDate.get(dateStr);
-      if (!asg) continue;
-
-      const upperCode = (asg.shiftCode || '').trim().toUpperCase();
-      const upperId = (asg.shiftId || '').trim().toUpperCase();
-
-      const isRest = Boolean(asg.isRest || upperCode === 'D' || upperId === 'D');
-      const isVac = Boolean(asg.isVacation || upperCode === 'V' || upperId === 'V');
-      const isSick = isAssignmentSickLeave(asg);
-
-      const isMarkedHoliday = Boolean(
-        asg.isHoliday || asg.extras?.some((e) => e.name.toLowerCase().includes('plus festivo'))
-      );
-      const isMarkedFT = Boolean(asg.extras?.some((e) => isFTExtraName(e.name)));
-      const dayExplicitFestivaHours = getExplicitFestivasHoursFromExtras(
-        asg.extras,
-        effectiveYearRateForMonth.horaOrdinaria ?? 13.62
-      );
-
-      if (!isRest && !isVac && !isSick) {
-        let dayHours = 0;
-        if (asg.customStartTime && asg.customEndTime) {
-          turnosDiarioCount += 1;
-          dayHours = calculateTotalHours(asg.customStartTime, asg.customEndTime);
-        } else if (asg.shiftCode || asg.shiftId) {
-          const shiftDef = resolveShiftForAnnual(asg, monthShiftsByCode, monthShiftsById);
-          if (shiftDef && shiftDef.code !== 'D' && shiftDef.code !== 'V' && shiftDef.code !== 'B') {
-            turnosDiarioCount += 1;
-            dayHours = computeShiftRateFromConvenio(shiftDef, effectiveYearRateForMonth).totalHours;
-          } else if (!shiftDef && upperCode !== 'D' && upperCode !== 'V' && upperCode !== 'B') {
-            turnosDiarioCount += 1;
-          }
-        }
-        if (asg.lateFinishMinutes && asg.lateFinishMinutes > 0) {
-          dayHours += asg.lateFinishMinutes / 60;
-        }
-        if (!isMarkedHoliday && !isMarkedFT && dayHours > 0) {
-          const nonFestivaDayHours = Math.max(0, dayHours - dayExplicitFestivaHours);
-          horasDiarioMes += Math.min(9, nonFestivaDayHours);
-        }
-      }
-    }
+    // Sumar con exactitud de minutos todas las horas dentro del período de corte activo (ej. Direxis 25 anterior al 24 actual),
+    // desglosando ordinarias (<=9h/turno no festivo ni F/T), festivas, F/T y totales trabajadas (idéntico a cálculo de nómina).
+    const cutoffBreakdown = computePeriodHoursBreakdownFromMap(
+      monthAssignmentByDate,
+      monthShiftsByCode,
+      effectiveYearRateForMonth,
+      cutoffRange.startDateStr,
+      cutoffRange.endDateStr
+    );
 
     const firstDayKey = `${year}-${String(monthNum).padStart(2, '0')}-01`;
     const lastDayKey = `${year}-${String(monthNum).padStart(2, '0')}-${String(daysInMonth).padStart(
@@ -534,7 +470,6 @@ export function deriveDefaultAnnualMonths(
       bajaContiguaAuto = false;
     }
 
-    prevMonthHadSickInDiary = bajaNat > 0;
     prevMonthEndedWithSickInDiary = lastDayIsSick;
 
     return {
@@ -548,8 +483,12 @@ export function deriveDefaultAnnualMonths(
       tipoBaja: 'comun' as SickLeaveContingencyType,
       extraMes: idx === 2, // Marzo
       extraJulDic: idx === 6 || idx === 11, // Julio y Diciembre
-      horasDiarioMes: Math.round(horasDiarioMes * 100) / 100,
-      turnosDiarioCount,
+      horasDiarioMes: cutoffBreakdown.ordinaryHours,
+      horasTotalesDiarioMes: cutoffBreakdown.totalWorkedHours,
+      horasFestivasDiarioMes: cutoffBreakdown.festivasHours,
+      horasFTDiarioMes: cutoffBreakdown.ftHours,
+      horasExceso9hDiarioMes: cutoffBreakdown.dailyOver9Hours,
+      turnosDiarioCount: cutoffBreakdown.workedDayCount,
       diarioRecordCount,
       ...(idx === 0 && prevYearTrailingSickDays > 0
         ? { bajaDiasPreviosAnioAnterior: prevYearTrailingSickDays }
@@ -762,14 +701,21 @@ export function calculateAnnualLiquidation(
       ? Math.max(0, m.horasReales as number)
       : m.turnosDiarioCount > 0 || m.horasDiarioMes > 0 || !m.vRec
         ? Math.max(0, m.horasDiarioMes)
-        : Math.max(0, m.vRec.horasRealizadasMesNatural);
+        : Math.max(0, m.vRec.payrollSnapshot?.ordinaryConvenioHours ?? m.vRec.horasRealizadasMesNatural);
+    const horasTotalesTrabajadas = isHorasManual
+      ? horasRealizadas
+      : m.horasTotalesDiarioMes !== undefined &&
+          (m.turnosDiarioCount > 0 || m.horasDiarioMes > 0 || !m.vRec)
+        ? Math.max(horasRealizadas, m.horasTotalesDiarioMes)
+        : Math.max(horasRealizadas, m.vRec?.payrollSnapshot?.totalWorkedHours ?? horasRealizadas);
 
     const tieneRegistroReal =
       isHorasManual ||
       m.isValidated ||
       m.turnosDiarioCount > 0 ||
       (m.diarioRecordCount || 0) > 0 ||
-      horasRealizadas > 0;
+      horasRealizadas > 0 ||
+      horasTotalesTrabajadas > 0;
 
     // Las horas complementarias cobradas en nómina NO deben ir a la bolsa de horas
     let horasComplementariasMes = 0;
@@ -956,6 +902,7 @@ export function calculateAnnualLiquidation(
       saldoMes,
       bolsaAcumulada,
       horasRealizadas,
+      horasTotalesTrabajadas,
       horasComplementariasMes,
       isHorasManual,
       tieneRegistroReal,

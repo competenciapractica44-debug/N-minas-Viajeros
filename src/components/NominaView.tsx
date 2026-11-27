@@ -619,8 +619,10 @@ export const NominaView: React.FC<NominaViewProps> = ({
               )}
             </div>
             <span className="text-[11px] text-slate-300 block">
-              {payroll.horasFestivas > 0 || payroll.horasFT > 0
-                ? `Teór.: ${formatHoursES(payroll.convenioMonthlyHoursTarget)} h${payroll.horasFestivas > 0 ? ` · ${formatHoursES(payroll.horasFestivas)} h festivas` : ''}${payroll.horasFT > 0 ? ` · ${formatHoursES(payroll.horasFT)} h F/T` : ''} aparte (Total: ${formatHoursES(payroll.totalWorkedHours)} h)`
+              {payroll.totalWorkedHours > payroll.ordinaryConvenioHours + 0.004 ||
+              payroll.horasFestivas > 0 ||
+              payroll.horasFT > 0
+                ? `Teór.: ${formatHoursES(payroll.convenioMonthlyHoursTarget)} h${payroll.horasFestivas > 0 ? ` · ${formatHoursES(payroll.horasFestivas)} h festivas` : ''}${payroll.horasFT > 0 ? ` · ${formatHoursES(payroll.horasFT)} h F/T` : ''}${payroll.horasExcesoDiario9h > 0 ? ` · ${formatHoursES(payroll.horasExcesoDiario9h)} h (>9h)` : ''} (Total trab.: ${formatHoursES(payroll.totalWorkedHours)} h)`
                 : `Teór. ${monthName}: ${formatHoursES(payroll.convenioMonthlyHoursTarget)} h (${payroll.totalDays}d${payroll.vacationDays > 0 ? ` − ${payroll.vacationDays}d vac.` : ''}${payroll.sickDays > 0 ? ` − ${payroll.sickDays}d baja` : ''})`}
             </span>
           </div>

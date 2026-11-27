@@ -130,13 +130,14 @@ export const ExtrasView: React.FC<ExtrasViewProps> = ({
             <button
               type="button"
               onClick={onActualizarDrive}
-              disabled={!hasUnsavedChanges || isUpdatingDrive}
+              disabled={isUpdatingDrive}
+              title="Recalcular todos los meses y guardar en Google Drive"
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border ${
                 isUpdatingDrive
                   ? 'bg-amber-500 text-white border-amber-600 cursor-wait'
                   : hasUnsavedChanges
                   ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600 shadow-md ring-2 ring-amber-300/70 cursor-pointer'
-                  : 'bg-slate-100 text-slate-400 border-slate-200 cursor-default'
+                  : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200 cursor-pointer'
               }`}
             >
               {isUpdatingDrive ? (
@@ -144,9 +145,9 @@ export const ExtrasView: React.FC<ExtrasViewProps> = ({
               ) : hasUnsavedChanges ? (
                 <RefreshCw className="w-3.5 h-3.5" />
               ) : (
-                <Check className="w-3.5 h-3.5 text-emerald-500" />
+                <Check className="w-3.5 h-3.5 text-emerald-600" />
               )}
-              <span>{isUpdatingDrive ? 'Actualizando...' : hasUnsavedChanges ? 'Actualizar' : 'Al día'}</span>
+              <span>{isUpdatingDrive ? 'Actualizando...' : 'Actualizar'}</span>
             </button>
           )}
           <button

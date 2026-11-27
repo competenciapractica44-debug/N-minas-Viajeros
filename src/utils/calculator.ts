@@ -229,15 +229,41 @@ export function calculateNightHours(startTime: string, endTime: string): number 
 }
 
 /**
- * Computes duration in hours from start to end (including overnight)
+ * Computes exact duration in minutes from start to end (including overnight)
  */
-export function calculateTotalHours(startTime: string, endTime: string): number {
+export function calculateTotalMinutes(startTime: string, endTime: string): number {
   if (!startTime || !endTime) return 0;
   const [sH, sM] = startTime.split(':').map(Number);
   const [eH, eM] = endTime.split(':').map(Number);
+  if (!Number.isFinite(sH) || !Number.isFinite(sM) || !Number.isFinite(eH) || !Number.isFinite(eM)) {
+    return 0;
+  }
   let diff = (eH * 60 + eM) - (sH * 60 + sM);
   if (diff < 0) diff += 24 * 60;
-  return Math.round((diff / 60) * 100) / 100;
+  return diff;
+}
+
+/**
+ * Computes total duration in integer minutes for a ShiftDefinition (supports continuado & partido)
+ */
+export function computeShiftWorkedMinutes(shift?: ShiftDefinition): number {
+  if (!shift) return 0;
+  const code = (shift.code || '').trim().toUpperCase();
+  if (code === 'D' || code === 'V' || code === 'B') return 0;
+  if (shift.modality === 'partido' && shift.secondStartTime && shift.secondEndTime) {
+    return (
+      calculateTotalMinutes(shift.startTime, shift.endTime) +
+      calculateTotalMinutes(shift.secondStartTime, shift.secondEndTime)
+    );
+  }
+  return calculateTotalMinutes(shift.startTime, shift.endTime);
+}
+
+/**
+ * Computes duration in hours from start to end (including overnight)
+ */
+export function calculateTotalHours(startTime: string, endTime: string): number {
+  return Math.round((calculateTotalMinutes(startTime, endTime) / 60) * 100) / 100;
 }
 
 export const ANNUAL_VACATION_DAYS_CONVENIO = 31;
@@ -802,7 +828,7 @@ export function getLiquidatedMonthPeriod(
  * sobre una lista de fechas [startDateStr..endDateStr], garantizando que las horas festivas y F/T queden siempre fuera
  * de las horas ordinarias y nunca se dupliquen entre isHoliday/Plus Festivo y "Festivas (horas)".
  */
-function computePeriodHoursBreakdownFromMap(
+export function computePeriodHoursBreakdownFromMap(
   assignmentsByDate: Map<string, DayAssignment>,
   shiftsMap: Map<string, ShiftDefinition>,
   yearRate: ConvenioYearRate,
@@ -815,6 +841,7 @@ function computePeriodHoursBreakdownFromMap(
   festivasHours: number;
   ftHours: number;
   explicitComplementariasHours: number;
+  totalWorkedHours: number;
   hasAnyActivity: boolean;
   workedDayCount: number;
   prevWorkedDayCount: number;
@@ -824,11 +851,11 @@ function computePeriodHoursBreakdownFromMap(
   const dates = getDateRangeStrings(startDateStr, endDateStr);
   const horaOrdinariaDay = yearRate.horaOrdinaria ?? 13.62;
 
-  let ordinaryHours = 0;
-  let dailyOver9Hours = 0;
-  let festivasHours = 0;
-  let ftHours = 0;
-  let explicitComplementariasHours = 0;
+  let ordinaryMinutes = 0;
+  let dailyOver9Minutes = 0;
+  let festivasMinutes = 0;
+  let ftMinutes = 0;
+  let explicitComplementariasMinutes = 0;
   let hasAnyActivity = false;
   let workedDayCount = 0;
   let prevWorkedDayCount = 0;
@@ -856,7 +883,9 @@ function computePeriodHoursBreakdownFromMap(
     }
     const isPaidHolidayDay = Boolean(asg.isHoliday) || dayPlusFestivoQty > 0;
     const dayHasFT = dayExtras.some((e) => isFTExtraName(e.name));
-    const dayExplicitFestivaHours = getExplicitFestivasHoursFromExtras(dayExtras, horaOrdinariaDay);
+    const dayExplicitFestivaMinutes = Math.round(
+      getExplicitFestivasHoursFromExtras(dayExtras, horaOrdinariaDay) * 60
+    );
 
     const resolvedShiftDef = !isOff ? resolveShiftDefinition(asg, shiftsMap) : undefined;
     const hasCustomTimes = Boolean(asg.customStartTime && asg.customEndTime);
@@ -865,7 +894,7 @@ function computePeriodHoursBreakdownFromMap(
       (!resolvedShiftDef && (asg.shiftCode || asg.shiftId || hasCustomTimes))
     );
 
-    let dayShiftAndLateTotal = 0;
+    let dayShiftAndLateMinutes = 0;
     if (hasWorkedShift) {
       workedDayCount++;
       if (monthStartDateStr && dateStr < monthStartDateStr) {
@@ -875,31 +904,29 @@ function computePeriodHoursBreakdownFromMap(
       }
       hasAnyActivity = true;
       if (asg.customStartTime && asg.customEndTime) {
-        dayShiftAndLateTotal += calculateTotalHours(asg.customStartTime, asg.customEndTime);
+        dayShiftAndLateMinutes += calculateTotalMinutes(asg.customStartTime, asg.customEndTime);
       } else if (resolvedShiftDef) {
-        dayShiftAndLateTotal += computeShiftRateFromConvenio(resolvedShiftDef, yearRate, {
-          isHoliday: Boolean(asg.isHoliday),
-        }).totalHours;
+        dayShiftAndLateMinutes += computeShiftWorkedMinutes(resolvedShiftDef);
       }
     }
     if (!isOff && asg.lateFinishMinutes && asg.lateFinishMinutes > 0) {
       hasAnyActivity = true;
-      dayShiftAndLateTotal += asg.lateFinishMinutes / 60;
+      dayShiftAndLateMinutes += Math.round(asg.lateFinishMinutes);
     }
 
-    if (dayShiftAndLateTotal > 0) {
+    if (dayShiftAndLateMinutes > 0) {
       if (isPaidHolidayDay) {
-        festivasHours += dayShiftAndLateTotal;
+        festivasMinutes += dayShiftAndLateMinutes;
       } else if (dayHasFT) {
-        ftHours += dayShiftAndLateTotal;
+        ftMinutes += dayShiftAndLateMinutes;
       } else {
-        const nonFestivaHrs = Math.max(0, dayShiftAndLateTotal - dayExplicitFestivaHours);
-        ordinaryHours += Math.min(9, nonFestivaHrs);
-        dailyOver9Hours += Math.max(0, nonFestivaHrs - 9);
+        const nonFestivaMins = Math.max(0, dayShiftAndLateMinutes - dayExplicitFestivaMinutes);
+        ordinaryMinutes += Math.min(540, nonFestivaMins);
+        dailyOver9Minutes += Math.max(0, nonFestivaMins - 540);
       }
     }
 
-    let holidayCoveredRemaining = isPaidHolidayDay || dayHasFT ? dayShiftAndLateTotal : 0;
+    let holidayCoveredRemainingMins = isPaidHolidayDay || dayHasFT ? dayShiftAndLateMinutes : 0;
     for (const extra of dayExtras) {
       const lower = extra.name.toLowerCase();
       if (isFTExtraName(extra.name)) {
@@ -907,9 +934,10 @@ function computePeriodHoursBreakdownFromMap(
         const h = extra.quantity !== undefined && extra.quantity > 0
           ? extra.quantity
           : (extra.amount > 0 ? parseFloat((extra.amount / (horaOrdinariaDay || 13.62)).toFixed(2)) : 0);
-        if (h > 0) {
-          if (isPaidHolidayDay) festivasHours += h;
-          else ftHours += h;
+        const mins = Math.round(h * 60);
+        if (mins > 0) {
+          if (isPaidHolidayDay) festivasMinutes += mins;
+          else ftMinutes += mins;
         }
         continue;
       }
@@ -917,24 +945,29 @@ function computePeriodHoursBreakdownFromMap(
         const h = extra.quantity !== undefined && extra.quantity > 0
           ? extra.quantity
           : (extra.amount > 0 ? parseFloat((extra.amount / (horaOrdinariaDay || 13.62)).toFixed(2)) : 1);
-        const uncoveredH = Math.max(0, h - holidayCoveredRemaining);
-        holidayCoveredRemaining = Math.max(0, holidayCoveredRemaining - h);
-        festivasHours += uncoveredH;
+        const hMins = Math.round(h * 60);
+        const uncoveredMins = Math.max(0, hMins - holidayCoveredRemainingMins);
+        holidayCoveredRemainingMins = Math.max(0, holidayCoveredRemainingMins - hMins);
+        festivasMinutes += uncoveredMins;
       } else if (lower.includes('complementaria')) {
         const h = extra.quantity !== undefined && extra.quantity > 0
           ? extra.quantity
           : (extra.amount > 0 ? parseFloat((extra.amount / (horaOrdinariaDay || 13.62)).toFixed(2)) : 1);
-        explicitComplementariasHours += h;
+        explicitComplementariasMinutes += Math.round(h * 60);
       }
     }
   }
 
+  const totalWorkedMinutes =
+    ordinaryMinutes + dailyOver9Minutes + festivasMinutes + ftMinutes + explicitComplementariasMinutes;
+
   return {
-    ordinaryHours: r2(ordinaryHours),
-    dailyOver9Hours: r2(dailyOver9Hours),
-    festivasHours: r2(festivasHours),
-    ftHours: r2(ftHours),
-    explicitComplementariasHours: r2(explicitComplementariasHours),
+    ordinaryHours: r2(ordinaryMinutes / 60),
+    dailyOver9Hours: r2(dailyOver9Minutes / 60),
+    festivasHours: r2(festivasMinutes / 60),
+    ftHours: r2(ftMinutes / 60),
+    explicitComplementariasHours: r2(explicitComplementariasMinutes / 60),
+    totalWorkedHours: r2(totalWorkedMinutes / 60),
     hasAnyActivity,
     workedDayCount,
     prevWorkedDayCount,
@@ -966,11 +999,10 @@ export function calculateMonthlyPayroll(
   let sickDays = 0;
   let sickDaysInLiquidatedPeriod = 0;
 
-  let totalWorkedHours = 0;
-  let ordinaryShiftHours = 0;
-  let dailyExcessOver9hHours = 0;
-  let holidayShiftHours = 0;
-  let ftShiftHours = 0;
+  let ordinaryShiftMinutes = 0;
+  let dailyExcessOver9hMinutes = 0;
+  let holidayShiftMinutes = 0;
+  let ftShiftMinutes = 0;
   let totalNightHours = 0;
 
   let festivoPluses = 0;
@@ -1133,9 +1165,9 @@ export function calculateMonthlyPayroll(
   let dietasTributables = 0;
   let totalLateFinishMinutes = 0;
 
-  let explicitFestivasHours = 0;
-  let explicitFTHours = 0;
-  let explicitComplementariasHours = 0;
+  let explicitFestivasMinutes = 0;
+  let explicitFTMinutes = 0;
+  let explicitComplementariasMinutes = 0;
   let generalExtrasTotal = 0;
   const generalExtrasItems: PayrollLineItem[] = [];
   const pendingOrdinaryLateDetails: Array<{
@@ -1286,20 +1318,22 @@ export function calculateMonthlyPayroll(
           currentMonthCutoffWorkedDays++;
         }
         const calc = computeShiftRateFromConvenio(shiftDef, yearRate, { isHoliday, isSunday });
+        let effectiveTotalMinutes = computeShiftWorkedMinutes(shiftDef);
         let effectiveTotalHours = calc.totalHours;
         let effectiveNightHours = calc.nightHours;
         if (assignment.customStartTime && assignment.customEndTime) {
-          effectiveTotalHours = calculateTotalHours(assignment.customStartTime, assignment.customEndTime);
+          effectiveTotalMinutes = calculateTotalMinutes(assignment.customStartTime, assignment.customEndTime);
+          effectiveTotalHours = Math.round((effectiveTotalMinutes / 60) * 100) / 100;
           effectiveNightHours = calculateNightHours(assignment.customStartTime, assignment.customEndTime);
         }
 
         const lateMinsDay = assignment.lateFinishMinutes && assignment.lateFinishMinutes > 0
-          ? assignment.lateFinishMinutes
+          ? Math.round(assignment.lateFinishMinutes)
           : 0;
         const lateHoursDay = lateMinsDay / 60;
-        const dayTotalWorkedHours = effectiveTotalHours + lateHoursDay;
+        const dayTotalWorkedMinutes = effectiveTotalMinutes + lateMinsDay;
+        const dayTotalWorkedHours = dayTotalWorkedMinutes / 60;
 
-        totalWorkedHours += dayTotalWorkedHours;
         totalNightHours += effectiveNightHours;
         if (lateMinsDay > 0) {
           totalLateFinishMinutes += lateMinsDay;
@@ -1308,13 +1342,14 @@ export function calculateMonthlyPayroll(
         const horaOrdinariaDay = yearRate.horaOrdinaria ?? 13.62;
         const isPaidHolidayDay = isHoliday || dayPlusFestivoQty > 0;
         const dayExplicitFestivaHours = getExplicitFestivasHoursFromExtras(dayExtras, horaOrdinariaDay);
+        const dayExplicitFestivaMinutes = Math.round(dayExplicitFestivaHours * 60);
         if (isPaidHolidayDay) {
-          holidayShiftHours += dayTotalWorkedHours;
-          if (effectiveTotalHours > 0) {
+          holidayShiftMinutes += dayTotalWorkedMinutes;
+          if (effectiveTotalMinutes > 0) {
             pushValidExtraDetail({
               date: dateStr,
               name: `Horas festivas (${effectiveTotalHours.toFixed(2).replace('.', ',')} h)`,
-              amount: effectiveTotalHours * horaOrdinariaDay,
+              amount: (effectiveTotalMinutes / 60) * horaOrdinariaDay,
               notes: `Turno ${shiftDef.code} en festivo (aparte del salario base)`,
             });
           }
@@ -1329,8 +1364,8 @@ export function calculateMonthlyPayroll(
             });
           }
         } else if (dayHasFTExtra) {
-          ftShiftHours += dayTotalWorkedHours;
-          if (dayTotalWorkedHours > 0) {
+          ftShiftMinutes += dayTotalWorkedMinutes;
+          if (dayTotalWorkedMinutes > 0) {
             pushValidExtraDetail({
               date: dateStr,
               name: `Horas F/T (${dayTotalWorkedHours.toFixed(2).replace('.', ',')} h)`,
@@ -1341,13 +1376,14 @@ export function calculateMonthlyPayroll(
         } else {
           // Descontar primero cualquier hora festiva marcada explícitamente mediante extra "Festivas (horas)"
           // para que jamás compute como hora ordinaria ni como complementaria, además de aplicar el tope de 9h diarias.
-          const nonFestivaWorkedHours = Math.max(0, dayTotalWorkedHours - dayExplicitFestivaHours);
-          const ordinaryForDay = Math.min(9, nonFestivaWorkedHours);
-          const over9ForDay = Math.max(0, nonFestivaWorkedHours - 9);
-          ordinaryShiftHours += ordinaryForDay;
-          dailyExcessOver9hHours += over9ForDay;
+          const nonFestivaWorkedMinutes = Math.max(0, dayTotalWorkedMinutes - dayExplicitFestivaMinutes);
+          const ordinaryForDayMinutes = Math.min(540, nonFestivaWorkedMinutes);
+          const over9ForDayMinutes = Math.max(0, nonFestivaWorkedMinutes - 540);
+          ordinaryShiftMinutes += ordinaryForDayMinutes;
+          dailyExcessOver9hMinutes += over9ForDayMinutes;
 
-          if (over9ForDay > 0) {
+          const over9ForDay = over9ForDayMinutes / 60;
+          if (over9ForDayMinutes > 0) {
             const over9Formatted = over9ForDay.toFixed(2).replace('.', ',');
             const totalFormatted = dayTotalWorkedHours.toFixed(2).replace('.', ',');
             pushValidExtraDetail({
@@ -1359,14 +1395,14 @@ export function calculateMonthlyPayroll(
           }
 
           if (lateMinsDay > 0) {
-            const festivaCoveredFromDay = Math.min(dayTotalWorkedHours, dayExplicitFestivaHours);
-            const latePaidInNonOrdinary = Math.min(lateHoursDay, over9ForDay + festivaCoveredFromDay);
-            const lateOrdinaryHours = Math.max(0, lateHoursDay - latePaidInNonOrdinary);
-            if (lateOrdinaryHours > 0) {
+            const festivaCoveredFromDayMins = Math.min(dayTotalWorkedMinutes, dayExplicitFestivaMinutes);
+            const latePaidInNonOrdinaryMins = Math.min(lateMinsDay, over9ForDayMinutes + festivaCoveredFromDayMins);
+            const lateOrdinaryMinutes = Math.max(0, lateMinsDay - latePaidInNonOrdinaryMins);
+            if (lateOrdinaryMinutes > 0) {
               pendingOrdinaryLateDetails.push({
                 date: dateStr,
-                lateMinutes: Math.round(lateOrdinaryHours * 60),
-                lateOrdinaryHours,
+                lateMinutes: lateOrdinaryMinutes,
+                lateOrdinaryHours: lateOrdinaryMinutes / 60,
                 reason: assignment.lateFinishReason,
               });
             }
@@ -1584,17 +1620,16 @@ export function calculateMonthlyPayroll(
 
       // Otros extras (Horas festivas, F/T, Complementarias, Dietas, Fuera de convenio) dentro del corte
       const isPaidHolidayDayForExtras = isHoliday || dayPlusFestivoQty > 0;
-      let dayCoveredHolidayOrFTHours = 0;
+      let dayCoveredHolidayOrFTMinutes = 0;
       if (isPaidHolidayDayForExtras || dayHasFTExtra) {
         if (hasWorkedShiftOnDay && shiftDef) {
-          const calcForCap = computeShiftRateFromConvenio(shiftDef, yearRate, { isHoliday, isSunday });
-          const shiftHCap =
+          const shiftMinsCap =
             assignment.customStartTime && assignment.customEndTime
-              ? calculateTotalHours(assignment.customStartTime, assignment.customEndTime)
-              : calcForCap.totalHours;
-          dayCoveredHolidayOrFTHours = shiftHCap + ((assignment.lateFinishMinutes || 0) / 60);
-        } else if (!hasWorkedShiftOnDay && assignment.lateFinishMinutes && assignment.lateFinishMinutes > 0) {
-          dayCoveredHolidayOrFTHours = assignment.lateFinishMinutes / 60;
+              ? calculateTotalMinutes(assignment.customStartTime, assignment.customEndTime)
+              : computeShiftWorkedMinutes(shiftDef);
+          dayCoveredHolidayOrFTMinutes = shiftMinsCap + Math.round(assignment.lateFinishMinutes || 0);
+        } else if (!hasWorkedShiftOnDay && !isRestOrOff && assignment.lateFinishMinutes && assignment.lateFinishMinutes > 0) {
+          dayCoveredHolidayOrFTMinutes = Math.round(assignment.lateFinishMinutes);
         }
       }
 
@@ -1603,21 +1638,22 @@ export function calculateMonthlyPayroll(
         if (isShiftInherentExtraName(extra.name)) continue;
 
         if (isFTExtraName(extra.name)) {
-          // Si hay un turno asignado en este día F/T, sus horas ya se computaron en ftShiftHours o holidayShiftHours
+          // Si hay un turno asignado en este día F/T, sus horas ya se computaron en ftShiftMinutes o holidayShiftMinutes
           if (hasWorkedShiftOnDay) continue;
           const h = extra.quantity !== undefined && extra.quantity > 0
             ? extra.quantity
             : (extra.amount > 0 ? parseFloat((extra.amount / (yearRate.horaOrdinaria || 13.62)).toFixed(2)) : 0);
-          if (h > 0) {
+          const mins = Math.round(h * 60);
+          if (mins > 0) {
             if (isPaidHolidayDayForExtras) {
-              explicitFestivasHours += h;
+              explicitFestivasMinutes += mins;
             } else {
-              explicitFTHours += h;
+              explicitFTMinutes += mins;
             }
-            const amt = parseFloat((h * (yearRate.horaOrdinaria ?? 13.62)).toFixed(2));
+            const amt = parseFloat(((mins / 60) * (yearRate.horaOrdinaria ?? 13.62)).toFixed(2));
             pushValidExtraDetail({
               date: dateStr,
-              name: isPaidHolidayDayForExtras ? `Horas festivas (${h.toFixed(2).replace('.', ',')} h)` : `Horas F/T (${h.toFixed(2).replace('.', ',')} h)`,
+              name: isPaidHolidayDayForExtras ? `Horas festivas (${(mins / 60).toFixed(2).replace('.', ',')} h)` : `Horas F/T (${(mins / 60).toFixed(2).replace('.', ',')} h)`,
               amount: amt,
               notes: extra.notes || 'Día marcado como F/T',
             });
@@ -1633,18 +1669,20 @@ export function calculateMonthlyPayroll(
           const h = extra.quantity !== undefined && extra.quantity > 0
             ? extra.quantity
             : (extra.amount > 0 ? parseFloat((extra.amount / (yearRate.horaOrdinaria || 13.62)).toFixed(2)) : 1);
-          // Si el día ya se marcó como festivo (isHoliday / Plus Festivo), las horas del turno ya fueron a holidayShiftHours;
+          const hMins = Math.round(h * 60);
+          // Si el día ya se marcó como festivo (isHoliday / Plus Festivo), las horas del turno ya fueron a holidayShiftMinutes;
           // solo computar cualquier exceso explícito para evitar doble cómputo.
-          const uncoveredH = Math.max(0, h - dayCoveredHolidayOrFTHours);
-          dayCoveredHolidayOrFTHours = Math.max(0, dayCoveredHolidayOrFTHours - h);
-          explicitFestivasHours += uncoveredH;
-          resolvedGrossExtraAmount = parseFloat((uncoveredH * (yearRate.horaOrdinaria ?? 13.62)).toFixed(2));
+          const uncoveredMins = Math.max(0, hMins - dayCoveredHolidayOrFTMinutes);
+          dayCoveredHolidayOrFTMinutes = Math.max(0, dayCoveredHolidayOrFTMinutes - hMins);
+          explicitFestivasMinutes += uncoveredMins;
+          resolvedGrossExtraAmount = parseFloat(((uncoveredMins / 60) * (yearRate.horaOrdinaria ?? 13.62)).toFixed(2));
         } else if (lower.includes('complementaria')) {
           const h = extra.quantity !== undefined && extra.quantity > 0
             ? extra.quantity
             : (extra.amount > 0 ? parseFloat((extra.amount / (yearRate.horaOrdinaria || 13.62)).toFixed(2)) : 1);
-          explicitComplementariasHours += h;
-          resolvedGrossExtraAmount = parseFloat((h * (yearRate.horaOrdinaria ?? 13.62)).toFixed(2));
+          const hMins = Math.round(h * 60);
+          explicitComplementariasMinutes += hMins;
+          resolvedGrossExtraAmount = parseFloat(((hMins / 60) * (yearRate.horaOrdinaria ?? 13.62)).toFixed(2));
         } else {
           if (convenioUnitRate !== null) {
             resolvedGrossExtraAmount = parseFloat((qty * convenioUnitRate).toFixed(2));
@@ -1677,20 +1715,22 @@ export function calculateMonthlyPayroll(
         });
       }
 
-      // Terminado más tarde en días sin turno laboral asignado
-      if (!hasWorkedShiftOnDay && assignment.lateFinishMinutes && assignment.lateFinishMinutes > 0) {
+      // Terminado más tarde en días sin turno laboral asignado (días activos, no D/V/B)
+      if (!hasWorkedShiftOnDay && !isRestOrOff && assignment.lateFinishMinutes && assignment.lateFinishMinutes > 0) {
         const isPaidHolidayDay = isHoliday || dayPlusFestivoQty > 0;
-        const lateHoursDay = assignment.lateFinishMinutes / 60;
-        const dayExplicitFestivaLate = getExplicitFestivasHoursFromExtras(dayExtras, yearRate.horaOrdinaria ?? 13.62);
-        totalWorkedHours += lateHoursDay;
+        const lateMinsDayOnly = Math.round(assignment.lateFinishMinutes);
+        const lateHoursDay = lateMinsDayOnly / 60;
+        const dayExplicitFestivaLateMins = Math.round(
+          getExplicitFestivasHoursFromExtras(dayExtras, yearRate.horaOrdinaria ?? 13.62) * 60
+        );
         const computedLateAmount = parseFloat(
           (lateHoursDay * (yearRate.horaOrdinaria ?? 13.62)).toFixed(2)
         );
-        const durationFormatted = formatMinutesToHoursAndMinutes(assignment.lateFinishMinutes);
+        const durationFormatted = formatMinutesToHoursAndMinutes(lateMinsDayOnly);
         const reasonText = assignment.lateFinishReason ? ` (${assignment.lateFinishReason})` : '';
 
         if (isPaidHolidayDay) {
-          holidayShiftHours += lateHoursDay;
+          holidayShiftMinutes += lateMinsDayOnly;
           pushValidExtraDetail({
             date: dateStr,
             name: `Terminado más tarde en festivo: +${durationFormatted}${reasonText}`,
@@ -1698,7 +1738,7 @@ export function calculateMonthlyPayroll(
             notes: `Computado como horas festivas a ${(yearRate.horaOrdinaria ?? 13.62).toFixed(2)} €/h`,
           });
         } else if (dayHasFTExtra) {
-          ftShiftHours += lateHoursDay;
+          ftShiftMinutes += lateMinsDayOnly;
           pushValidExtraDetail({
             date: dateStr,
             name: `Terminado más tarde en F/T: +${durationFormatted}${reasonText}`,
@@ -1706,25 +1746,25 @@ export function calculateMonthlyPayroll(
             notes: `Computado como horas F/T a ${(yearRate.horaOrdinaria ?? 13.62).toFixed(2)} €/h`,
           });
         } else {
-          totalLateFinishMinutes += assignment.lateFinishMinutes;
-          const nonFestLate = Math.max(0, lateHoursDay - dayExplicitFestivaLate);
-          const ordLate = Math.min(9, nonFestLate);
-          const over9Late = Math.max(0, nonFestLate - 9);
-          ordinaryShiftHours += ordLate;
-          dailyExcessOver9hHours += over9Late;
-          if (over9Late > 0) {
+          totalLateFinishMinutes += lateMinsDayOnly;
+          const nonFestLateMins = Math.max(0, lateMinsDayOnly - dayExplicitFestivaLateMins);
+          const ordLateMins = Math.min(540, nonFestLateMins);
+          const over9LateMins = Math.max(0, nonFestLateMins - 540);
+          ordinaryShiftMinutes += ordLateMins;
+          dailyExcessOver9hMinutes += over9LateMins;
+          if (over9LateMins > 0) {
             pushValidExtraDetail({
               date: dateStr,
               name: `Exceso > 9h: +${durationFormatted}${reasonText}`,
-              amount: parseFloat((over9Late * (yearRate.horaOrdinaria ?? 13.62)).toFixed(2)),
+              amount: parseFloat(((over9LateMins / 60) * (yearRate.horaOrdinaria ?? 13.62)).toFixed(2)),
               notes: `Exceso sobre 9h a complementarias`,
             });
           }
-          if (ordLate > 0) {
+          if (ordLateMins > 0) {
             pendingOrdinaryLateDetails.push({
               date: dateStr,
-              lateMinutes: Math.round(ordLate * 60),
-              lateOrdinaryHours: ordLate,
+              lateMinutes: ordLateMins,
+              lateOrdinaryHours: ordLateMins / 60,
               reason: assignment.lateFinishReason,
             });
           }
@@ -2265,13 +2305,13 @@ export function calculateMonthlyPayroll(
 
   // 5. Horas festivas (Convenio: horaOrdinaria) - Jornadas en festivo marcado (aparte de salario base)
   const horaOrdinariaUnitRate = yearRate.horaOrdinaria ?? 13.62;
-  const finalFestivasHours = roundHours(holidayShiftHours + explicitFestivasHours);
+  const finalFestivasHours = roundHours((holidayShiftMinutes + explicitFestivasMinutes) / 60);
   const horasFestivasAmount = parseFloat(
     (finalFestivasHours * horaOrdinariaUnitRate).toFixed(2)
   );
 
   // 5b. Horas F/T (Fiesta / Trabajo) (Convenio: horaOrdinaria) - Aparte del salario base aunque al mismo precio
-  const finalFTHours = roundHours(ftShiftHours + explicitFTHours);
+  const finalFTHours = roundHours((ftShiftMinutes + explicitFTMinutes) / 60);
   const horasFTAmount = parseFloat(
     (finalFTHours * horaOrdinariaUnitRate).toFixed(2)
   );
@@ -2299,7 +2339,7 @@ export function calculateMonthlyPayroll(
       ? roundHours(Math.max(convenioMonthlyHoursTarget, cuotaFijaNetOfSick))
       : convenioMonthlyHoursTarget;
 
-  const ordinaryConvenioHours = roundHours(ordinaryShiftHours);
+  const ordinaryConvenioHours = roundHours(ordinaryShiftMinutes / 60);
   const rawMonthlyDiff = roundHours(ordinaryConvenioHours - convenioMonthlyHoursTarget);
   const carriedDeficitOwed = Math.max(0, -runningDeficit);
   const carriedDeficitAppliedHours =
@@ -2326,7 +2366,8 @@ export function calculateMonthlyPayroll(
     roundHours((ordinaryConvenioHours - monthlyExcessOverTheoretical + sickCreditCurr) - effectiveCuotaForBolsaCurr);
   const bolsaHorasAcumulada = roundHours(bolsaSaldoAnterior + bolsaHorasMes);
 
-  const roundedDailyOver9h = roundHours(dailyExcessOver9hHours);
+  const roundedDailyOver9h = roundHours(dailyExcessOver9hMinutes / 60);
+  const explicitComplementariasHours = roundHours(explicitComplementariasMinutes / 60);
   const finalComplementariasHours =
     roundHours(monthlyExcessOverTheoretical + roundedDailyOver9h + explicitComplementariasHours);
   const importeHorasExtra = parseFloat(
@@ -2743,8 +2784,15 @@ export function calculateMonthlyPayroll(
     (totalDevengado + ssEmpresaCC + ssEmpresaDesempleo + ssEmpresaFP + ssEmpresaFogasa + ssEmpresaMEI).toFixed(2)
   );
 
-  const computedTotalWorkedHours =
-    Math.round((ordinaryConvenioHours + roundedDailyOver9h + finalFestivasHours + finalFTHours + explicitComplementariasHours) * 100) / 100;
+  const totalWorkedMinutesAll =
+    ordinaryShiftMinutes +
+    dailyExcessOver9hMinutes +
+    holidayShiftMinutes +
+    explicitFestivasMinutes +
+    ftShiftMinutes +
+    explicitFTMinutes +
+    explicitComplementariasMinutes;
+  const computedTotalWorkedHours = roundHours(totalWorkedMinutesAll / 60);
 
   return {
     monthKey,
@@ -3219,6 +3267,7 @@ export interface ReconcileValidatedContext {
   convenio?: ConvenioInfo;
   profile?: WorkerProfile;
   annualCalendarData?: Record<number, AnnualYearOverrideData>;
+  refreshFromContext?: boolean;
 }
 
 export function reconcileValidatedMonthsMap(
@@ -3442,6 +3491,137 @@ export function reconcileValidatedMonthsMap(
       const monthStartStr = `${mKey}-01`;
       let rebuiltCarryoverSnapshot = false;
 
+      // Modo explícito "Actualizar": recalcular íntegramente el mes validado desde asignaciones y turnos vigentes
+      // preservando su % jornada, % IRPF y tarifa anual congelados al validar.
+      if (context?.refreshFromContext) {
+        const freshShiftsList: ShiftDefinition[] =
+          context.shifts && context.shifts.length > 0
+            ? JSON.parse(JSON.stringify(context.shifts))
+            : rec.shiftsSnapshot
+              ? JSON.parse(JSON.stringify(rec.shiftsSnapshot))
+              : [];
+        const freshShiftsMap = new Map<string, ShiftDefinition>();
+        if (rec.shiftsSnapshot && rec.shiftsSnapshot.length > 0) {
+          rec.shiftsSnapshot.forEach((s) => freshShiftsMap.set(s.code, s));
+        }
+        freshShiftsList.forEach((s) => freshShiftsMap.set(s.code, s));
+
+        const freshProfileBase: WorkerProfile = rec.profileSnapshot
+          ? JSON.parse(JSON.stringify(rec.profileSnapshot))
+          : {
+              ...(context.profile || ({} as WorkerProfile)),
+              partTimePercentage: rec.jornadaPct,
+              irpfPercentage: rec.irpfPercentage,
+              contractType:
+                rec.contractType ?? (rec.jornadaPct < 100 ? 'tiempo_parcial' : 'indefinido'),
+              salaryBaseRateMode:
+                rec.salaryBaseRateMode ?? context.profile?.salaryBaseRateMode ?? 'convenio_53_18',
+              prorrateoPagasExtra:
+                rec.prorrateoPagasExtra ?? context.profile?.prorrateoPagasExtra ?? 'tres_pagas',
+              extrasCutoffMode:
+                rec.extrasCutoffMode ?? context.profile?.extrasCutoffMode ?? 'direxis_25_24',
+            };
+        const recRate =
+          rec.yearRateSnapshot || yearRateFromContext || ({ horaOrdinaria: 13.62 } as ConvenioYearRate);
+
+        const mEndStr = `${mKey}-${String(daysInM).padStart(2, '0')}`;
+        const snapWindowStart =
+          recCutoffRange.startDateStr < monthStartStr ? recCutoffRange.startDateStr : monthStartStr;
+        const snapWindowEnd = recCutoffRange.endDateStr > mEndStr ? recCutoffRange.endDateStr : mEndStr;
+
+        const mergedWindowMap = new Map<string, DayAssignment>();
+        if (rec.assignmentsSnapshot && rec.assignmentsSnapshot.length > 0) {
+          for (const sa of rec.assignmentsSnapshot) {
+            const ak = normalizeAssignmentDateStr(sa.date);
+            if (!ak || ak < snapWindowStart || ak > snapWindowEnd) continue;
+            const isCarryDate = ak < monthStartStr;
+            const carryMonthValidated = isCarryDate ? Boolean(reconciled[ak.slice(0, 7)]) : false;
+            if (!isCarryDate || carryMonthValidated) {
+              mergedWindowMap.set(ak, JSON.parse(JSON.stringify({ ...sa, date: ak })));
+            }
+          }
+        }
+        if (context.assignments && context.assignments.length > 0) {
+          for (const la of context.assignments) {
+            const ak = normalizeAssignmentDateStr(la.date);
+            if (!ak || ak < snapWindowStart || ak > snapWindowEnd) continue;
+            mergedWindowMap.set(ak, JSON.parse(JSON.stringify({ ...la, date: ak })));
+          }
+        }
+
+        const freshAssignmentsSnapshot: DayAssignment[] = Array.from(mergedWindowMap.values())
+          .sort((a, b) => a.date.localeCompare(b.date))
+          .map((cloned) => {
+            const uc = (cloned.shiftCode || '').trim().toUpperCase();
+            const isSpecial =
+              cloned.isRest ||
+              cloned.isVacation ||
+              cloned.isSickLeave ||
+              uc === 'D' ||
+              uc === 'V' ||
+              uc === 'B';
+            if (!isSpecial && (cloned.shiftCode || cloned.shiftId)) {
+              const matchedShift = resolveShiftDefinition({ ...cloned, shiftSnapshot: undefined }, freshShiftsMap);
+              if (matchedShift) {
+                cloned.shiftSnapshot = JSON.parse(JSON.stringify(matchedShift));
+              }
+            } else if (isSpecial) {
+              cloned.shiftSnapshot = undefined;
+            }
+            return cloned;
+          });
+
+        // Para el cálculo de calculateMonthlyPayroll necesitamos el mapa completo de asignaciones
+        // asegurando que las asignaciones frescas de la ventana prevalezcan.
+        const fullAsgMap = new Map<string, DayAssignment>(assignmentsByDate);
+        for (const fa of freshAssignmentsSnapshot) {
+          fullAsgMap.set(fa.date, fa);
+        }
+        const validatedForTargetCalc: ValidatedMonthsMap = { ...reconciled };
+        delete validatedForTargetCalc[mKey];
+        const freshPayroll = calculateMonthlyPayroll(
+          Array.from(fullAsgMap.values()),
+          freshShiftsMap,
+          recRate,
+          freshProfileBase,
+          yr,
+          mIdx,
+          validatedForTargetCalc,
+          yearOverride
+        );
+
+        let filledDaysCount = 0;
+        for (let d = 1; d <= daysInM; d++) {
+          const dStr = `${mKey}-${String(d).padStart(2, '0')}`;
+          if (hasAnyAssignmentRecord(fullAsgMap.get(dStr))) {
+            filledDaysCount += 1;
+          }
+        }
+
+        const freshNatHours =
+          isManualHours
+            ? Math.max(0, ovM!.horasReales as number)
+            : freshPayroll.ordinaryConvenioHours;
+
+        reconciled[mKey] = {
+          ...rec,
+          filledDaysCount,
+          daysInMonth: daysInM,
+          horasRealizadasMesNatural: freshNatHours,
+          horasTeoricasMes: freshPayroll.convenioMonthlyHoursTarget,
+          saldoMesHoras: freshPayroll.bolsaHorasMes ?? 0,
+          bolsaAcumuladaAlCierre: freshPayroll.bolsaHorasAcumulada ?? 0,
+          payrollSnapshot: freshPayroll,
+          shiftsSnapshot: freshShiftsList.length > 0 ? freshShiftsList : rec.shiftsSnapshot,
+          assignmentsSnapshot: freshAssignmentsSnapshot,
+        };
+
+        runningDeficit = freshPayroll.deficitPendienteAlCierre ?? runningDeficit;
+        runningBolsa = freshPayroll.bolsaHorasAcumulada ?? runningBolsa;
+        continue;
+      }
+
+      let expectedTotalWorkedFromCalc: number | undefined;
       if (hasSnapAssignments || hasContextAssignments) {
         const recAsgMap = new Map<string, DayAssignment>();
         if (hasSnapAssignments && rec.assignmentsSnapshot) {
@@ -3449,27 +3629,35 @@ export function reconcileValidatedMonthsMap(
             const ak = normalizeAssignmentDateStr(a.date);
             if (ak) recAsgMap.set(ak, { ...a, date: ak });
           }
-          // Recuperar o actualizar días de arrastre del ciclo (ej. 25–31 dic) cuando faltan, están vacíos o el mes previo no está validado
+          // Recuperar o actualizar días de arrastre del ciclo (ej. 25–31 dic) cuando faltan, cambian o se limpian en un mes previo no validado
           if (hasContextAssignments && recCutoffRange.startDateStr < monthStartStr) {
+            const liveCarryMap = new Map<string, DayAssignment>();
             for (const a of context!.assignments!) {
               const ak = normalizeAssignmentDateStr(a.date);
-              if (
-                ak &&
-                ak >= recCutoffRange.startDateStr &&
-                ak < monthStartStr &&
-                hasAnyAssignmentRecord(a)
-              ) {
-                const enriched = { ...a, date: ak };
-                const existingSnap = recAsgMap.get(ak);
+              if (ak && ak >= recCutoffRange.startDateStr && ak < monthStartStr) {
+                liveCarryMap.set(ak, { ...a, date: ak });
+              }
+            }
+            liveCarryMap.forEach((enriched, ak) => {
+              const existingSnap = recAsgMap.get(ak);
+              const prevCarryMonthKey = ak.slice(0, 7);
+              const isPrevCarryValidated = Boolean(reconciled[prevCarryMonthKey]);
+              const shouldBackfill =
+                (!existingSnap && hasAnyAssignmentRecord(enriched)) ||
+                (existingSnap && !hasAnyAssignmentRecord(existingSnap) && hasAnyAssignmentRecord(enriched)) ||
+                (!isPrevCarryValidated && JSON.stringify(existingSnap) !== JSON.stringify(enriched));
+              if (shouldBackfill) {
+                recAsgMap.set(ak, enriched);
+                addedCarryoverAssignments.push(enriched);
+                rebuiltCarryoverSnapshot = true;
+              }
+            });
+            for (const ak of Array.from(recAsgMap.keys())) {
+              if (ak >= recCutoffRange.startDateStr && ak < monthStartStr) {
                 const prevCarryMonthKey = ak.slice(0, 7);
                 const isPrevCarryValidated = Boolean(reconciled[prevCarryMonthKey]);
-                const shouldBackfill =
-                  !existingSnap ||
-                  !hasAnyAssignmentRecord(existingSnap) ||
-                  (!isPrevCarryValidated && JSON.stringify(existingSnap) !== JSON.stringify(enriched));
-                if (shouldBackfill) {
-                  recAsgMap.set(ak, enriched);
-                  addedCarryoverAssignments.push(enriched);
+                if (!isPrevCarryValidated && !liveCarryMap.has(ak)) {
+                  recAsgMap.delete(ak);
                   rebuiltCarryoverSnapshot = true;
                 }
               }
@@ -3507,6 +3695,7 @@ export function reconcileValidatedMonthsMap(
           expectedFTHours = cutoffClean.ftHours;
           explicitManualCompl = cutoffClean.explicitComplementariasHours;
           expectedNatHours = cutoffClean.ordinaryHours;
+          expectedTotalWorkedFromCalc = cutoffClean.totalWorkedHours;
           expectedPrevCutoffWorkedDays = cutoffClean.prevWorkedDayCount;
           expectedCurrCutoffWorkedDays = cutoffClean.currentWorkedDayCount;
         } else {
@@ -3571,6 +3760,15 @@ export function reconcileValidatedMonthsMap(
       const expectedTotalCompl = roundHours(
         expectedMonthlyExcess + dailyOver9 + explicitManualCompl
       );
+      const newTotalWorkedHours =
+        expectedTotalWorkedFromCalc ??
+        roundHours(
+          ordHours +
+            dailyOver9 +
+            expectedFestivasHours +
+            expectedFTHours +
+            explicitManualCompl
+        );
 
       const complLineExisting = Array.isArray(snap.lines)
         ? snap.lines.find((l) => l.id === 'horas-complementarias')
@@ -3596,6 +3794,7 @@ export function reconcileValidatedMonthsMap(
         rebuiltCarryoverSnapshot ||
         (snap.prevMonthCutoffWorkedDays ?? 0) !== expectedPrevCutoffWorkedDays ||
         (snap.currentMonthCutoffWorkedDays ?? 0) !== expectedCurrCutoffWorkedDays ||
+        Math.abs((snap.totalWorkedHours || 0) - newTotalWorkedHours) > 0.009 ||
         Math.abs((snap.ordinaryConvenioHours || 0) - ordHours) > 0.009 ||
         Math.abs((snap.horasExcesoDiario9h || 0) - dailyOver9) > 0.009 ||
         Math.abs((snap.horasFestivas || 0) - expectedFestivasHours) > 0.009 ||
@@ -3743,14 +3942,6 @@ export function reconcileValidatedMonthsMap(
             ssEmpresaFogasa +
             ssEmpresaMEI
           ).toFixed(2)
-        );
-
-        const newTotalWorkedHours = roundHours(
-          ordHours +
-            dailyOver9 +
-            expectedFestivasHours +
-            expectedFTHours +
-            explicitManualCompl
         );
 
         const enrichedAssignmentsSnapshot =
