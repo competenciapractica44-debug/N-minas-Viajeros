@@ -1268,8 +1268,8 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                 </th>
                 <th className="px-3 py-3 text-right whitespace-nowrap">Saldo Teór.</th>
                 <th className="px-3 py-3 text-right whitespace-nowrap">Bolsa Teór.</th>
-                <th className="px-3 py-3 text-right whitespace-nowrap bg-emerald-50 text-emerald-950" title="Horas reales de Turnos Día; en meses sin turnos muestra en violeta las horas teóricas previstas para el cierre anual">
-                  Horas Real. / Prev.
+                <th className="px-3 py-3 text-right whitespace-nowrap bg-emerald-50 text-emerald-950" title="Total de horas trabajadas del ciclo activo en Turnos Día; en meses sin turnos muestra en violeta las horas teóricas previstas para el cierre anual">
+                  Horas trabajadas
                 </th>
                 <th
                   className="px-3 py-3 text-right whitespace-nowrap bg-emerald-50 text-emerald-950"
@@ -1281,15 +1281,11 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                 >
                   Comp. (R − T)
                 </th>
-                <th className="px-3 py-3 text-right whitespace-nowrap">Fijo Prorr.</th>
                 <th
-                  className="px-3 py-3 text-right whitespace-nowrap"
-                  title="Calculado por día natural de vacaciones disfrutado (31 días en año trabajado al completo)"
+                  className="px-3 py-3 text-right whitespace-nowrap bg-blue-50 text-blue-950"
+                  title="Suma acumulada mensual de Salario Base + Pagas Extras para comprobar al final de año el importe marcado por el convenio"
                 >
-                  Plus Vac.
-                </th>
-                <th className="px-3 py-3 text-right whitespace-nowrap bg-blue-50 text-blue-950">
-                  Total Bruto
+                  Base + Extras (Acum.)
                 </th>
               </tr>
             </thead>
@@ -1313,8 +1309,8 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                 <td className="px-3 py-2 text-right font-bold text-emerald-900 bg-emerald-50/35 whitespace-nowrap">
                   {formatHoras(liquidation.bolsaInicialAnio)}
                 </td>
-                <td colSpan={3} className="px-3 py-2 text-right text-slate-400">
-                  —
+                <td className="px-3 py-2 text-right font-bold text-slate-500 bg-blue-50/35 whitespace-nowrap">
+                  {formatEuro(0)}
                 </td>
               </tr>
               {liquidation.filas.map((m) => {
@@ -1594,8 +1590,8 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                           min={0}
                           max={400}
                           step={0.01}
-                          value={Number(m.horasRealizadas.toFixed(2))}
-                          title="Horas reales trabajadas del ciclo activo desde Turnos Día (editable manualmente)"
+                          value={Number(m.horasTotalesTrabajadas.toFixed(2))}
+                          title="Total de horas trabajadas del ciclo activo desde Turnos Día (editable manualmente)"
                           onChange={(e) =>
                             handleMonthFieldChange(
                               m.idx,
@@ -1623,23 +1619,16 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                         )}
                       </div>
                       {m.tieneRegistroReal ? (
-                        <div className="text-[10px] text-emerald-700 font-semibold mt-0.5 space-y-0.5">
-                          <div>
-                            {m.isHorasManual
-                              ? 'Manual'
-                              : `${m.turnosDiarioCount} turnos · ${
-                                  profile.extrasCutoffMode === 'mes_natural'
-                                    ? 'Mes nat.'
-                                    : profile.extrasCutoffMode === 'personalizado'
-                                      ? `Ciclo d.${profile.customCutoffStartDay || 25}`
-                                      : 'Ciclo 25–24'
-                                }`}
-                          </div>
-                          {!m.isHorasManual && m.horasTotalesTrabajadas > m.horasRealizadas + 0.004 && (
-                            <div className="text-[10px] font-bold text-slate-600 font-mono">
-                              Total trab.: {formatHoras(m.horasTotalesTrabajadas)}
-                            </div>
-                          )}
+                        <div className="text-[10px] text-emerald-700 font-semibold mt-0.5">
+                          {m.isHorasManual
+                            ? 'Manual'
+                            : `${m.turnosDiarioCount} turnos · ${
+                                profile.extrasCutoffMode === 'mes_natural'
+                                  ? 'Mes nat.'
+                                  : profile.extrasCutoffMode === 'personalizado'
+                                    ? `Ciclo d.${profile.customCutoffStartDay || 25}`
+                                    : 'Ciclo 25–24'
+                              }`}
                         </div>
                       ) : (
                         <div
@@ -1670,26 +1659,16 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                         </>
                       )}
                     </td>
-                    <td className="px-3 py-2.5 text-right text-slate-800 whitespace-nowrap">
-                      <div>{formatEuro(m.fijoMes)}</div>
+                    <td className="px-3 py-2.5 text-right bg-blue-50/45 whitespace-nowrap font-mono tabular-nums">
+                      <div className="font-extrabold text-slate-950">
+                        {formatEuro(m.baseMasExtrasAcumulado)}
+                      </div>
+                      <div className="text-[10px] font-semibold text-blue-800">
+                        Mes: {formatEuro(m.baseMasExtrasMes)}
+                      </div>
                       {m.detalleIT && (
                         <div className="text-[10px] font-semibold text-rose-700">{m.detalleIT}</div>
                       )}
-                    </td>
-                    <td
-                      className={`px-3 py-2.5 text-right whitespace-nowrap ${
-                        m.plusVacMes > 0 ? 'text-amber-700 font-bold' : 'text-slate-400'
-                      }`}
-                    >
-                      <div>{formatEuro(m.plusVacMes)}</div>
-                      {m.vacNat > 0 && liquidation.plusVacDiaEfectivo > 0 && (
-                        <div className="text-[10px] font-semibold text-amber-700">
-                          {m.vacNat}d × {formatEuro(liquidation.plusVacDiaEfectivo)}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-3 py-2.5 text-right font-extrabold text-slate-950 bg-blue-50/50 whitespace-nowrap">
-                      {formatEuro(m.totalBrutoMes)}
                     </td>
                   </tr>
                 );
@@ -1737,8 +1716,8 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                   {formatHoras(liquidation.bolsaAcumuladaFinal, true)}
                 </td>
                 <td className="px-3 py-2.5 text-right whitespace-nowrap font-mono tabular-nums">
-                  <div className="text-emerald-300" title="Total horas reales registradas">
-                    {formatHoras(liquidation.sumaHorasRealizadas)}
+                  <div className="text-emerald-300" title="Total horas trabajadas registradas">
+                    {formatHoras(liquidation.sumaHorasTotalesTrabajadas)}
                   </div>
                   {liquidation.horasPendientesMesesSinRegistro > 0.004 && (
                     <div
@@ -1760,14 +1739,35 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                     ? formatHoras(liquidation.bolsaCompensacionFinal, true)
                     : '0,00 h'}
                 </td>
-                <td className="px-3 py-3 text-right whitespace-nowrap">
-                  {formatEuro(liquidation.sumaFijo)}
-                </td>
-                <td className="px-3 py-3 text-right text-amber-300 whitespace-nowrap">
-                  {formatEuro(liquidation.sumaPlusVac)}
-                </td>
-                <td className="px-3 py-3 text-right text-emerald-300 whitespace-nowrap">
-                  {formatEuro(liquidation.sumaTotalBruto)}
+                <td className="px-3 py-2.5 text-right whitespace-nowrap font-mono tabular-nums">
+                  <div className="text-emerald-300">
+                    {formatEuro(liquidation.sumaBaseMasExtras)}
+                  </div>
+                  {(() => {
+                    const diffConv =
+                      Math.round(
+                        (liquidation.sumaBaseMasExtras - liquidation.brutoFijoConvenioObjetivoAnual) *
+                          100
+                      ) / 100;
+                    const matchesConv = Math.abs(diffConv) <= 0.05;
+                    return (
+                      <div
+                        className={`text-[10px] font-bold ${
+                          matchesConv
+                            ? 'text-cyan-300'
+                            : diffConv > 0
+                              ? 'text-emerald-200'
+                              : 'text-amber-300'
+                        }`}
+                        title="Comparación de Salario Base + Pagas Extras cobrado en el año frente al bruto anual de convenio"
+                      >
+                        Conv.: {formatEuro(liquidation.brutoFijoConvenioObjetivoAnual)} ·{' '}
+                        {matchesConv
+                          ? 'Cuadra'
+                          : `${diffConv > 0 ? '+' : '−'}${formatEuro(Math.abs(diffConv))}`}
+                      </div>
+                    );
+                  })()}
                 </td>
               </tr>
               {(((liquidation.hasCuotaManualOverride || liquidation.hasAllStatutoryVacations) &&
@@ -1781,7 +1781,7 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                       : 'bg-amber-950 text-amber-100 border-amber-700'
                   }`}
                 >
-                  <td colSpan={14} className="px-4 py-3">
+                  <td colSpan={12} className="px-4 py-3">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
                       <div className="flex items-start gap-2">
                         <AlertTriangle

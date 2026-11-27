@@ -76,6 +76,8 @@ export interface AnnualMonthComputedRow extends AnnualMonthBaseRow {
   fijoMes: number;
   plusVacMes: number;
   totalBrutoMes: number;
+  baseMasExtrasMes: number;
+  baseMasExtrasAcumulado: number;
   detalleIT: string;
   rachaInicioDia: number;
   rachaFinDia: number;
@@ -121,6 +123,7 @@ export interface AnnualLiquidationResult {
   // Totales reales desde Turnos Día y compensación
   bolsaInicialAnio: number;
   sumaHorasRealizadas: number;
+  sumaHorasTotalesTrabajadas: number;
   sumaComplementariasMes: number;
   mesesConTurnosCount: number;
   sumaDiferenciaReal: number;
@@ -159,6 +162,8 @@ export interface AnnualLiquidationResult {
   sumaFijo: number;
   sumaPlusVac: number;
   sumaTotalBruto: number;
+  sumaBaseMasExtras: number;
+  brutoFijoConvenioObjetivoAnual: number;
   filas: AnnualMonthComputedRow[];
 }
 
@@ -655,12 +660,15 @@ export function calculateAnnualLiquidation(
   let sumaCuotaFija = 0;
   let sumaSaldoMes = 0;
   let sumaHorasRealizadas = 0;
+  let sumaHorasTotalesTrabajadas = 0;
   let sumaComplementariasMes = 0;
   let mesesConTurnosCount = 0;
   let sumaDiferenciaReal = 0;
   let sumaFijo = 0;
   let sumaPlusVac = 0;
   let sumaTotalBruto = 0;
+  let sumaBaseMasExtras = 0;
+  let brutoFijoConvenioObjetivoAnual = 0;
 
   let validatedMonthsCount = 0;
   let saldoArrastradoValidado = 0;
@@ -800,20 +808,32 @@ export function calculateAnnualLiquidation(
     } else if (modoExtras === 'integras') {
       fijoMes = sumaBaseCompMesM * factorAlta;
       if (m.extraMes && numPagas >= 13) {
-        fijoMes += (sumaBaseCompMesM / 12) * factorAlta;
+        fijoMes += sumaBaseCompMesM * factorAlta;
       }
       if (m.extraJulDic && numPagas > 13) {
         const extrasRestantes = Math.max(0, numPagas - 13);
-        fijoMes += (sumaBaseCompMesM * extrasRestantes) / 2;
+        fijoMes += (sumaBaseCompMesM * extrasRestantes * factorAlta) / 2;
       }
     } else if (modoExtras === 'mixta_marzo_prorr') {
       const extraMarzoProrr = numPagas >= 13 ? sumaBaseCompMesM / 12 : 0;
       fijoMes = (sumaBaseCompMesM + extraMarzoProrr) * factorAlta;
       if (m.extraJulDic && numPagas > 13) {
         const extrasRestantes = Math.max(0, numPagas - 13);
-        fijoMes += (sumaBaseCompMesM * extrasRestantes) / 2;
+        fijoMes += (sumaBaseCompMesM * extrasRestantes * factorAlta) / 2;
       }
     }
+
+    const baseMasExtrasMes =
+      m.isValidated && m.vRec?.payrollSnapshot
+        ? Math.round(
+            ((m.vRec.payrollSnapshot.salarioBase || 0) +
+              (m.vRec.payrollSnapshot.prorrataPagasExtra || 0) +
+              (m.vRec.payrollSnapshot.pagaExtraIntegraMes || 0) +
+              compMes100 * monthFactor * factorAlta) *
+              100
+          ) / 100
+        : Math.round(fijoMes * 100) / 100;
+    brutoFijoConvenioObjetivoAnual += brutoFijoAnualM / 12;
 
     let prestacionIT = 0;
     let detalleIT = '';
@@ -886,9 +906,11 @@ export function calculateAnnualLiquidation(
     sumaCuotaFija += cuotaMes;
     sumaSaldoMes += saldoMes;
     sumaHorasRealizadas += horasRealizadas;
+    sumaHorasTotalesTrabajadas += horasTotalesTrabajadas;
     sumaFijo += fijoMes;
     sumaPlusVac += plusVacMes;
     sumaTotalBruto += totalBrutoMes;
+    sumaBaseMasExtras = Math.round((sumaBaseMasExtras + baseMasExtrasMes) * 100) / 100;
 
     const { vRec: _omitVRec, ...restM } = m;
 
@@ -911,6 +933,8 @@ export function calculateAnnualLiquidation(
       fijoMes,
       plusVacMes,
       totalBrutoMes,
+      baseMasExtrasMes,
+      baseMasExtrasAcumulado: sumaBaseMasExtras,
       detalleIT,
       rachaInicioDia,
       rachaFinDia,
@@ -1062,6 +1086,7 @@ export function calculateAnnualLiquidation(
     superaLimiteAnualCuota,
     bolsaInicialAnio,
     sumaHorasRealizadas,
+    sumaHorasTotalesTrabajadas,
     sumaComplementariasMes: Math.round(sumaComplementariasMes * 100) / 100 || 0,
     mesesConTurnosCount,
     sumaDiferenciaReal,
@@ -1095,6 +1120,8 @@ export function calculateAnnualLiquidation(
     sumaFijo,
     sumaPlusVac,
     sumaTotalBruto,
+    sumaBaseMasExtras,
+    brutoFijoConvenioObjetivoAnual: Math.round(brutoFijoConvenioObjetivoAnual * 100) / 100,
     filas,
   };
 }
