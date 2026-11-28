@@ -1587,9 +1587,27 @@ export default function App() {
     setExtras((prev) => prev.filter((e) => e.id !== id));
   };
 
-  // Export triggers (respetando perfil, turnos, asignaciones y convenio congelados si el mes ya fue validado)
+  // Export triggers (respetando perfil, turnos, asignaciones y convenio congelados si el mes ya fue validado,
+  // y el % de jornada manual mensual en meses pendientes)
   const effectiveExportProfile: WorkerProfile = useMemo(() => {
-    if (!currentValidatedRecord) return profile;
+    if (!currentValidatedRecord) {
+      const ovPct =
+        annualCalendarData[selectedYear]?.monthOverrides?.[selectedMonth - 1]?.jornadaPctManual;
+      if (ovPct !== undefined && Number.isFinite(ovPct)) {
+        const cleanPct = Math.min(100, Math.max(1, ovPct));
+        return {
+          ...profile,
+          partTimePercentage: cleanPct,
+          contractType:
+            cleanPct < 100
+              ? 'tiempo_parcial'
+              : profile.contractType === 'tiempo_parcial'
+                ? 'indefinido'
+                : profile.contractType,
+        };
+      }
+      return profile;
+    }
     if (currentValidatedRecord.profileSnapshot) {
       return currentValidatedRecord.profileSnapshot;
     }
@@ -1607,7 +1625,7 @@ export default function App() {
       extrasCutoffMode:
         currentValidatedRecord.extrasCutoffMode ?? profile.extrasCutoffMode,
     };
-  }, [currentValidatedRecord, profile]);
+  }, [currentValidatedRecord, profile, annualCalendarData, selectedYear, selectedMonth]);
 
   const handleExportPDF = () => {
     const monthName = MONTH_NAMES[selectedMonth - 1];
@@ -1657,7 +1675,18 @@ export default function App() {
 
       const rateForYear = getEffectiveYearRate(convenio, yearToValidate);
       const frozenYearRate: ConvenioYearRate = JSON.parse(JSON.stringify(rateForYear));
+      const yOverridePre = annualCalendarData[yearToValidate];
+      const monthOvPct = yOverridePre?.monthOverrides?.[monthToValidate - 1]?.jornadaPctManual;
       const frozenProfile: WorkerProfile = JSON.parse(JSON.stringify(profile));
+      if (monthOvPct !== undefined && Number.isFinite(monthOvPct)) {
+        const cleanPct = Math.min(100, Math.max(1, monthOvPct));
+        frozenProfile.partTimePercentage = cleanPct;
+        if (cleanPct < 100) {
+          frozenProfile.contractType = 'tiempo_parcial';
+        } else if (frozenProfile.contractType === 'tiempo_parcial') {
+          frozenProfile.contractType = 'indefinido';
+        }
+      }
       const frozenShiftsSnapshot: ShiftDefinition[] = JSON.parse(JSON.stringify(shifts));
       const frozenJornadaPct =
         frozenProfile.contractType === 'tiempo_parcial'

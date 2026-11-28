@@ -292,6 +292,7 @@ export interface PayrollBreakdown {
   bolsaSaldoAnterior?: number;
   bolsaGeneradaReservaMes?: number;
   bolsaDescontadaVacacionesMes?: number;
+  bolsaLiquidadaVacacionesMes?: number;
   bolsaHorasMes?: number;
   bolsaHorasAcumulada?: number;
   deficitAnteriorPendiente?: number;
@@ -374,6 +375,7 @@ export interface AnnualMonthEditableFields {
   bajaEsContinuacion?: boolean;
   horasReales?: number;
   cuotaFijaManual?: number;
+  jornadaPctManual?: number;
 }
 
 export interface AnnualYearOverrideData {

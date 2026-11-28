@@ -73,6 +73,7 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
 }) => {
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [cuotaDrafts, setCuotaDrafts] = useState<Record<number, string>>({});
+  const [jornadaDrafts, setJornadaDrafts] = useState<Record<number, string>>({});
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
@@ -188,6 +189,7 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
 
   const handleResetToRutaNomina = () => {
     setCuotaDrafts({});
+    setJornadaDrafts({});
     onUpdateYearOverride(selectedYear, null);
     showToast(`Valores de ${selectedYear} sincronizados de nuevo con RutaNómina y Convenio.`);
   };
@@ -1356,7 +1358,7 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                     <td className="px-3 py-2.5 font-bold text-slate-900 whitespace-nowrap">
                       <div className="flex flex-col gap-0.5">
                         <span>{m.mes}</span>
-                        {m.isValidated && (
+                        {m.isValidated ? (
                           <button
                             type="button"
                             onClick={() => onSelectMonthForNomina?.(selectedYear, m.idx + 1)}
@@ -1368,6 +1370,70 @@ export const CalendarioAnualView: React.FC<CalendarioAnualViewProps> = ({
                               {m.effectiveJornadaPct}% · IRPF {m.validatedIrpf ?? 0}%
                             </span>
                           </button>
+                        ) : (
+                          <div className="inline-flex items-center gap-1 mt-0.5">
+                            <span className="text-[10px] font-semibold text-slate-500">Jor:</span>
+                            <input
+                              type="number"
+                              min={1}
+                              max={100}
+                              step={1}
+                              value={
+                                jornadaDrafts[m.idx] !== undefined
+                                  ? jornadaDrafts[m.idx]
+                                  : String(Math.round(m.effectiveJornadaPct * 100) / 100)
+                              }
+                              title="% de jornada de este mes (determina su cuota fija mensual y teóricas)"
+                              onChange={(e) => {
+                                const raw = e.target.value;
+                                setJornadaDrafts((prev) => ({ ...prev, [m.idx]: raw }));
+                                if (raw.trim() === '') return;
+                                const parsed = parseFloat(raw.replace(',', '.'));
+                                if (Number.isFinite(parsed) && parsed >= 1 && parsed <= 100) {
+                                  const cleanVal = Math.round(parsed * 100) / 100;
+                                  handleMonthFieldChange(
+                                    m.idx,
+                                    'jornadaPctManual',
+                                    Math.abs(cleanVal - effectiveParams.jornadaPct) < 0.01
+                                      ? undefined
+                                      : cleanVal
+                                  );
+                                }
+                              }}
+                              onBlur={() => {
+                                setJornadaDrafts((prev) => {
+                                  if (!(m.idx in prev)) return prev;
+                                  const next = { ...prev };
+                                  delete next[m.idx];
+                                  return next;
+                                });
+                              }}
+                              className={`w-12 text-center rounded border px-1 py-0.5 text-[10px] font-bold font-mono tabular-nums focus:outline-none ${
+                                m.jornadaPctManual !== undefined &&
+                                Math.abs(m.effectiveJornadaPct - effectiveParams.jornadaPct) > 0.01
+                                  ? 'border-blue-400 bg-blue-50 text-blue-900 focus:border-blue-600'
+                                  : 'border-slate-200 bg-slate-50 text-slate-700 focus:border-blue-500'
+                              }`}
+                            />
+                            <span className="text-[10px] font-semibold text-slate-500">%</span>
+                            {m.jornadaPctManual !== undefined && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setJornadaDrafts((prev) => {
+                                    const next = { ...prev };
+                                    delete next[m.idx];
+                                    return next;
+                                  });
+                                  handleMonthFieldChange(m.idx, 'jornadaPctManual', undefined);
+                                }}
+                                title="Restablecer al % de jornada general"
+                                className="text-[10px] font-bold text-blue-700 hover:text-blue-950 px-1 rounded bg-blue-100 cursor-pointer"
+                              >
+                                ↺
+                              </button>
+                            )}
+                          </div>
                         )}
                       </div>
                     </td>

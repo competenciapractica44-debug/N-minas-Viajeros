@@ -1104,6 +1104,11 @@ export const NominaView: React.FC<NominaViewProps> = ({
           (payroll.vacationDays > 0
             ? parseFloat(Math.max(payroll.convenioMonthlyHoursTarget, cuotaFija).toFixed(2))
             : payroll.convenioMonthlyHoursTarget);
+        const bolsaLiquidadaVacMes =
+          payroll.bolsaLiquidadaVacacionesMes ??
+          (payroll.vacationDays > 0 && rawDiff >= 0 && payroll.horasExcesoMensual > rawDiff + 0.004
+            ? parseFloat((payroll.horasExcesoMensual - rawDiff + deficitCompensado).toFixed(2))
+            : 0);
         const horasAbsorbidasPorCuotaBolsa = parseFloat(
           Math.max(0, rawDiff - deficitCompensado - payroll.horasExcesoMensual).toFixed(2)
         );
@@ -1150,7 +1155,7 @@ export const NominaView: React.FC<NominaViewProps> = ({
                   Las horas <strong>festivas{payroll.horasFT > 0 ? ' y F/T' : ''}</strong> se cobran aparte sí o sí.{' '}
                   {isPostVacReg
                     ? `Disfrutados los 31 días de vacaciones${lastVacMonthName ? ` (fin en ${lastVacMonthName}, bolsa a 0,00 h)` : ''}, la cuota se regulariza a ${formatHoursES(cuotaFija)} h para cuadrar la jornada anual.`
-                    : `Cuota fija entera redondeada por encima (${formatHoursES(cuotaFijaEnteraAnual)} h/mes); la bolsa cubre los meses con vacaciones hasta quedar a 0,00 h en las últimas vacaciones.`}
+                    : `Cuota fija del mes (${formatHoursES(cuotaFijaEnteraAnual)} h/mes); la bolsa se genera o consume proporcionalmente cada mes hasta quedar a 0,00 h al terminar todas las vacaciones${lastVacMonthName ? ` (${lastVacMonthName})` : ''}.`}
                 </p>
               </div>
 
@@ -1196,13 +1201,21 @@ export const NominaView: React.FC<NominaViewProps> = ({
                       {formatSignedH(rawDiff)}
                     </span>
                   </div>
-                  {payroll.vacationDays > 0 && (
+                  {bolsaLiquidadaVacMes > 0.004 && (
+                    <div className="flex items-center justify-between text-emerald-900 bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-200/80">
+                      <span>(+) Liquidación bolsa a favor (vacaciones):</span>
+                      <span className="font-mono font-bold">
+                        +{formatHoursES(bolsaLiquidadaVacMes)} h
+                      </span>
+                    </div>
+                  )}
+                  {payroll.vacationDays > 0 && bolsaLiquidadaVacMes <= 0.004 && (
                     <div className="flex items-center justify-between text-sky-900 bg-sky-50 px-2 py-1 rounded-lg border border-sky-200/80">
                       <span>Umbral cuota fija mes ({formatHoursES(umbralCompl)} h):</span>
                       <span className="font-mono font-bold">
                         {horasAbsorbidasPorCuotaBolsa > 0
                           ? `−${formatHoursES(horasAbsorbidasPorCuotaBolsa)} h a bolsa`
-                          : 'Cubierto con bolsa'}
+                          : 'Consumo proporcional'}
                       </span>
                     </div>
                   )}

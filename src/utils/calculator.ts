@@ -616,6 +616,131 @@ export function computeAnnualHoursSchedule(
   };
 }
 
+export interface MonthlyBolsaAndExcessInput {
+  ordinaryHours: number;
+  theoreticalActiveTarget: number;
+  sickCredit: number;
+  cuotaForBolsa: number;
+  vacDays: number;
+  isFinalVacationMonth: boolean;
+  useCuotaBolsa: boolean;
+  prevBolsa: number;
+  prevDeficit: number;
+}
+
+export interface MonthlyBolsaAndExcessResult {
+  rawMonthlyDiff: number;
+  carriedDeficitAppliedHours: number;
+  monthlyExcessOverTheoretical: number;
+  bolsaLiquidadaVacacionesMes: number;
+  deficitPendienteAlCierre: number;
+  bolsaHorasMes: number;
+  bolsaHorasAcumulada: number;
+  umbralComplementariasMes: number;
+}
+
+/**
+ * Calcula de forma unificada el exceso mensual a H. Complementarias y el movimiento/cierre de Bolsa.
+ * Regla de vacaciones:
+ * - En meses intermedios con vacaciones (isFinalVacationMonth = false), la bolsa se consume o genera
+ *   proporcionalmente según cuota fija vs teóricas, usando umbral = max(teóricas, cuotaNeta - max(0, prevBolsa)).
+ * - Únicamente en el último mes que termina de consumir todas las vacaciones reglamentarias (isFinalVacationMonth = true),
+ *   si queda saldo positivo en la bolsa tras cubrir cuota y horas activas (rawMonthlyDiff >= 0), se liquida
+ *   íntegramente la bolsa restante a favor junto con el exceso trabajado, dejando la bolsa al cierre a 0,00 h.
+ */
+export function computeMonthlyBolsaAndExcess(
+  input: MonthlyBolsaAndExcessInput
+): MonthlyBolsaAndExcessResult {
+  const r2 = (val: number): number => {
+    const res = Math.round(val * 100) / 100;
+    return Math.abs(res) < 0.005 || Object.is(res, -0) ? 0 : res;
+  };
+
+  const ordinaryHours = Math.max(0, r2(input.ordinaryHours));
+  const theoreticalActiveTarget = Math.max(0, r2(input.theoreticalActiveTarget));
+  const sickCredit = Math.max(0, r2(input.sickCredit));
+  const cuotaForBolsa = Math.max(0, r2(input.cuotaForBolsa));
+  const hasVac = input.vacDays > 0;
+  const isFinalVacationMonth = Boolean(input.isFinalVacationMonth);
+  const prevBolsa = r2(input.prevBolsa);
+  const prevDeficit = Math.min(0, r2(input.prevDeficit));
+
+  const rawMonthlyDiff = r2(ordinaryHours - theoreticalActiveTarget);
+  const cuotaNetOfSick = Math.max(0, r2(cuotaForBolsa - sickCredit));
+  const umbralComplementariasMes =
+    hasVac && input.useCuotaBolsa
+      ? r2(
+          isFinalVacationMonth
+            ? Math.max(theoreticalActiveTarget, cuotaNetOfSick)
+            : Math.max(theoreticalActiveTarget, cuotaNetOfSick - Math.max(0, prevBolsa))
+        )
+      : theoreticalActiveTarget;
+
+  const carriedDeficitOwed = Math.max(0, r2(-prevDeficit));
+
+  if (rawMonthlyDiff < 0) {
+    const bolsaHorasMes = r2(ordinaryHours + sickCredit - cuotaForBolsa);
+    const bolsaHorasAcumulada = r2(prevBolsa + bolsaHorasMes);
+    return {
+      rawMonthlyDiff,
+      carriedDeficitAppliedHours: 0,
+      monthlyExcessOverTheoretical: 0,
+      bolsaLiquidadaVacacionesMes: 0,
+      deficitPendienteAlCierre: r2(prevDeficit + rawMonthlyDiff),
+      bolsaHorasMes,
+      bolsaHorasAcumulada,
+      umbralComplementariasMes,
+    };
+  }
+
+  // Únicamente al finalizar todas las vacaciones reglamentarias: liquidar la bolsa a favor restante a 0,00 h
+  const netPoolAfterQuota = r2(prevBolsa + ordinaryHours + sickCredit - cuotaForBolsa);
+  if (hasVac && isFinalVacationMonth && prevBolsa > 0.004 && netPoolAfterQuota > 0.004) {
+    const monthlyExcessOverTheoretical = netPoolAfterQuota;
+    const carriedDeficitAppliedHours = r2(Math.min(rawMonthlyDiff, carriedDeficitOwed));
+    const netAfterDeficit = Math.max(0, r2(rawMonthlyDiff - carriedDeficitAppliedHours));
+    const bolsaLiquidadaVacacionesMes = r2(
+      Math.max(0, monthlyExcessOverTheoretical - netAfterDeficit)
+    );
+    const bolsaHorasMes = r2(ordinaryHours - monthlyExcessOverTheoretical + sickCredit - cuotaForBolsa);
+    const bolsaHorasAcumulada = r2(prevBolsa + bolsaHorasMes);
+    return {
+      rawMonthlyDiff,
+      carriedDeficitAppliedHours,
+      monthlyExcessOverTheoretical,
+      bolsaLiquidadaVacacionesMes,
+      deficitPendienteAlCierre: 0,
+      bolsaHorasMes,
+      bolsaHorasAcumulada,
+      umbralComplementariasMes: theoreticalActiveTarget,
+    };
+  }
+
+  const carriedDeficitAppliedHours = r2(Math.min(rawMonthlyDiff, carriedDeficitOwed));
+  const surplusAfterDeficit = Math.max(0, r2(rawMonthlyDiff - carriedDeficitAppliedHours));
+  const excessOverThreshold = Math.max(0, r2(ordinaryHours - umbralComplementariasMes));
+  const monthlyExcessOverTheoretical =
+    hasVac && input.useCuotaBolsa
+      ? Math.min(surplusAfterDeficit, excessOverThreshold)
+      : surplusAfterDeficit;
+
+  const absorbedToDeficit = Math.max(0, r2(rawMonthlyDiff - monthlyExcessOverTheoretical));
+  const deficitPendienteAlCierre = r2(Math.min(0, prevDeficit + absorbedToDeficit));
+  const bolsaHorasMes = r2(ordinaryHours - monthlyExcessOverTheoretical + sickCredit - cuotaForBolsa);
+  const bolsaHorasAcumulada = r2(prevBolsa + bolsaHorasMes);
+
+  return {
+    rawMonthlyDiff,
+    carriedDeficitAppliedHours,
+    monthlyExcessOverTheoretical,
+    bolsaLiquidadaVacacionesMes: 0,
+    deficitPendienteAlCierre,
+    bolsaHorasMes,
+    bolsaHorasAcumulada,
+    umbralComplementariasMes,
+  };
+}
+
 export interface ShiftRateCalculation {
   totalHours: number;
   dayHours: number;
@@ -1009,11 +1134,23 @@ export function calculateMonthlyPayroll(
   let customShiftExcess = 0;
   const customShiftItems: PayrollExtraItemDetail[] = [];
 
-  // Part-time contract factor
-  const isPartTime = profile.contractType === 'tiempo_parcial';
-  const partTimePercent = isPartTime
-    ? (profile.partTimePercentage !== undefined && profile.partTimePercentage > 0 ? profile.partTimePercentage : 50)
-    : 100;
+  // Part-time contract factor (resolviendo el % de jornada efectivo de este mes)
+  const activeMonthKey = `${year}-${String(month).padStart(2, '0')}`;
+  const activeValidatedRec = validatedMonths?.[activeMonthKey];
+  const activeMonthOverride = annualYearOverride?.monthOverrides?.[month - 1];
+  const rawProfilePartTimePct =
+    profile.contractType === 'tiempo_parcial'
+      ? (profile.partTimePercentage !== undefined && profile.partTimePercentage > 0 ? profile.partTimePercentage : 50)
+      : 100;
+  const partTimePercent =
+    !activeValidatedRec &&
+    activeMonthOverride?.jornadaPctManual !== undefined &&
+    Number.isFinite(activeMonthOverride.jornadaPctManual)
+      ? Math.min(100, Math.max(1, activeMonthOverride.jornadaPctManual))
+      : activeValidatedRec
+        ? Math.min(100, Math.max(1, activeValidatedRec.jornadaPct))
+        : rawProfilePartTimePct;
+  const isPartTime = partTimePercent < 100 - 0.01;
   const partTimeFactor = partTimePercent / 100;
 
   const cutoffMode = profile.extrasCutoffMode || 'direxis_25_24';
@@ -2055,14 +2192,20 @@ export function calculateMonthlyPayroll(
   const repartoBolsaMode = annualYearOverride?.paramOverrides?.repartoBolsa || 'lineal';
 
   const currentJornadaPct = Math.round(partTimeFactor * 100);
+  const defaultProfileFactor = rawProfilePartTimePct / 100;
   const yearValidatedRecords = validatedMonths
     ? Object.values(validatedMonths)
         .filter((v) => v.year === year)
         .sort((a, b) => a.month - b.month)
     : [];
-  const hasMidYearJornadaChange = yearValidatedRecords.some(
-    (v) => Math.round(v.jornadaPct) !== currentJornadaPct
-  );
+  const hasMidYearJornadaChange =
+    yearValidatedRecords.some((v) => Math.round(v.jornadaPct) !== currentJornadaPct) ||
+    Array.from({ length: 12 }, (_, idx) => idx).some((idx) => {
+      const mKey = `${year}-${String(idx + 1).padStart(2, '0')}`;
+      if (validatedMonths?.[mKey]) return false;
+      const ovPct = annualYearOverride?.monthOverrides?.[idx]?.jornadaPctManual;
+      return ovPct !== undefined && Number.isFinite(ovPct) && Math.round(ovPct) !== currentJornadaPct;
+    });
 
   // Construir programación anual de los 12 meses combinando meses validados, calendario diario y cuadrante anual
   const scheduleInputs: AnnualScheduleMonthInput[] = [];
@@ -2070,10 +2213,12 @@ export function calculateMonthlyPayroll(
     const mKey = `${year}-${String(mIdx).padStart(2, '0')}`;
     const vRec = validatedMonths?.[mKey];
     const daysInM = new Date(year, mIdx, 0).getDate();
+    const ovM = annualYearOverride?.monthOverrides?.[mIdx - 1];
     const factorM = vRec
       ? Math.min(100, Math.max(1, vRec.jornadaPct)) / 100
-      : partTimeFactor;
-    const ovM = annualYearOverride?.monthOverrides?.[mIdx - 1];
+      : ovM?.jornadaPctManual !== undefined && Number.isFinite(ovM.jornadaPctManual)
+        ? Math.min(100, Math.max(1, ovM.jornadaPctManual)) / 100
+        : defaultProfileFactor;
 
     let vacM = 0;
     let sickM = 0;
@@ -2255,37 +2400,44 @@ export function calculateMonthlyPayroll(
     const mCuotaFija = !usePrevCuotaBolsa
       ? roundHours(prevSched.horasTeoricas + mSickCredit)
       : prevSched.cuotaForBolsa;
-    const mCuotaFijaNetOfSick = Math.max(0, mCuotaFija - mSickCredit);
+    const mBolsaCalc = computeMonthlyBolsaAndExcess({
+      ordinaryHours: mOrd,
+      theoreticalActiveTarget: mTarget,
+      sickCredit: mSickCredit,
+      cuotaForBolsa: mCuotaFija,
+      vacDays: mVac,
+      isFinalVacationMonth: Boolean(
+        annualSchedule.hasAllStatutoryVacations && prevM === annualSchedule.lastVacMonth
+      ),
+      useCuotaBolsa: usePrevCuotaBolsa,
+      prevBolsa: runningBolsa,
+      prevDeficit: runningDeficit,
+    });
 
-    const mDiff = roundHours(mOrd - mTarget);
     const shouldRecomputePrevExcess =
       !vRec ||
       !vRec.payrollSnapshot ||
       isPrevManualHours ||
       Math.abs(mOrd - (vRec.payrollSnapshot.ordinaryConvenioHours || 0)) > 0.009 ||
-      Math.abs((vRec.payrollSnapshot.convenioMonthlyHoursTarget || 0) - mTarget) > 0.05;
+      Math.abs((vRec.payrollSnapshot.convenioMonthlyHoursTarget || 0) - mTarget) > 0.05 ||
+      Math.abs((vRec.payrollSnapshot.bolsaSaldoAnterior ?? 0) - runningBolsa) > 0.009 ||
+      Math.abs((vRec.payrollSnapshot.horasExcesoMensual ?? 0) - mBolsaCalc.monthlyExcessOverTheoretical) > 0.009;
 
     if (shouldRecomputePrevExcess) {
-      const mDeficitOwed = Math.max(0, -runningDeficit);
-      const mAppliedDeficit = mDiff > 0 ? Math.min(mDiff, mDeficitOwed) : 0;
-      const mSurplusAfterDeficit = Math.max(0, mDiff - mAppliedDeficit);
-      if (mVac > 0 && usePrevCuotaBolsa) {
-        const mExcessThreshold = roundHours(Math.max(mTarget, mCuotaFijaNetOfSick));
-        const mExcessOverQuota = Math.max(0, mOrd - mExcessThreshold);
-        mPaidExcess = Math.min(mSurplusAfterDeficit, mExcessOverQuota);
-      } else {
-        mPaidExcess = mSurplusAfterDeficit;
-      }
-    }
-
-    if (mDiff < 0) {
-      runningDeficit += mDiff;
+      mPaidExcess = mBolsaCalc.monthlyExcessOverTheoretical;
+      runningDeficit = mBolsaCalc.deficitPendienteAlCierre;
+      runningBolsa = mBolsaCalc.bolsaHorasAcumulada;
     } else {
-      const absorbedToDeficit = Math.max(0, mDiff - mPaidExcess);
-      runningDeficit = Math.min(0, runningDeficit + absorbedToDeficit);
+      const mDiff = roundHours(mOrd - mTarget);
+      if (mDiff < 0) {
+        runningDeficit += mDiff;
+      } else {
+        const absorbedToDeficit = Math.max(0, mDiff - mPaidExcess);
+        runningDeficit = Math.min(0, runningDeficit + absorbedToDeficit);
+      }
+      runningBolsa += (mOrd - mPaidExcess + mSickCredit) - mCuotaFija;
     }
 
-    runningBolsa += (mOrd - mPaidExcess + mSickCredit) - mCuotaFija;
     runningTheoreticalBolsa +=
       repartoBolsaMode === 'equilibrado' ? 0 : prevSched.bolsaNetTheoretical;
   }
@@ -2332,39 +2484,35 @@ export function calculateMonthlyPayroll(
   const cuotaFijaMensualContrato = roundHours(effectiveCuotaForBolsaCurr);
   const isPostVacacionesRegularizado = currentSchedMonth.isPostVacacionesRegularizado;
   const lastVacationMonthYear = annualSchedule.lastVacMonth ?? undefined;
-  const cuotaFijaNetOfSick = Math.max(0, effectiveCuotaForBolsaCurr - sickCreditCurr);
-  const hasVacInMonthForBolsa = currentSchedMonth.vacDays > 0;
-  const umbralComplementariasMes =
-    hasVacInMonthForBolsa && useCurrCuotaBolsa
-      ? roundHours(Math.max(convenioMonthlyHoursTarget, cuotaFijaNetOfSick))
-      : convenioMonthlyHoursTarget;
-
   const ordinaryConvenioHours = roundHours(ordinaryShiftMinutes / 60);
-  const rawMonthlyDiff = roundHours(ordinaryConvenioHours - convenioMonthlyHoursTarget);
-  const carriedDeficitOwed = Math.max(0, -runningDeficit);
-  const carriedDeficitAppliedHours =
-    rawMonthlyDiff > 0 ? roundHours(Math.min(rawMonthlyDiff, carriedDeficitOwed)) : 0;
-  const surplusAfterDeficit =
-    rawMonthlyDiff > 0 ? Math.max(0, roundHours(rawMonthlyDiff - carriedDeficitAppliedHours)) : 0;
-  const excessOverComplementariasThreshold =
-    Math.max(0, roundHours(ordinaryConvenioHours - umbralComplementariasMes));
-  const monthlyExcessOverTheoretical =
-    hasVacInMonthForBolsa && useCurrCuotaBolsa
-      ? Math.min(surplusAfterDeficit, excessOverComplementariasThreshold)
-      : surplusAfterDeficit;
-  const deficitPendienteAlCierre =
-    rawMonthlyDiff < 0
-      ? roundHours(runningDeficit + rawMonthlyDiff)
-      : roundHours(Math.min(0, runningDeficit + carriedDeficitAppliedHours));
+  const currBolsaCalc = computeMonthlyBolsaAndExcess({
+    ordinaryHours: ordinaryConvenioHours,
+    theoreticalActiveTarget: convenioMonthlyHoursTarget,
+    sickCredit: sickCreditCurr,
+    cuotaForBolsa: effectiveCuotaForBolsaCurr,
+    vacDays: currentSchedMonth.vacDays,
+    isFinalVacationMonth: Boolean(
+      annualSchedule.hasAllStatutoryVacations && month === annualSchedule.lastVacMonth
+    ),
+    useCuotaBolsa: useCurrCuotaBolsa,
+    prevBolsa: bolsaSaldoAnterior,
+    prevDeficit: runningDeficit,
+  });
+
+  const umbralComplementariasMes = currBolsaCalc.umbralComplementariasMes;
+  const rawMonthlyDiff = currBolsaCalc.rawMonthlyDiff;
+  const carriedDeficitAppliedHours = currBolsaCalc.carriedDeficitAppliedHours;
+  const monthlyExcessOverTheoretical = currBolsaCalc.monthlyExcessOverTheoretical;
+  const bolsaLiquidadaVacacionesMes = currBolsaCalc.bolsaLiquidadaVacacionesMes;
+  const deficitPendienteAlCierre = currBolsaCalc.deficitPendienteAlCierre;
 
   // Desglose de Bolsa de Horas del mes (reserva proporcional + gasto real por vacaciones disfrutadas + desvío trabajado)
   const bolsaGeneradaReservaMes =
     repartoBolsaMode === 'equilibrado' ? 0 : roundHours(currentSchedMonth.bolsaAporte);
   const bolsaDescontadaVacacionesMes =
     repartoBolsaMode === 'equilibrado' ? 0 : roundHours(currentSchedMonth.vacBolsaSpend);
-  const bolsaHorasMes =
-    roundHours((ordinaryConvenioHours - monthlyExcessOverTheoretical + sickCreditCurr) - effectiveCuotaForBolsaCurr);
-  const bolsaHorasAcumulada = roundHours(bolsaSaldoAnterior + bolsaHorasMes);
+  const bolsaHorasMes = currBolsaCalc.bolsaHorasMes;
+  const bolsaHorasAcumulada = currBolsaCalc.bolsaHorasAcumulada;
 
   const roundedDailyOver9h = roundHours(dailyExcessOver9hMinutes / 60);
   const explicitComplementariasHours = roundHours(explicitComplementariasMinutes / 60);
@@ -2945,6 +3093,7 @@ export function calculateMonthlyPayroll(
     bolsaSaldoAnterior,
     bolsaGeneradaReservaMes,
     bolsaDescontadaVacacionesMes,
+    bolsaLiquidadaVacacionesMes,
     bolsaHorasMes,
     bolsaHorasAcumulada,
     deficitAnteriorPendiente,
@@ -3031,6 +3180,25 @@ export function calculateYearlySalaryEvolution(
       );
     });
 
+    const ovM = annualYearOverride?.monthOverrides?.[m - 1];
+    const monthJornadaPct =
+      ovM?.jornadaPctManual !== undefined && Number.isFinite(ovM.jornadaPctManual)
+        ? Math.min(100, Math.max(1, ovM.jornadaPctManual))
+        : currentJornadaPct;
+    const profileForMonth: WorkerProfile =
+      Math.abs(monthJornadaPct - currentJornadaPct) > 0.01
+        ? {
+            ...profile,
+            partTimePercentage: monthJornadaPct,
+            contractType:
+              monthJornadaPct < 100
+                ? 'tiempo_parcial'
+                : profile.contractType === 'tiempo_parcial'
+                  ? 'indefinido'
+                  : profile.contractType,
+          }
+        : profile;
+
     let payroll: PayrollBreakdown;
     let isProjected = false;
 
@@ -3039,7 +3207,7 @@ export function calculateYearlySalaryEvolution(
         assignments,
         shiftsMap,
         yearRate,
-        profile,
+        profileForMonth,
         year,
         m,
         validatedMonths,
@@ -3072,7 +3240,7 @@ export function calculateYearlySalaryEvolution(
         syntheticAssignments,
         shiftsMap,
         yearRate,
-        profile,
+        profileForMonth,
         year,
         m,
         validatedMonths,
@@ -3095,7 +3263,7 @@ export function calculateYearlySalaryEvolution(
       totalHours: payroll.totalWorkedHours,
       ordinaryConvenioHours: payroll.ordinaryConvenioHours,
       isValidated: false,
-      jornadaPct: currentJornadaPct,
+      jornadaPct: monthJornadaPct,
       irpfPercentage: profile.irpfPercentage,
     });
   }
@@ -3335,10 +3503,12 @@ export function reconcileValidatedMonthsMap(
       const mKey = `${yr}-${String(mIdx).padStart(2, '0')}`;
       const vRec = reconciled[mKey];
       const daysInM = new Date(yr, mIdx, 0).getDate();
+      const ovM = yearOverride?.monthOverrides?.[mIdx - 1];
       const factorM = vRec
         ? Math.min(100, Math.max(1, vRec.jornadaPct)) / 100
-        : defaultFactor;
-      const ovM = yearOverride?.monthOverrides?.[mIdx - 1];
+        : ovM?.jornadaPctManual !== undefined && Number.isFinite(ovM.jornadaPctManual)
+          ? Math.min(100, Math.max(1, ovM.jornadaPctManual)) / 100
+          : defaultFactor;
 
       let vacM = 0;
       let sickM = 0;
@@ -3410,12 +3580,6 @@ export function reconcileValidatedMonthsMap(
         ? roundHours(schedM.horasTeoricas + sickCredit)
         : schedM.cuotaForBolsa;
       const expectedCuotaFijaMensual = roundHours(expectedCuotaForBolsa);
-      const cuotaNetOfSick = Math.max(0, expectedCuotaForBolsa - sickCredit);
-      const hasVac = schedM.vacDays > 0;
-      const expectedUmbral =
-        hasVac && useCuotaFijaBolsa
-          ? roundHours(Math.max(expectedTarget, cuotaNetOfSick))
-          : expectedTarget;
 
       if (!rec || !rec.payrollSnapshot) {
         // Unvalidated month before a later validated month: only advance running bolsa if it has diary records
@@ -3439,19 +3603,21 @@ export function reconcileValidatedMonthsMap(
         }
         if (!hasActivity) continue;
 
-        const mDiff = roundHours(mOrd - expectedTarget);
-        const deficitOwed = Math.max(0, -runningDeficit);
-        const appliedDeficit = mDiff > 0 ? roundHours(Math.min(mDiff, deficitOwed)) : 0;
-        const surplusAfterDef = mDiff > 0 ? Math.max(0, roundHours(mDiff - appliedDeficit)) : 0;
-        const mExcessOverQuota = Math.max(0, roundHours(mOrd - expectedUmbral));
-        const mPaidExcess =
-          hasVac && useCuotaFijaBolsa
-            ? Math.min(surplusAfterDef, mExcessOverQuota)
-            : surplusAfterDef;
-
-        if (mDiff < 0) runningDeficit = roundHours(runningDeficit + mDiff);
-        else runningDeficit = roundHours(Math.min(0, runningDeficit + Math.max(0, mDiff - mPaidExcess)));
-        runningBolsa = roundHours(runningBolsa + (mOrd - mPaidExcess + sickCredit) - expectedCuotaForBolsa);
+        const unvalBolsaCalc = computeMonthlyBolsaAndExcess({
+          ordinaryHours: mOrd,
+          theoreticalActiveTarget: expectedTarget,
+          sickCredit,
+          cuotaForBolsa: expectedCuotaForBolsa,
+          vacDays: schedM.vacDays,
+          isFinalVacationMonth: Boolean(
+            annualSchedule.hasAllStatutoryVacations && mIdx === annualSchedule.lastVacMonth
+          ),
+          useCuotaBolsa: useCuotaFijaBolsa,
+          prevBolsa: runningBolsa,
+          prevDeficit: runningDeficit,
+        });
+        runningDeficit = unvalBolsaCalc.deficitPendienteAlCierre;
+        runningBolsa = unvalBolsaCalc.bolsaHorasAcumulada;
         continue;
       }
 
@@ -3579,6 +3745,19 @@ export function reconcileValidatedMonthsMap(
         }
         const validatedForTargetCalc: ValidatedMonthsMap = { ...reconciled };
         delete validatedForTargetCalc[mKey];
+        const yearOverrideForRecalc: AnnualYearOverrideData | undefined =
+          yearOverride?.monthOverrides?.[mIdx - 1]?.jornadaPctManual !== undefined
+            ? {
+                ...yearOverride,
+                monthOverrides: {
+                  ...yearOverride.monthOverrides,
+                  [mIdx - 1]: {
+                    ...yearOverride.monthOverrides[mIdx - 1],
+                    jornadaPctManual: undefined,
+                  },
+                },
+              }
+            : yearOverride;
         const freshPayroll = calculateMonthlyPayroll(
           Array.from(fullAsgMap.values()),
           freshShiftsMap,
@@ -3587,7 +3766,7 @@ export function reconcileValidatedMonthsMap(
           yr,
           mIdx,
           validatedForTargetCalc,
-          yearOverride
+          yearOverrideForRecalc
         );
 
         let filledDaysCount = 0;
@@ -3731,31 +3910,34 @@ export function reconcileValidatedMonthsMap(
         }
       }
 
-      const rawMonthlyDiff = roundHours(ordHours - expectedTarget);
-      const carriedDeficitOwed = Math.max(0, -runningDeficit);
-      const carriedDeficitApplied =
-        rawMonthlyDiff > 0 ? roundHours(Math.min(rawMonthlyDiff, carriedDeficitOwed)) : 0;
-      const surplusAfterDeficit =
-        rawMonthlyDiff > 0 ? Math.max(0, roundHours(rawMonthlyDiff - carriedDeficitApplied)) : 0;
-      const excessOverThreshold = Math.max(0, roundHours(ordHours - expectedUmbral));
-      const expectedMonthlyExcess =
-        hasVac && useCuotaFijaBolsa
-          ? Math.min(surplusAfterDeficit, excessOverThreshold)
-          : surplusAfterDeficit;
-      const expectedDeficitCierre =
-        rawMonthlyDiff < 0
-          ? roundHours(runningDeficit + rawMonthlyDiff)
-          : roundHours(Math.min(0, runningDeficit + carriedDeficitApplied));
+      const valBolsaCalc = computeMonthlyBolsaAndExcess({
+        ordinaryHours: ordHours,
+        theoreticalActiveTarget: expectedTarget,
+        sickCredit,
+        cuotaForBolsa: expectedCuotaForBolsa,
+        vacDays: schedM.vacDays,
+        isFinalVacationMonth: Boolean(
+          annualSchedule.hasAllStatutoryVacations && mIdx === annualSchedule.lastVacMonth
+        ),
+        useCuotaBolsa: useCuotaFijaBolsa,
+        prevBolsa: runningBolsa,
+        prevDeficit: runningDeficit,
+      });
+
+      const rawMonthlyDiff = valBolsaCalc.rawMonthlyDiff;
+      const carriedDeficitApplied = valBolsaCalc.carriedDeficitAppliedHours;
+      const expectedMonthlyExcess = valBolsaCalc.monthlyExcessOverTheoretical;
+      const expectedBolsaLiquidadaVac = valBolsaCalc.bolsaLiquidadaVacacionesMes;
+      const expectedDeficitCierre = valBolsaCalc.deficitPendienteAlCierre;
+      const expectedUmbralEffective = valBolsaCalc.umbralComplementariasMes;
 
       const expectedBolsaReserva =
         repartoBolsaMode === 'equilibrado' ? 0 : roundHours(schedM.bolsaAporte);
       const expectedBolsaDescVac =
         repartoBolsaMode === 'equilibrado' ? 0 : roundHours(schedM.vacBolsaSpend);
-      const expectedBolsaMes = roundHours(
-        (ordHours - expectedMonthlyExcess + sickCredit) - expectedCuotaForBolsa
-      );
+      const expectedBolsaMes = valBolsaCalc.bolsaHorasMes;
       const expectedBolsaSaldoAnterior = roundHours(runningBolsa);
-      const expectedBolsaAcumulada = roundHours(runningBolsa + expectedBolsaMes);
+      const expectedBolsaAcumulada = valBolsaCalc.bolsaHorasAcumulada;
 
       const expectedTotalCompl = roundHours(
         expectedMonthlyExcess + dailyOver9 + explicitManualCompl
@@ -3806,7 +3988,8 @@ export function reconcileValidatedMonthsMap(
         Math.abs(oldMonthlyExcess - expectedMonthlyExcess) > 0.009 ||
         Math.abs((snap.horasComplementarias || 0) - expectedTotalCompl) > 0.009 ||
         Math.abs((snap.importeHorasExtra || 0) - expectedImporteHorasExtra) > 0.009 ||
-        Math.abs((snap.umbralComplementariasMes ?? -1) - expectedUmbral) > 0.009 ||
+        Math.abs((snap.umbralComplementariasMes ?? -1) - expectedUmbralEffective) > 0.009 ||
+        Math.abs((snap.bolsaLiquidadaVacacionesMes ?? 0) - expectedBolsaLiquidadaVac) > 0.009 ||
         Math.abs((snap.bolsaSaldoAnterior ?? 0) - expectedBolsaSaldoAnterior) > 0.009 ||
         Math.abs((snap.bolsaHorasMes ?? Number.NaN) - expectedBolsaMes) > 0.009 ||
         Math.abs((snap.bolsaHorasAcumulada ?? Number.NaN) - expectedBolsaAcumulada) > 0.009 ||
@@ -3997,10 +4180,11 @@ export function reconcileValidatedMonthsMap(
             cuotaFijaEnteraAnual: schedM.cuotaFijaEntera,
             isPostVacacionesRegularizado: schedM.isPostVacacionesRegularizado,
             lastVacationMonthYear: annualSchedule.lastVacMonth ?? undefined,
-            umbralComplementariasMes: expectedUmbral,
+            umbralComplementariasMes: expectedUmbralEffective,
             bolsaSaldoAnterior: expectedBolsaSaldoAnterior,
             bolsaGeneradaReservaMes: expectedBolsaReserva,
             bolsaDescontadaVacacionesMes: expectedBolsaDescVac,
+            bolsaLiquidadaVacacionesMes: expectedBolsaLiquidadaVac,
             bolsaHorasMes: expectedBolsaMes,
             bolsaHorasAcumulada: expectedBolsaAcumulada,
             deficitAnteriorPendiente: roundHours(runningDeficit),

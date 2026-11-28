@@ -19,6 +19,7 @@ import {
   ANNUAL_VACATION_DAYS_CONVENIO,
   AnnualScheduleMonthInput,
   computeAnnualHoursSchedule,
+  computeMonthlyBolsaAndExcess,
   computePeriodHoursBreakdownFromMap,
   getExtrasDateRange,
 } from './calculator';
@@ -589,7 +590,9 @@ export function calculateAnnualLiquidation(
     const isValidated = Boolean(vRec);
     const effectiveJornadaPct = vRec
       ? Math.min(100, Math.max(1, Number(vRec.jornadaPct) || jornadaPct))
-      : jornadaPct;
+      : m.jornadaPctManual !== undefined && Number.isFinite(m.jornadaPctManual)
+        ? Math.min(100, Math.max(1, Number(m.jornadaPctManual)))
+        : jornadaPct;
 
     totalHabilesCal += habilesCal;
     totalVacNat += vacNat;
@@ -642,9 +645,17 @@ export function calculateAnnualLiquidation(
   const sumaBaseCompMesActual = baseMensualEfectiva + compMensualEfectiva;
   const plusVacDiaEfectivo = plusVacDia100 * factorJornada;
 
-  const brutoFijoAnual = sumaBaseCompMesActual * numPagas;
+  const brutoFijoAnual = hasJornadaChangeAcrossMonths
+    ? Math.round(
+        prelim.reduce(
+          (sum, m) =>
+            sum + ((baseMes100 + compMes100) * (m.effectiveJornadaPct / 100) * numPagas) / 12,
+          0
+        ) * 100
+      ) / 100
+    : sumaBaseCompMesActual * numPagas;
   const valorHoraTabla =
-    horasAnuales100 * factorJornada > 0 ? brutoFijoAnual / (horasAnuales100 * factorJornada) : 0;
+    jornadaAnualEfectiva > 0 ? brutoFijoAnual / jornadaAnualEfectiva : 0;
 
   const totalDiasComputo = Math.max(1, totalDiasActivos + totalBajaLab);
   const horasPorDia100 = horasAnuales100 / totalDiasComputo;
@@ -725,16 +736,33 @@ export function calculateAnnualLiquidation(
       horasRealizadas > 0 ||
       horasTotalesTrabajadas > 0;
 
-    // Las horas complementarias cobradas en nómina NO deben ir a la bolsa de horas
+    // Las horas complementarias cobradas en nómina NO deben ir a la bolsa de horas.
+    // Si hay vacaciones y saldo positivo previo en la bolsa, se liquida la bolsa restante junto con el exceso trabajado.
     let horasComplementariasMes = 0;
+    let diferenciaRealMes = 0;
     if (tieneRegistroReal) {
-      const horasConIT = horasRealizadas + horasJustificadasIT;
-      const diffVsTeorico = horasConIT - horasComputoTeorico;
+      const bolsaCalc = computeMonthlyBolsaAndExcess({
+        ordinaryHours: horasRealizadas,
+        theoreticalActiveTarget: horasTeoricasActivas,
+        sickCredit: horasJustificadasIT,
+        cuotaForBolsa: cuotaMes,
+        vacDays: m.vacNat,
+        isFinalVacationMonth: Boolean(
+          annualSchedule.hasAllStatutoryVacations && m.idx + 1 === annualSchedule.lastVacMonth
+        ),
+        useCuotaBolsa: useCuotaFijaBolsa,
+        prevBolsa: bolsaCompensacionAcumulada,
+        prevDeficit: runningDeficitAnual,
+      });
+
       const snapTargetMatches = Boolean(
         m.vRec?.payrollSnapshot &&
           Math.abs((m.vRec.payrollSnapshot.convenioMonthlyHoursTarget || 0) - horasTeoricasActivas) <= 0.05 &&
           Math.abs((m.vRec.payrollSnapshot.ordinaryConvenioHours || 0) - horasRealizadas) <= 0.05 &&
-          Math.abs((m.vRec.payrollSnapshot.cuotaFijaMensualContrato ?? -1) - cuotaMes) <= 0.05
+          Math.abs((m.vRec.payrollSnapshot.cuotaFijaMensualContrato ?? -1) - cuotaMes) <= 0.05 &&
+          Math.abs((m.vRec.payrollSnapshot.bolsaSaldoAnterior ?? 0) - bolsaCompensacionAcumulada) <= 0.05 &&
+          Math.abs((m.vRec.payrollSnapshot.bolsaLiquidadaVacacionesMes ?? 0) - bolsaCalc.bolsaLiquidadaVacacionesMes) <= 0.05 &&
+          Math.abs((m.vRec.payrollSnapshot.horasExcesoMensual ?? 0) - bolsaCalc.monthlyExcessOverTheoretical) <= 0.05
       );
 
       if (
@@ -744,43 +772,26 @@ export function calculateAnnualLiquidation(
         snapTargetMatches
       ) {
         horasComplementariasMes = Math.max(0, m.vRec.payrollSnapshot.horasExcesoMensual || 0);
+        const horasComputablesBolsa = Math.max(0, horasRealizadas - horasComplementariasMes);
+        diferenciaRealMes =
+          Math.round((horasComputablesBolsa + horasJustificadasIT - cuotaMes) * 100) / 100 || 0;
+        const diffVsTeorico = horasRealizadas + horasJustificadasIT - (horasTeoricasActivas + horasJustificadasIT);
         if (diffVsTeorico < 0) {
           runningDeficitAnual += diffVsTeorico;
         } else {
           const absorbedToDeficit = Math.max(0, diffVsTeorico - horasComplementariasMes);
           runningDeficitAnual = Math.min(0, runningDeficitAnual + absorbedToDeficit);
         }
+        bolsaCompensacionAcumulada =
+          Math.round((bolsaCompensacionAcumulada + diferenciaRealMes) * 100) / 100 || 0;
       } else {
-        if (diffVsTeorico < 0) {
-          runningDeficitAnual += diffVsTeorico;
-        } else {
-          const deficitOwed = Math.max(0, -runningDeficitAnual);
-          const appliedDeficit = Math.min(diffVsTeorico, deficitOwed);
-          const surplusAfterDeficit = Math.max(0, diffVsTeorico - appliedDeficit);
-          if (m.vacNat > 0 && useCuotaFijaBolsa) {
-            const umbralCompl = Math.max(horasComputoTeorico, cuotaMes);
-            const excessOverQuota = Math.max(0, horasConIT - umbralCompl);
-            horasComplementariasMes = Math.min(surplusAfterDeficit, excessOverQuota);
-          } else {
-            horasComplementariasMes = surplusAfterDeficit;
-          }
-          const absorbedToDeficit = Math.max(0, diffVsTeorico - horasComplementariasMes);
-          runningDeficitAnual = Math.min(0, runningDeficitAnual + absorbedToDeficit);
-        }
+        horasComplementariasMes = bolsaCalc.monthlyExcessOverTheoretical;
+        diferenciaRealMes = bolsaCalc.bolsaHorasMes;
+        runningDeficitAnual = bolsaCalc.deficitPendienteAlCierre;
+        bolsaCompensacionAcumulada = bolsaCalc.bolsaHorasAcumulada;
       }
-      horasComplementariasMes = Math.round(horasComplementariasMes * 100) / 100 || 0;
-    }
 
-    const horasComputablesBolsa = Math.max(0, horasRealizadas - horasComplementariasMes);
-    // Comp. (R - T) resta las horas teóricas seleccionadas en cabecera (Cuota Fija Mensual o Equilibradas)
-    // excluyendo las horas complementarias cobradas para que no vayan a la bolsa
-    const diferenciaRealMes = tieneRegistroReal
-      ? horasComputablesBolsa + horasJustificadasIT - cuotaMes
-      : 0;
-
-    if (tieneRegistroReal) {
       mesesConTurnosCount += 1;
-      bolsaCompensacionAcumulada += diferenciaRealMes;
       sumaDiferenciaReal += diferenciaRealMes;
       sumaComplementariasMes += horasComplementariasMes;
     }
